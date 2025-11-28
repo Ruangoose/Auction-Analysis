@@ -1,6 +1,7 @@
 process_sa_bond_holdings <- function(source_folder = "bond_holdings",
                                      output_folder = "bond_holdings_rds",
-                                     overwrite = FALSE) {
+                                     overwrite = FALSE,
+                                     verbose = TRUE) {
 
     # Load required packages
     require(readxl)
@@ -14,7 +15,7 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
         dir.create(output_folder, recursive = TRUE)
     }
 
-    # Get list of Excel files
+    # Get list of Excel files (.xlsx format only - files from Jan 2023 onwards)
     excel_files <- list.files(source_folder,
                               pattern = "Historical government bond holdings.*\\.xlsx$",
                               full.names = TRUE)
@@ -23,7 +24,7 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
         stop("No Excel files found in the specified folder.")
     }
 
-    cat(sprintf("Found %d Excel files to process.\n\n", length(excel_files)))
+    if (verbose) cat(sprintf("Found %d Excel files to process.\n\n", length(excel_files)))
 
     # Helper function to validate Excel file
     is_valid_excel <- function(filepath) {
@@ -54,7 +55,7 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
     # Process each file
     for (file_path in excel_files) {
         filename <- basename(file_path)
-        cat(sprintf("Processing: %s\n", filename))
+        if (verbose) cat(sprintf("Processing: %s\n", filename))
 
         # Validate file first
         if (!is_valid_excel(file_path)) {
@@ -72,9 +73,15 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
             month_name <- matches[[1]][2]
             year <- matches[[1]][3]
             date_string <- paste("01", month_name, year)
-            file_date <- as.Date(date_string, format = "%d %B %Y")
+            file_date <- tryCatch({
+                as.Date(date_string, format = "%d %B %Y")
+            }, error = function(e) {
+                if (verbose) cat(sprintf("  Warning: Could not parse date from '%s'. Skipping.\n", date_string))
+                return(NA)
+            })
+            if (is.na(file_date)) next
         } else {
-            cat(sprintf("  Warning: Could not extract date from filename. Skipping.\n"))
+            if (verbose) cat(sprintf("  Warning: Could not extract date from filename. Skipping.\n"))
             next
         }
 
@@ -149,20 +156,20 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
                 all_sukuk_pct[[filename]] <- sukuk_pct
             }
 
-            cat(sprintf("  ✓ Successfully processed\n"))
+            if (verbose) cat(sprintf("  ✓ Successfully processed\n"))
 
         }, error = function(e) {
-            cat(sprintf("  ✗ Error processing file: %s\n", e$message))
+            if (verbose) cat(sprintf("  ✗ Error processing file: %s\n", e$message))
         })
     }
 
     # Combine all data by sheet type
-    cat("\n=== Combining data ===\n")
+    if (verbose) cat("\n=== Combining data ===\n")
 
     # Helper function to safely bind rows
     safe_bind_rows <- function(data_list, list_name) {
         if (length(data_list) > 0) {
-            cat(sprintf("Combining %d files for %s...\n", length(data_list), list_name))
+            if (verbose) cat(sprintf("Combining %d files for %s...\n", length(data_list), list_name))
 
             # Coerce all numeric columns to actually be numeric
             # This handles cases where some files have "k" or other text in numeric cells
@@ -187,7 +194,7 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
 
             return(combined)
         } else {
-            cat(sprintf("No data found for %s\n", list_name))
+            if (verbose) cat(sprintf("No data found for %s\n", list_name))
             return(NULL)
         }
     }
@@ -198,7 +205,7 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
             return(NULL)
         }
 
-        cat(sprintf("Processing Holdings data from %d files...\n", length(holdings_list)))
+        if (verbose) cat(sprintf("Processing Holdings data from %d files...\n", length(holdings_list)))
 
         # Process each file's holdings data
         processed_list <- lapply(holdings_list, function(df) {
@@ -222,21 +229,25 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
                 )
 
             # Fill down the year for subsequent month rows
-            if (requireNamespace("zoo", quietly = TRUE)) {
-                df_processed <- df_processed %>%
-                    mutate(year = zoo::na.locf(year, na.rm = FALSE))
-            } else {
-                # Alternative without zoo package
-                current_year <- NA_integer_
-                for (i in 1:nrow(df_processed)) {
-                    if (!is.na(df_processed$is_year[i]) && df_processed$is_year[i]) {
-                        current_year <- df_processed$year[i]
+            # Use zoo::na.locf if available, otherwise use base R fallback
+            fill_down_year <- function(year_vec) {
+                if (requireNamespace("zoo", quietly = TRUE)) {
+                    return(zoo::na.locf(year_vec, na.rm = FALSE))
+                } else {
+                    # Base R fallback for filling down NA values
+                    result <- year_vec
+                    current_val <- NA_integer_
+                    for (i in seq_along(result)) {
+                        if (!is.na(result[i])) {
+                            current_val <- result[i]
+                        } else {
+                            result[i] <- current_val
+                        }
                     }
-                    if (is.na(df_processed$year[i])) {
-                        df_processed$year[i] <- current_year
-                    }
+                    return(result)
                 }
             }
+            df_processed$year <- fill_down_year(df_processed$year)
 
             # Remove year-only rows and process dates
             df_processed <- df_processed %>%
@@ -281,7 +292,7 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
         combined <- bind_rows(processed_list) %>%
             arrange(date, file_date)
 
-        cat(sprintf("  ✓ Processed %d total rows\n", nrow(combined)))
+        if (verbose) cat(sprintf("  ✓ Processed %d total rows\n", nrow(combined)))
 
         return(combined)
     }
@@ -300,22 +311,22 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
     combined_sukuk_pct <- safe_bind_rows(all_sukuk_pct, "Sukuk (%)")
 
     # Save all datasets as RDS
-    cat("\n=== Saving RDS files ===\n")
+    if (verbose) cat("\n=== Saving RDS files ===\n")
 
     save_if_exists <- function(data, filename) {
         if (!is.null(data) && nrow(data) > 0) {
             filepath <- file.path(output_folder, filename)
             if (!file.exists(filepath) || overwrite) {
                 saveRDS(data, filepath)
-                cat(sprintf("✓ Saved: %s (%d rows, %d cols)\n",
+                if (verbose) cat(sprintf("✓ Saved: %s (%d rows, %d cols)\n",
                             filename, nrow(data), ncol(data)))
                 return(TRUE)
             } else {
-                cat(sprintf("⊘ Skipped (already exists): %s\n", filename))
+                if (verbose) cat(sprintf("⊘ Skipped (already exists): %s\n", filename))
                 return(FALSE)
             }
         } else {
-            cat(sprintf("⊘ No data to save for: %s\n", filename))
+            if (verbose) cat(sprintf("⊘ No data to save for: %s\n", filename))
             return(FALSE)
         }
     }
@@ -331,28 +342,30 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
     save_if_exists(combined_sukuk_pct, "sukuk_pct.rds")
 
     # Create summary
-    cat("\n=== Processing Summary ===\n")
-    cat(sprintf("Total files processed: %d\n", length(excel_files)))
-    cat(sprintf("Output folder: %s\n", output_folder))
-    cat(sprintf("\nDatasets created:\n"))
+    if (verbose) {
+        cat("\n=== Processing Summary ===\n")
+        cat(sprintf("Total files processed: %d\n", length(excel_files)))
+        cat(sprintf("Output folder: %s\n", output_folder))
+        cat(sprintf("\nDatasets created:\n"))
 
-    datasets <- list(
-        "Holdings (Historical)" = combined_holdings,
-        "Fixed Rate Values" = combined_fixed_values,
-        "Fixed Rate Percentages" = combined_fixed_pct,
-        "ILB Values" = combined_ilb_values,
-        "ILB Percentages" = combined_ilb_pct,
-        "FRN Values" = combined_frn_values,
-        "FRN Percentages" = combined_frn_pct,
-        "Sukuk Values" = combined_sukuk_values,
-        "Sukuk Percentages" = combined_sukuk_pct
-    )
+        datasets <- list(
+            "Holdings (Historical)" = combined_holdings,
+            "Fixed Rate Values" = combined_fixed_values,
+            "Fixed Rate Percentages" = combined_fixed_pct,
+            "ILB Values" = combined_ilb_values,
+            "ILB Percentages" = combined_ilb_pct,
+            "FRN Values" = combined_frn_values,
+            "FRN Percentages" = combined_frn_pct,
+            "Sukuk Values" = combined_sukuk_values,
+            "Sukuk Percentages" = combined_sukuk_pct
+        )
 
-    for (name in names(datasets)) {
-        data <- datasets[[name]]
-        if (!is.null(data)) {
-            cat(sprintf("  • %s: %d rows, %d columns\n",
-                        name, nrow(data), ncol(data)))
+        for (name in names(datasets)) {
+            data <- datasets[[name]]
+            if (!is.null(data)) {
+                cat(sprintf("  • %s: %d rows, %d columns\n",
+                            name, nrow(data), ncol(data)))
+            }
         }
     }
 
@@ -424,11 +437,11 @@ load_bond_data <- function(dataset_name, folder = "bond_holdings_rds") {
 # Example usage:
 # ------------------------
 # # Process all Excel files and create RDS files
-results <- process_sa_bond_holdings(
-  source_folder = "bond_holdings",
-  output_folder = "bond_holdings_rds",
-  overwrite = FALSE
-)
+# results <- process_sa_bond_holdings(
+#   source_folder = "bond_holdings",
+#   output_folder = "bond_holdings_rds",
+#   overwrite = FALSE
+# )
 #
 # # Load a specific dataset
 # holdings <- load_bond_data("holdings")
