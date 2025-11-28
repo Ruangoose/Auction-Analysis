@@ -61,6 +61,7 @@ treasury_aggregate_colors <- c(
 # Bond-level holdings - for bond-specific views (more colors needed)
 # NOTE: Do NOT include "NA" as a valid sector - filter it out instead
 treasury_sector_colors <- c(
+    # === STANDARD NAMES (with hyphens, lowercase) ===
     "Foreign sector" = "#E8913A",             # Orange (highlight foreign)
     "Monetary institutions" = "#1B3A6B",      # Navy dark
     "Official pension funds" = "#2B4F7F",     # Navy medium
@@ -70,12 +71,32 @@ treasury_sector_colors <- c(
     "Other sector" = "#4A5568",               # Gray dark
     "Short-term insurers" = "#718096",        # Gray medium
     "CSDP reporting error" = "#A0AEC0",       # Gray light (filtered but kept for edge cases)
-    # Aliases for aggregate sectors
+
+    # === ALIASES FOR AGGREGATE SECTORS ===
     "Non-residents" = "#E8913A",              # Orange (alias)
     "Banks" = "#1B3A6B",                      # Navy dark (alias)
     "Insurers" = "#2B4F7F",                   # Navy medium (alias)
     "Local pension funds" = "#5B7B8A",        # Slate dark (alias)
-    "Other" = "#4A5568"                       # Gray dark (alias)
+    "Other" = "#4A5568",                      # Gray dark (alias)
+
+    # === ALTERNATIVE NAMES (without hyphens) - SAME COLORS ===
+    # These handle data sources that use inconsistent naming conventions
+    "Long term insurers" = "#7A9BA8",         # Same as Long-term insurers
+    "Short term insurers" = "#718096",        # Same as Short-term insurers
+    "Private self administered funds" = "#9AB5C0", # Same as Private self-administered funds
+
+    # === SINGULAR VS PLURAL VARIATIONS ===
+    "Other financial institution" = "#5B7B8A", # Same as Other financial institutions
+
+    # === CASE VARIATIONS ===
+    "Official Pension Funds" = "#2B4F7F",     # Same as Official pension funds
+    "Monetary Institutions" = "#1B3A6B",      # Same as Monetary institutions
+    "Foreign Sector" = "#E8913A",             # Same as Foreign sector
+    "Other Sector" = "#4A5568",               # Same as Other sector
+    "Other Financial Institutions" = "#5B7B8A", # Same as Other financial institutions
+    "Long-Term Insurers" = "#7A9BA8",         # Same as Long-term insurers
+    "Short-Term Insurers" = "#718096",        # Same as Short-term insurers
+    "Private Self-Administered Funds" = "#9AB5C0" # Same as Private self-administered funds
 )
 
 # Change periods (navy gradient - lightest to darkest)
@@ -206,7 +227,9 @@ generate_holdings_area_chart <- function(holdings_long,
     }
 
     # Fill any remaining NAs (at the start) with 0 and create display columns
+    # CRITICAL: Sort by date first, then sector to ensure geom_area connects points correctly
     plot_data <- plot_data %>%
+        arrange(date, sector) %>%
         mutate(
             percentage = tidyr::replace_na(percentage, 0),
             sector = factor(sector, levels = sector_order),
@@ -233,7 +256,9 @@ generate_holdings_area_chart <- function(holdings_long,
     date_max <- max(plot_data$date, na.rm = TRUE)
 
     # Create the stacked area chart
-    p <- ggplot(plot_data, aes(x = date, y = percentage_display, fill = sector)) +
+    # CRITICAL: Use group = sector to ensure geom_area connects points within each sector
+    # This prevents the "Other" segment from appearing as disconnected rectangles
+    p <- ggplot(plot_data, aes(x = date, y = percentage_display, fill = sector, group = sector)) +
         geom_area(alpha = 0.9, position = "stack") +
         scale_fill_manual(
             values = treasury_aggregate_colors,
