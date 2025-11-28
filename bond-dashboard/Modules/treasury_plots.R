@@ -162,71 +162,78 @@ generate_holdings_area_chart <- function(holdings_long,
         return(create_empty_plot("No data available for selected filters"))
     }
 
-    # CRITICAL: Ensure complete date-sector combinations to prevent gaps
-    # Generate a CONTINUOUS monthly date sequence from min to max date
+    # ===========================================
+    # CRITICAL: CREATE TRULY CONTINUOUS DATA
     # This fixes the "Other" segment gap issue caused by irregular/missing dates
+    # ===========================================
+
     date_min <- min(clean_data$date, na.rm = TRUE)
     date_max <- max(clean_data$date, na.rm = TRUE)
 
-    # Create complete monthly date sequence
+    # Create a continuous monthly sequence
+    # Use floor_date for both to stay within actual data range
     all_dates <- seq.Date(
         from = floor_date(date_min, "month"),
-        to = ceiling_date(date_max, "month"),
+        to = floor_date(date_max, "month"),
         by = "month"
     )
 
-    all_sectors <- intersect(sector_order, unique(clean_data$sector))
+    # Get sectors that exist in the data (preserving order)
+    existing_sectors <- intersect(sector_order, unique(clean_data$sector))
 
-    # Create complete grid of all date-sector combinations
+    # Create COMPLETE grid of all date-sector combinations
     complete_grid <- expand.grid(
         date = all_dates,
-        sector = all_sectors,
+        sector = existing_sectors,
         stringsAsFactors = FALSE
-    )
+    ) %>%
+        as_tibble()
 
-    # Join with actual data
+    # Join with actual data - aggregate duplicates by taking mean
     plot_data <- complete_grid %>%
         left_join(
-            clean_data %>% select(date, sector, percentage),
+            clean_data %>%
+                select(date, sector, percentage) %>%
+                # Ensure we get one value per date-sector (take mean if duplicates)
+                group_by(date, sector) %>%
+                summarise(percentage = mean(percentage, na.rm = TRUE), .groups = "drop"),
             by = c("date", "sector")
         )
 
     # ===========================================
-    # FIX: Handle NA filling OUTSIDE of mutate()
-    # Cannot use if() inside mutate() - it causes quos error
+    # FIX: Use linear interpolation for missing values
+    # This creates smooth continuous data instead of rectangular gaps
     # ===========================================
 
-    # Check if zoo is available BEFORE the mutate
-    use_zoo <- requireNamespace("zoo", quietly = TRUE)
-
-    if (use_zoo) {
-        # Apply na.locf per sector (last observation carried forward)
-        plot_data <- plot_data %>%
-            group_by(sector) %>%
-            arrange(date) %>%
-            mutate(percentage = zoo::na.locf(percentage, na.rm = FALSE)) %>%
-            ungroup()
-    } else {
-        # Base R fallback for carrying forward
-        plot_data <- plot_data %>%
-            group_by(sector) %>%
-            arrange(date) %>%
-            mutate(percentage = {
-                result <- percentage
-                current_val <- NA
-                for (i in seq_along(result)) {
-                    if (!is.na(result[i])) {
-                        current_val <- result[i]
-                    } else {
-                        result[i] <- current_val
-                    }
+    plot_data <- plot_data %>%
+        group_by(sector) %>%
+        arrange(date) %>%
+        mutate(
+            # Linear interpolation for missing values
+            percentage = {
+                pct <- percentage
+                non_na_idx <- which(!is.na(pct))
+                if (length(non_na_idx) >= 2) {
+                    # Use approx for linear interpolation
+                    approx(
+                        x = non_na_idx,
+                        y = pct[non_na_idx],
+                        xout = seq_along(pct),
+                        method = "linear",
+                        rule = 2  # Extend to edges using nearest value
+                    )$y
+                } else if (length(non_na_idx) == 1) {
+                    # Only one value - fill with that value
+                    rep(pct[non_na_idx], length(pct))
+                } else {
+                    # No values - leave as NA (will be filled with 0 later)
+                    pct
                 }
-                result
-            }) %>%
-            ungroup()
-    }
+            }
+        ) %>%
+        ungroup()
 
-    # Fill any remaining NAs (at the start) with 0 and create display columns
+    # Fill any remaining NAs with 0 and create display columns
     # CRITICAL: Sort by date first, then sector to ensure geom_area connects points correctly
     plot_data <- plot_data %>%
         arrange(date, sector) %>%
@@ -403,14 +410,14 @@ generate_ownership_change_chart <- function(holdings_long,
 #' by bond at a specific date
 #'
 #' @param bond_pct_long Data frame with columns: file_date, sector, bond, value, bond_type
-#' @param bond_type Filter for bond type (e.g., "Fixed Rate", "ILB", "FRN", "Sukuk")
+#' @param selected_bond_type Filter for bond type (e.g., "Fixed Rate", "ILB", "FRN", "Sukuk")
 #' @param target_date Date to display (default: most recent)
 #' @param show_labels Whether to show percentage labels inside bars
 #' @param min_pct_label Minimum percentage to show label (default: 5)
 #' @return ggplot2 object
 #' @export
 generate_bond_holdings_bar_chart <- function(bond_pct_long,
-                                             bond_type = "Fixed Rate",
+                                             selected_bond_type = "Fixed Rate",
                                              target_date = NULL,
                                              show_labels = TRUE,
                                              min_pct_label = 5) {
@@ -427,10 +434,11 @@ generate_bond_holdings_bar_chart <- function(bond_pct_long,
 
     # Filter data - CRITICAL: Filter out NA sectors and summary rows BEFORE any processing
     # First filter for date and bond type, keeping all valid sectors (including 0% holdings)
+    # NOTE: Using selected_bond_type parameter to avoid name collision with bond_type column
     filtered_data <- bond_pct_long %>%
         filter(
             file_date == target_date,
-            bond_type == !!bond_type,
+            bond_type == selected_bond_type,
             # Remove R NA values (null/missing)
             !is.na(sector),
             !is.na(bond),
@@ -459,7 +467,7 @@ generate_bond_holdings_bar_chart <- function(bond_pct_long,
         filter(value > 0)
 
     if (nrow(plot_data) == 0) {
-        return(create_empty_plot(sprintf("No data available for %s bonds", bond_type)))
+        return(create_empty_plot(sprintf("No data available for %s bonds", selected_bond_type)))
     }
 
     # Create bond label with maturity year and convert decimal percentages to display percentages
@@ -509,7 +517,7 @@ generate_bond_holdings_bar_chart <- function(bond_pct_long,
         ) +
         coord_flip() +
         labs(
-            title = sprintf("%s Bonds (%s)", bond_type, format(target_date, "%B %Y")),
+            title = sprintf("%s Bonds (%s)", selected_bond_type, format(target_date, "%B %Y")),
             subtitle = "Institutional Holdings by Bond",
             x = NULL,
             y = "% Holdings",
@@ -565,13 +573,13 @@ generate_bond_holdings_bar_chart <- function(bond_pct_long,
 #'
 #' @param bond_pct_long Data frame with columns: file_date, sector, bond, value, bond_type
 #' @param period_months Number of months for change calculation (default: 3)
-#' @param bond_type Filter for bond type
+#' @param selected_bond_type Filter for bond type
 #' @param top_n Number of bonds to show (default: 15)
 #' @return ggplot2 object
 #' @export
 generate_holdings_change_diverging <- function(bond_pct_long,
                                                period_months = 3,
-                                               bond_type = "Fixed Rate",
+                                               selected_bond_type = "Fixed Rate",
                                                top_n = 15) {
 
     # Input validation
@@ -589,9 +597,10 @@ generate_holdings_change_diverging <- function(bond_pct_long,
 
     # CRITICAL: Filter out NA sectors and summary rows BEFORE any calculations
     # This prevents NA from appearing in the legend
+    # NOTE: Using selected_bond_type parameter to avoid name collision with bond_type column
     clean_bond_data <- bond_pct_long %>%
         filter(
-            bond_type == !!bond_type,
+            bond_type == selected_bond_type,
             # Remove R NA values (null/missing)
             !is.na(sector),
             !is.na(bond),
@@ -659,7 +668,7 @@ generate_holdings_change_diverging <- function(bond_pct_long,
         ) +
         coord_flip() +
         labs(
-            title = sprintf("SA %s Bonds: Change in Institutional Ownership", bond_type),
+            title = sprintf("SA %s Bonds: Change in Institutional Ownership", selected_bond_type),
             subtitle = sprintf("%d-month change per bond (as of %s)",
                                period_months,
                                format(current_date, "%B %Y")),
