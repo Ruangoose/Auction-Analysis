@@ -231,17 +231,32 @@ process_sa_bond_holdings_tidy <- function(source_folder = "bond_holdings",
                     # Extract maturity year from bond name
                     maturity_year = as.integer(str_extract(bond, "\\d{4}"))
                 ) %>%
-                # Filter out invalid sectors and bonds AFTER pivot (not by filtering NA values)
+                # CRITICAL FIX: Filter out invalid sectors and TOTAL rows AFTER pivot
+                # The Excel data contains TOTAL rows where sector = NA and value = 1.0 (100%)
+                # These must be filtered out to ensure each bond sums to ~100%, not ~200%
+                #
+                # First, trim whitespace from sector and bond to catch edge cases
+                mutate(
+                    sector = trimws(as.character(sector)),
+                    bond = trimws(as.character(bond))
+                ) %>%
                 filter(
+                    # Remove R NA values (null/missing)
                     !is.na(sector),
-                    sector != "",
-                    !grepl("^NA$", sector, ignore.case = TRUE),
-                    !grepl("^TOTAL", sector, ignore.case = TRUE),
-                    !grepl("CSDP reporting error", sector, ignore.case = TRUE),
                     !is.na(bond),
+                    # Remove empty strings
+                    sector != "",
                     bond != "",
-                    !grepl("^NA$", bond, ignore.case = TRUE),
-                    !grepl("^TOTAL", bond, ignore.case = TRUE)
+                    nchar(sector) > 0,
+                    nchar(bond) > 0,
+                    # Remove string "NA" (case-insensitive, with optional whitespace)
+                    !grepl("^\\s*NA\\s*$", sector, ignore.case = TRUE),
+                    !grepl("^\\s*NA\\s*$", bond, ignore.case = TRUE),
+                    # Remove TOTAL rows (partial match, case-insensitive)
+                    !grepl("TOTAL", sector, ignore.case = TRUE),
+                    !grepl("TOTAL", bond, ignore.case = TRUE),
+                    # Remove CSDP reporting error rows
+                    !grepl("CSDP reporting error", sector, ignore.case = TRUE)
                 ) %>%
                 arrange(file_date, sector, bond)
 

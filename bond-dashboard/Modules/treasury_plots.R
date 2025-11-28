@@ -154,9 +154,21 @@ generate_holdings_area_chart <- function(holdings_long,
     sector_order <- c("Other", "Other financial institutions", "Non-residents",
                       "Local pension funds", "Insurers", "Banks")
 
-    # First, clean the data by removing NA values
+    # First, clean the data by removing NA values and invalid sectors
+    # BUG FIX: Filter out NA sectors and TOTAL rows that may have slipped through
     clean_data <- plot_data %>%
-        filter(!is.na(percentage), !is.na(date), !is.na(sector))
+        # Trim whitespace from sector to catch edge cases
+        mutate(sector = trimws(as.character(sector))) %>%
+        filter(
+            !is.na(percentage),
+            !is.na(date),
+            !is.na(sector),
+            sector != "",
+            nchar(sector) > 0,
+            # Remove string "NA" and TOTAL rows
+            !grepl("^\\s*NA\\s*$", sector, ignore.case = TRUE),
+            !grepl("TOTAL", sector, ignore.case = TRUE)
+        )
 
     if (nrow(clean_data) == 0) {
         return(create_empty_plot("No data available for selected filters"))
@@ -435,20 +447,31 @@ generate_bond_holdings_bar_chart <- function(bond_pct_long,
     # Filter data - CRITICAL: Filter out NA sectors and summary rows BEFORE any processing
     # First filter for date and bond type, keeping all valid sectors (including 0% holdings)
     # NOTE: Using selected_bond_type parameter to avoid name collision with bond_type column
+    #
+    # BUG FIX: The Excel data contains TOTAL rows where sector = NA and value = 1.0 (100%)
+    # These must be filtered out to ensure each bond sums to ~100%, not ~200%
     filtered_data <- bond_pct_long %>%
+        # Trim whitespace from sector to catch edge cases like " NA" or "NA "
+        mutate(sector = trimws(as.character(sector))) %>%
         filter(
             file_date == target_date,
             bond_type == selected_bond_type,
             # Remove R NA values (null/missing)
             !is.na(sector),
             !is.na(bond),
-            !is.na(value)
+            !is.na(value),
+            # Remove empty strings and whitespace-only sectors
+            sector != "",
+            nchar(sector) > 0
         ) %>%
-        # Remove string "NA", TOTAL rows, and error rows
-        filter(!grepl("^NA$", sector, ignore.case = TRUE)) %>%
+        # Remove string "NA" (case-insensitive, with optional whitespace)
+        filter(!grepl("^\\s*NA\\s*$", sector, ignore.case = TRUE)) %>%
+        # Remove TOTAL rows (partial match, case-insensitive)
         filter(!grepl("TOTAL", sector, ignore.case = TRUE)) %>%
+        # Remove CSDP reporting error rows
         filter(!grepl("CSDP reporting error", sector, ignore.case = TRUE)) %>%
-        filter(!grepl("^NA$", bond, ignore.case = TRUE)) %>%
+        # Also filter bonds that are NA or TOTAL (summary rows)
+        filter(!grepl("^\\s*NA\\s*$", bond, ignore.case = TRUE)) %>%
         filter(!grepl("TOTAL", bond, ignore.case = TRUE))
 
     # Validate that each bond sums to ~100% (data integrity check)
@@ -598,19 +621,30 @@ generate_holdings_change_diverging <- function(bond_pct_long,
     # CRITICAL: Filter out NA sectors and summary rows BEFORE any calculations
     # This prevents NA from appearing in the legend
     # NOTE: Using selected_bond_type parameter to avoid name collision with bond_type column
+    #
+    # BUG FIX: The Excel data contains TOTAL rows where sector = NA and value = 1.0 (100%)
+    # These must be filtered out to ensure accurate change calculations
     clean_bond_data <- bond_pct_long %>%
+        # Trim whitespace from sector to catch edge cases like " NA" or "NA "
+        mutate(sector = trimws(as.character(sector))) %>%
         filter(
             bond_type == selected_bond_type,
             # Remove R NA values (null/missing)
             !is.na(sector),
             !is.na(bond),
-            !is.na(value)
+            !is.na(value),
+            # Remove empty strings and whitespace-only sectors
+            sector != "",
+            nchar(sector) > 0
         ) %>%
-        # Remove string "NA", TOTAL rows, and error rows
-        filter(!grepl("^NA$", sector, ignore.case = TRUE)) %>%
+        # Remove string "NA" (case-insensitive, with optional whitespace)
+        filter(!grepl("^\\s*NA\\s*$", sector, ignore.case = TRUE)) %>%
+        # Remove TOTAL rows (partial match, case-insensitive)
         filter(!grepl("TOTAL", sector, ignore.case = TRUE)) %>%
+        # Remove CSDP reporting error rows
         filter(!grepl("CSDP reporting error", sector, ignore.case = TRUE)) %>%
-        filter(!grepl("^NA$", bond, ignore.case = TRUE)) %>%
+        # Also filter bonds that are NA or TOTAL (summary rows)
+        filter(!grepl("^\\s*NA\\s*$", bond, ignore.case = TRUE)) %>%
         filter(!grepl("TOTAL", bond, ignore.case = TRUE))
 
     # Calculate changes using cleaned data
