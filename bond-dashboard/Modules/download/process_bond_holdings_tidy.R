@@ -232,8 +232,14 @@ process_sa_bond_holdings_tidy <- function(source_folder = "bond_holdings",
                     maturity_year = as.integer(str_extract(bond, "\\d{4}"))
                 ) %>%
                 # CRITICAL FIX: Filter out invalid sectors and TOTAL rows AFTER pivot
-                # The Excel data contains TOTAL rows where sector = NA and value = 1.0 (100%)
-                # These must be filtered out to ensure each bond sums to ~100%, not ~200%
+                # The Excel data contains TOTAL rows where sector appears as the STRING "NA"
+                # (not R's NA value) and value = 1.0 (100%). These must be filtered out
+                # to ensure each bond sums to ~100%, not ~200%.
+                #
+                # The fix uses MULTIPLE filtering approaches to catch string "NA" reliably:
+                # 1. toupper(trimws(sector)) != "NA" - Simple string comparison (most reliable)
+                # 2. Regex pattern as backup
+                # 3. Character encoding check using nchar() for empty/whitespace strings
                 #
                 # First, trim whitespace from sector and bond to catch edge cases
                 mutate(
@@ -249,15 +255,19 @@ process_sa_bond_holdings_tidy <- function(source_folder = "bond_holdings",
                     bond != "",
                     nchar(sector) > 0,
                     nchar(bond) > 0,
-                    # Remove string "NA" (case-insensitive, with optional whitespace)
-                    !grepl("^\\s*NA\\s*$", sector, ignore.case = TRUE),
-                    !grepl("^\\s*NA\\s*$", bond, ignore.case = TRUE),
+                    # CRITICAL FIX: Remove literal string "NA" using simple comparison
+                    # This is more reliable than regex for catching the TOTAL row issue
+                    toupper(sector) != "NA",
+                    toupper(bond) != "NA",
                     # Remove TOTAL rows (partial match, case-insensitive)
                     !grepl("TOTAL", sector, ignore.case = TRUE),
                     !grepl("TOTAL", bond, ignore.case = TRUE),
-                    # Remove CSDP reporting error rows
-                    !grepl("CSDP reporting error", sector, ignore.case = TRUE)
+                    # Remove CSDP reporting error rows (negligible, clutters legend)
+                    !grepl("CSDP", sector, ignore.case = TRUE)
                 ) %>%
+                # Additional safety check: regex as backup for edge cases
+                filter(!grepl("^\\s*NA\\s*$", sector, ignore.case = TRUE)) %>%
+                filter(!grepl("^\\s*NA\\s*$", bond, ignore.case = TRUE)) %>%
                 arrange(file_date, sector, bond)
 
             return(list(wide = combined_wide, long = combined_long))
