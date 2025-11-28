@@ -611,7 +611,7 @@ treasury_holdings_server <- function(id) {
                         tags$tr(
                             tags$td(""),
                             tags$td(style = "text-align: right; font-weight: bold;",
-                                    sprintf("%.1f%%", top_sector$percentage))
+                                    sprintf("%.1f%%", top_sector$percentage * 100))
                         )
                     )
                 )
@@ -886,11 +886,12 @@ treasury_holdings_server <- function(id) {
                 req(treasury_data$holdings_ts)
 
                 # Create wide format table for display
+                # Multiply by 100 to convert decimal percentages (0.25) to display percentages (25%)
                 table_data <- treasury_data$holdings_ts %>%
                     filter(date >= input$date_range[1], date <= input$date_range[2]) %>%
                     mutate(
                         date_label = format(date, "%b %Y"),
-                        percentage = sprintf("%.1f%%", percentage)
+                        percentage = sprintf("%.1f%%", percentage * 100)
                     ) %>%
                     select(Date = date_label, Sector = sector, Holdings = percentage) %>%
                     pivot_wider(
@@ -903,13 +904,14 @@ treasury_holdings_server <- function(id) {
                 req(treasury_data$bond_holdings)
                 req(input$table_bond_type)
 
+                # Multiply by 100 to convert decimal percentages to display percentages
                 table_data <- treasury_data$bond_holdings %>%
                     filter(bond_type == input$table_bond_type) %>%
                     filter(!grepl("TOTAL", bond, ignore.case = TRUE)) %>%
                     filter(!grepl("TOTAL", sector, ignore.case = TRUE)) %>%
                     mutate(
                         date_label = format(file_date, "%b %Y"),
-                        value = sprintf("%.1f%%", value)
+                        value = sprintf("%.1f%%", value * 100)
                     ) %>%
                     select(Date = date_label, Bond = bond, Sector = sector, Holdings = value) %>%
                     arrange(desc(Date), Bond, Sector)
