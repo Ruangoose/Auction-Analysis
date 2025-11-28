@@ -338,10 +338,40 @@ treasury_holdings_ui <- function(id) {
                                                      )
                                               )
                                           ),
+                                          # Bond exclusion controls
+                                          fluidRow(
+                                              column(12,
+                                                     checkboxInput(
+                                                         ns("auto_exclude_outliers"),
+                                                         "Auto-exclude new/matured bonds (>80% change)",
+                                                         value = TRUE
+                                                     )
+                                              )
+                                          ),
+                                          fluidRow(
+                                              column(12,
+                                                     selectizeInput(
+                                                         ns("exclude_bonds"),
+                                                         "Additional bonds to exclude:",
+                                                         choices = NULL,
+                                                         selected = NULL,
+                                                         multiple = TRUE,
+                                                         options = list(
+                                                             placeholder = "Select bonds to exclude...",
+                                                             plugins = list("remove_button")
+                                                         )
+                                                     )
+                                              )
+                                          ),
                                           withSpinner(
                                               plotOutput(ns("diverging_change_chart"), height = "400px"),
                                               type = 4,
                                               color = insele_primary
+                                          ),
+                                          # Excluded bonds info
+                                          tags$div(
+                                              style = "font-size: 11px; color: #666; margin-top: 5px; margin-bottom: 10px;",
+                                              textOutput(ns("excluded_bonds_info"))
                                           ),
                                           downloadButton(ns("download_diverging_chart"), "Download Chart", class = "btn-sm btn-primary")
                                       )
@@ -548,6 +578,30 @@ treasury_holdings_server <- function(id) {
                 "snapshot_date",
                 choices = date_choices,
                 selected = as.character(dates[1])
+            )
+        })
+
+        # Update exclude_bonds choices when change_bond_type changes
+        observe({
+            req(treasury_data$bond_holdings)
+            req(input$change_bond_type)
+
+            # Get available bonds for the selected bond type
+            # Filter out TOTAL rows and NA bonds
+            available_bonds <- treasury_data$bond_holdings %>%
+                filter(bond_type == input$change_bond_type) %>%
+                filter(!grepl("TOTAL", bond, ignore.case = TRUE)) %>%
+                filter(!is.na(bond)) %>%
+                filter(toupper(trimws(bond)) != "NA") %>%
+                pull(bond) %>%
+                unique() %>%
+                sort()
+
+            updateSelectizeInput(
+                session,
+                "exclude_bonds",
+                choices = available_bonds,
+                selected = character(0)  # Clear selection when bond type changes
             )
         })
 
@@ -864,7 +918,8 @@ treasury_holdings_server <- function(id) {
         }, res = 96)
 
         # 5. Diverging Change Chart
-        output$diverging_change_chart <- renderPlot({
+        # Store the current plot as a reactive for accessing excluded bonds info
+        current_diverging_plot <- reactive({
             req(treasury_data$bond_holdings)
             req(input$change_bond_type)
             req(input$change_period_select)
@@ -873,9 +928,48 @@ treasury_holdings_server <- function(id) {
                 bond_pct_long = treasury_data$bond_holdings,
                 period_months = as.integer(input$change_period_select),
                 selected_bond_type = input$change_bond_type,
-                top_n = 12
+                top_n = 12,
+                exclude_bonds = input$exclude_bonds,
+                auto_exclude_outliers = isTRUE(input$auto_exclude_outliers),
+                outlier_threshold = 80,
+                order_by_maturity = TRUE
             )
+        })
+
+        output$diverging_change_chart <- renderPlot({
+            current_diverging_plot()
         }, res = 96)
+
+        # Output for excluded bonds info text
+        output$excluded_bonds_info <- renderText({
+            p <- current_diverging_plot()
+
+            # Get excluded bonds from plot attributes
+            excluded <- attr(p, "excluded_bonds")
+            auto_excluded <- attr(p, "auto_excluded_bonds")
+
+            if (is.null(excluded) || length(excluded) == 0) {
+                return("")
+            }
+
+            # Build info text
+            info_parts <- character(0)
+
+            # Auto-excluded bonds
+            if (!is.null(auto_excluded) && length(auto_excluded) > 0) {
+                info_parts <- c(info_parts,
+                                paste0("Auto-excluded (>80% change): ", paste(auto_excluded, collapse = ", ")))
+            }
+
+            # Manually excluded bonds (those not auto-excluded)
+            manual_excluded <- setdiff(excluded, auto_excluded)
+            if (length(manual_excluded) > 0) {
+                info_parts <- c(info_parts,
+                                paste0("Manually excluded: ", paste(manual_excluded, collapse = ", ")))
+            }
+
+            paste(info_parts, collapse = " | ")
+        })
 
         # ==================================================================
         # DATA TABLE OUTPUT
@@ -1004,7 +1098,11 @@ treasury_holdings_server <- function(id) {
                     bond_pct_long = treasury_data$bond_holdings,
                     period_months = as.integer(input$change_period_select),
                     selected_bond_type = input$change_bond_type,
-                    top_n = 12
+                    top_n = 12,
+                    exclude_bonds = input$exclude_bonds,
+                    auto_exclude_outliers = isTRUE(input$auto_exclude_outliers),
+                    outlier_threshold = 80,
+                    order_by_maturity = TRUE
                 )
                 ggsave(file, p, width = 10, height = 8, dpi = 300)
             }

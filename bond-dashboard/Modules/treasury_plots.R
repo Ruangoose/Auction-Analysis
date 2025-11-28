@@ -567,18 +567,27 @@ generate_bond_holdings_bar_chart <- function(bond_pct_long,
 
 #' Generate Holdings Change Diverging Chart
 #'
-#' Creates a diverging bar chart showing changes in holdings by bond and sector
+#' Creates a diverging bar chart showing changes in holdings by bond and sector.
+#' Supports bond exclusion (manual and automatic outlier detection) and maturity ordering.
 #'
 #' @param bond_pct_long Data frame with columns: file_date, sector, bond, value, bond_type
 #' @param period_months Number of months for change calculation (default: 3)
 #' @param selected_bond_type Filter for bond type
 #' @param top_n Number of bonds to show (default: 15)
-#' @return ggplot2 object
+#' @param exclude_bonds Character vector of bond names to exclude from the chart (default: NULL)
+#' @param auto_exclude_outliers Logical, whether to auto-exclude bonds with extreme changes (default: FALSE)
+#' @param outlier_threshold Numeric, threshold for outlier detection in percentage points (default: 80)
+#' @param order_by_maturity Logical, whether to order bonds by maturity date (default: TRUE)
+#' @return List with ggplot2 object and vector of excluded bonds, or just ggplot2 object for backward compatibility
 #' @export
 generate_holdings_change_diverging <- function(bond_pct_long,
                                                period_months = 3,
                                                selected_bond_type = "Fixed Rate",
-                                               top_n = 15) {
+                                               top_n = 15,
+                                               exclude_bonds = NULL,
+                                               auto_exclude_outliers = FALSE,
+                                               outlier_threshold = 80,
+                                               order_by_maturity = TRUE) {
 
     # Input validation
     if (is.null(bond_pct_long) || nrow(bond_pct_long) == 0) {
@@ -651,18 +660,84 @@ generate_holdings_change_diverging <- function(bond_pct_long,
         return(create_empty_plot("Unable to calculate changes"))
     }
 
-    # Select top bonds by absolute change
-    top_bonds <- change_data %>%
+    # ==================================================================
+    # BOND EXCLUSION LOGIC
+    # ==================================================================
+
+    # Calculate total change per bond for outlier detection
+    bond_total_changes <- change_data %>%
         group_by(bond) %>%
-        summarize(total_abs_change = sum(abs(change_display), na.rm = TRUE)) %>%
+        summarize(
+            total_change = sum(change_display, na.rm = TRUE),
+            total_abs_change = sum(abs(change_display), na.rm = TRUE),
+            .groups = "drop"
+        )
+
+    # Initialize excluded bonds tracking
+    all_excluded_bonds <- character(0)
+    auto_excluded_bonds <- character(0)
+
+    # Auto-exclude outlier bonds (newly issued or matured bonds with extreme changes)
+    if (auto_exclude_outliers) {
+        auto_excluded_bonds <- bond_total_changes %>%
+            filter(abs(total_change) > outlier_threshold) %>%
+            pull(bond) %>%
+            unique()
+
+        all_excluded_bonds <- auto_excluded_bonds
+    }
+
+    # Add manually excluded bonds
+    if (!is.null(exclude_bonds) && length(exclude_bonds) > 0) {
+        all_excluded_bonds <- unique(c(all_excluded_bonds, exclude_bonds))
+    }
+
+    # Remove excluded bonds from change_data
+    if (length(all_excluded_bonds) > 0) {
+        change_data <- change_data %>%
+            filter(!bond %in% all_excluded_bonds)
+
+        bond_total_changes <- bond_total_changes %>%
+            filter(!bond %in% all_excluded_bonds)
+    }
+
+    # Check if we have any data left after exclusions
+    if (nrow(change_data) == 0) {
+        return(create_empty_plot("All bonds excluded - adjust exclusion settings"))
+    }
+
+    # ==================================================================
+    # BOND SELECTION AND ORDERING
+    # ==================================================================
+
+    # Select top bonds by absolute change
+    top_bonds <- bond_total_changes %>%
         arrange(desc(total_abs_change)) %>%
         slice_head(n = top_n) %>%
         pull(bond)
 
+    # Order bonds by maturity date if requested
+    if (order_by_maturity) {
+        # Calculate maturity year for each bond
+        bond_maturity <- tibble(
+            bond = top_bonds,
+            maturity_year = sapply(top_bonds, extract_maturity_year)
+        ) %>%
+            arrange(maturity_year)  # Nearest maturity first
+
+        # Order: nearest maturity at TOP of chart (which means last in factor levels due to coord_flip)
+        # With coord_flip, the first factor level appears at the bottom of the y-axis
+        # So we reverse the order: furthest maturity first in levels = appears at bottom
+        top_bonds_ordered <- rev(bond_maturity$bond)  # Furthest maturity first in levels
+    } else {
+        # Keep original order by absolute change (largest change at top)
+        top_bonds_ordered <- rev(top_bonds)
+    }
+
     plot_data <- change_data %>%
         filter(bond %in% top_bonds) %>%
         mutate(
-            bond = factor(bond, levels = rev(top_bonds)),
+            bond = factor(bond, levels = top_bonds_ordered),
             direction = if_else(change_display >= 0, "Increase", "Decrease")
         )
 
@@ -673,6 +748,14 @@ generate_holdings_change_diverging <- function(bond_pct_long,
     if (length(unmapped_sectors) > 0) {
         warning("Diverging chart: Unmapped sectors (will get default colors): ",
                 paste(unmapped_sectors, collapse = ", "))
+    }
+
+    # Build subtitle with ordering and exclusion info
+    subtitle_parts <- sprintf("%d-month change per bond (as of %s)",
+                              period_months,
+                              format(current_date, "%B %Y"))
+    if (order_by_maturity) {
+        subtitle_parts <- paste0(subtitle_parts, " • Ordered by maturity")
     }
 
     # Create the diverging bar chart
@@ -692,9 +775,7 @@ generate_holdings_change_diverging <- function(bond_pct_long,
         coord_flip() +
         labs(
             title = sprintf("SA %s Bonds: Change in Institutional Ownership", selected_bond_type),
-            subtitle = sprintf("%d-month change per bond (as of %s)",
-                               period_months,
-                               format(current_date, "%B %Y")),
+            subtitle = subtitle_parts,
             x = NULL,
             y = "% Change",
             caption = "Source: Insele Capital Partners & National Treasury"
@@ -712,6 +793,12 @@ generate_holdings_change_diverging <- function(bond_pct_long,
             axis.text.x = element_text(size = 10)
         ) +
         guides(fill = guide_legend(nrow = 2, byrow = TRUE))
+
+    # Return plot with metadata about excluded bonds
+    # This allows the calling code to display exclusion information
+    # Store excluded bonds info as an attribute to maintain backward compatibility
+    attr(p, "excluded_bonds") <- all_excluded_bonds
+    attr(p, "auto_excluded_bonds") <- auto_excluded_bonds
 
     return(p)
 }
@@ -854,6 +941,79 @@ generate_sector_trend_chart <- function(holdings_long,
 # ================================================================================
 # HELPER FUNCTIONS
 # ================================================================================
+
+#' Extract Maturity Year from Bond Name
+#'
+#' Parses SA Government bond names to extract the maturity year.
+#' Handles various naming conventions:
+#' - R2033, I2043 -> direct year extraction (2033, 2043)
+#' - R186, R209, R213, R214 -> legacy naming with known maturity mapping
+#' - Other formats -> regex extraction of 4-digit year
+#'
+#' @param bond_name Character string with bond name (e.g., "R2033", "I2043", "R186")
+#' @return Integer year (e.g., 2033) or 9999 for unknown bonds (placed at end)
+#' @export
+extract_maturity_year <- function(bond_name) {
+    # Handle NULL or NA
+    if (is.null(bond_name) || is.na(bond_name) || bond_name == "") {
+        return(9999)
+    }
+
+    # Clean the bond name (remove any maturity year suffix like " (2033)")
+    clean_name <- trimws(gsub("\\s*\\(\\d{4}\\)\\s*$", "", as.character(bond_name)))
+
+    # Handle R20XX, I20XX format (e.g., R2033, I2043, R2048)
+    if (grepl("^[RI]20[0-9]{2}$", clean_name)) {
+        return(as.integer(substr(clean_name, 2, 5)))
+    }
+
+    # Handle legacy SA bond naming conventions with known maturity dates
+    # These are well-known SA government bonds with specific maturity dates
+    legacy_map <- c(
+        "R186" = 2026,   # 21 December 2026
+        "R197" = 2023,   # Matured (included for historical data)
+        "R202" = 2033,   # 7 December 2033
+        "R203" = 2025,   # 15 September 2025
+        "R204" = 2018,   # Matured
+        "R207" = 2020,   # Matured
+        "R208" = 2021,   # Matured
+        "R209" = 2036,   # 31 March 2036
+        "R210" = 2028,   # 31 March 2028
+        "R211" = 2024,   # Matured
+        "R212" = 2024,   # Matured
+        "R213" = 2031,   # 28 February 2031
+        "R214" = 2041,   # 31 March 2041
+        "R2023" = 2023,  # Already handled by regex above, but included for safety
+        "R2025" = 2025,
+        "R2030" = 2030,
+        "R2032" = 2032,
+        "R2035" = 2035,
+        "R2037" = 2037,
+        "R2040" = 2040,
+        "R2044" = 2044,
+        "R2048" = 2048,
+        "R2053" = 2053
+    )
+
+    if (clean_name %in% names(legacy_map)) {
+        return(legacy_map[[clean_name]])
+    }
+
+    # Try to extract any 4-digit year starting with 20 from the bond name
+    year_match <- regmatches(clean_name, regexpr("20[0-9]{2}", clean_name))
+    if (length(year_match) > 0 && nchar(year_match) == 4) {
+        return(as.integer(year_match))
+    }
+
+    # For ILBs (Inflation-Linked Bonds) with I prefix
+    # e.g., I2025, I2033, I2038, I2046, I2050
+    if (grepl("^I[0-9]{4}$", clean_name)) {
+        return(as.integer(substr(clean_name, 2, 5)))
+    }
+
+    # For any remaining patterns, return 9999 to place unknown bonds at the end
+    return(9999)
+}
 
 #' Calculate Period Changes
 #'
