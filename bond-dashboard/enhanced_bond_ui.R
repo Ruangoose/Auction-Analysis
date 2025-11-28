@@ -1466,6 +1466,7 @@ ui <- dashboardPage(
                                                                   "Trading Desk Report" = "trading",
                                                                   "Risk Committee Report" = "risk",
                                                                   "Client Portfolio Review" = "client",
+                                                                  "Treasury Holdings Report" = "treasury",
                                                                   "Custom Report" = "custom"
                                                               ),
                                                               selected = "executive"),
@@ -1626,6 +1627,30 @@ ui <- dashboardPage(
                                                       ),
 
                                                       # ═══════════════════════════════════════════════════════════
+                                                      # TREASURY HOLDINGS SECTION
+                                                      # ═══════════════════════════════════════════════════════════
+                                                      tags$div(
+                                                          class = "section-container",
+                                                          style = "margin-bottom: 10px; border: 2px solid #1B3A6B; border-radius: 5px; padding: 10px; background: white;",
+                                                          checkboxInput("section_treasury",
+                                                                        tags$b(style = "color: #1B3A6B; font-size: 14px;", HTML("&#127974; Treasury Holdings")),
+                                                                        value = FALSE),
+                                                          conditionalPanel(
+                                                              condition = "input.section_treasury == true",
+                                                              style = "margin-left: 20px; margin-top: 10px;",
+                                                              checkboxInput("plot_holdings_area", "Holdings Time Series (Area)", value = TRUE),
+                                                              checkboxInput("plot_sector_trend", "Single Sector Trend", value = TRUE),
+                                                              checkboxInput("plot_holdings_fixed", "Fixed Rate Holdings", value = TRUE),
+                                                              checkboxInput("plot_holdings_ilb", "ILB Holdings", value = TRUE),
+                                                              checkboxInput("plot_holdings_frn", "FRN Holdings", value = FALSE),
+                                                              checkboxInput("plot_holdings_sukuk", "Sukuk Holdings", value = FALSE),
+                                                              checkboxInput("plot_ownership_changes", "Ownership Changes", value = TRUE),
+                                                              checkboxInput("plot_holdings_diverging_fixed", "Fixed Rate Changes (Diverging)", value = FALSE),
+                                                              checkboxInput("plot_holdings_diverging_ilb", "ILB Changes (Diverging)", value = FALSE)
+                                                          )
+                                                      ),
+
+                                                      # ═══════════════════════════════════════════════════════════
                                                       # RECOMMENDATIONS SECTION
                                                       # ═══════════════════════════════════════════════════════════
                                                       tags$div(
@@ -1646,9 +1671,11 @@ ui <- dashboardPage(
                                                       tags$hr(style = "margin: 15px 0;"),
                                                       tags$div(
                                                           style = "background: #e8f4f8; padding: 10px; border-radius: 5px; border-left: 4px solid #1B3A6B;",
-                                                          tags$strong(style = "color: #1B3A6B;", HTML("&#128204; Total Available: 26 Plots")),
+                                                          tags$strong(style = "color: #1B3A6B;", HTML("&#128204; Total Available: 35 Plots")),
                                                           tags$br(),
-                                                          tags$small(style = "color: #666;", HTML("&#10024; = Newly added to report generation"))
+                                                          tags$small(style = "color: #666;", HTML("&#10024; = Newly added to report generation")),
+                                                          tags$br(),
+                                                          tags$small(style = "color: #666;", HTML("&#127974; = Treasury Holdings section"))
                                                       )
                                                   )
                                               )

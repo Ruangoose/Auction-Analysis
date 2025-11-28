@@ -7,9 +7,12 @@
 #' @param var_data Value-at-Risk data
 #' @param regime_data Market regime data
 #' @param carry_roll_data Carry and roll return data
+#' @param treasury_holdings_ts Treasury holdings time series data (optional)
+#' @param treasury_bond_holdings Treasury bond-level holdings data (optional)
 #' @param input_params List of input parameters from the Shiny app
 collect_report_charts <- function(processed_data, filtered_data, filtered_data_with_technicals,
                                   var_data, regime_data, carry_roll_data,
+                                  treasury_holdings_ts = NULL, treasury_bond_holdings = NULL,
                                   input_params) {
 
     # ══════════════════════════════════════════════════════════════════════
@@ -233,6 +236,106 @@ collect_report_charts <- function(processed_data, filtered_data, filtered_data_w
             term_structure = function() {
                 if(!is.null(filtered_data) && nrow(filtered_data) > 10) {
                     generate_term_structure_3d_plot(filtered_data, list())
+                } else { NULL }
+            }
+        ),
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # TREASURY HOLDINGS SECTION
+        # ═══════════════════════════════════════════════════════════════════════════
+        treasury = list(
+            holdings_area = function() {
+                if(!is.null(treasury_holdings_ts) && nrow(treasury_holdings_ts) > 0) {
+                    generate_holdings_area_chart(
+                        holdings_long = treasury_holdings_ts,
+                        date_range = NULL,  # Use full range for reports
+                        sectors_selected = NULL  # Include all sectors
+                    )
+                } else { NULL }
+            },
+            sector_trend = function() {
+                if(!is.null(treasury_holdings_ts) && nrow(treasury_holdings_ts) > 0) {
+                    # Use the largest sector for default report
+                    top_sector <- tryCatch({
+                        treasury_holdings_ts %>%
+                            filter(date == max(date)) %>%
+                            arrange(desc(percentage)) %>%
+                            slice(1) %>%
+                            pull(sector)
+                    }, error = function(e) "Non-residents")
+                    generate_sector_trend_chart(
+                        holdings_long = treasury_holdings_ts,
+                        sector_name = top_sector,
+                        date_range = NULL
+                    )
+                } else { NULL }
+            },
+            holdings_fixed = function() {
+                if(!is.null(treasury_bond_holdings) && nrow(treasury_bond_holdings) > 0) {
+                    generate_bond_holdings_bar_chart(
+                        bond_pct_long = treasury_bond_holdings,
+                        selected_bond_type = "Fixed Rate",
+                        target_date = NULL,  # Uses most recent
+                        show_labels = TRUE
+                    )
+                } else { NULL }
+            },
+            holdings_ilb = function() {
+                if(!is.null(treasury_bond_holdings) && nrow(treasury_bond_holdings) > 0) {
+                    generate_bond_holdings_bar_chart(
+                        bond_pct_long = treasury_bond_holdings,
+                        selected_bond_type = "ILB",
+                        target_date = NULL,
+                        show_labels = TRUE
+                    )
+                } else { NULL }
+            },
+            holdings_frn = function() {
+                if(!is.null(treasury_bond_holdings) && nrow(treasury_bond_holdings) > 0) {
+                    generate_bond_holdings_bar_chart(
+                        bond_pct_long = treasury_bond_holdings,
+                        selected_bond_type = "FRN",
+                        target_date = NULL,
+                        show_labels = TRUE
+                    )
+                } else { NULL }
+            },
+            holdings_sukuk = function() {
+                if(!is.null(treasury_bond_holdings) && nrow(treasury_bond_holdings) > 0) {
+                    generate_bond_holdings_bar_chart(
+                        bond_pct_long = treasury_bond_holdings,
+                        selected_bond_type = "Sukuk",
+                        target_date = NULL,
+                        show_labels = TRUE
+                    )
+                } else { NULL }
+            },
+            ownership_changes = function() {
+                if(!is.null(treasury_holdings_ts) && nrow(treasury_holdings_ts) > 0) {
+                    generate_ownership_change_chart(
+                        holdings_long = treasury_holdings_ts,
+                        periods = c(1, 3, 12)
+                    )
+                } else { NULL }
+            },
+            holdings_diverging_fixed = function() {
+                if(!is.null(treasury_bond_holdings) && nrow(treasury_bond_holdings) > 0) {
+                    generate_holdings_change_diverging(
+                        bond_pct_long = treasury_bond_holdings,
+                        period_months = 3,
+                        selected_bond_type = "Fixed Rate",
+                        top_n = 12
+                    )
+                } else { NULL }
+            },
+            holdings_diverging_ilb = function() {
+                if(!is.null(treasury_bond_holdings) && nrow(treasury_bond_holdings) > 0) {
+                    generate_holdings_change_diverging(
+                        bond_pct_long = treasury_bond_holdings,
+                        period_months = 3,
+                        selected_bond_type = "ILB",
+                        top_n = 12
+                    )
                 } else { NULL }
             }
         )

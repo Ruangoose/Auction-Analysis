@@ -143,8 +143,8 @@ server <- function(input, output, session) {
     # ================================================================================
     # TREASURY HOLDINGS MODULE
     # ================================================================================
-    # Initialize the Treasury Holdings module server
-    treasury_holdings_server("treasury_module")
+    # Initialize the Treasury Holdings module server and capture returned data
+    treasury_module_data <- treasury_holdings_server("treasury_module")
 
     # ════════════════════════════════════════════════════════════════════════
     # BOND DATA LOADING - BULLETPROOF VERSION
@@ -1007,6 +1007,42 @@ server <- function(input, output, session) {
         min_date <- min(bond_data()$date, na.rm = TRUE)
         updateDateRangeInput(session, "custom_date_range_modal",
                              start = min_date, end = today())
+    })
+
+    # ================================================================================
+    # REPORT TYPE PRESET HANDLER
+    # ================================================================================
+    # Auto-configure sections when report type is selected
+    observeEvent(input$report_type, {
+        if(input$report_type == "treasury") {
+            # Enable treasury section, disable others for focused Treasury Holdings Report
+            updateCheckboxInput(session, "section_overview", value = FALSE)
+            updateCheckboxInput(session, "section_relative", value = FALSE)
+            updateCheckboxInput(session, "section_risk", value = FALSE)
+            updateCheckboxInput(session, "section_technical", value = FALSE)
+            updateCheckboxInput(session, "section_carry", value = FALSE)
+            updateCheckboxInput(session, "section_auction", value = FALSE)
+            updateCheckboxInput(session, "section_intelligence", value = FALSE)
+            updateCheckboxInput(session, "section_treasury", value = TRUE)
+            updateCheckboxInput(session, "section_recommendations", value = FALSE)
+
+            # Select key treasury plots
+            updateCheckboxInput(session, "plot_holdings_area", value = TRUE)
+            updateCheckboxInput(session, "plot_sector_trend", value = TRUE)
+            updateCheckboxInput(session, "plot_holdings_fixed", value = TRUE)
+            updateCheckboxInput(session, "plot_holdings_ilb", value = TRUE)
+            updateCheckboxInput(session, "plot_holdings_frn", value = FALSE)
+            updateCheckboxInput(session, "plot_holdings_sukuk", value = FALSE)
+            updateCheckboxInput(session, "plot_ownership_changes", value = TRUE)
+            updateCheckboxInput(session, "plot_holdings_diverging_fixed", value = FALSE)
+            updateCheckboxInput(session, "plot_holdings_diverging_ilb", value = FALSE)
+
+            showNotification(
+                "Treasury Holdings Report preset selected - Treasury section enabled",
+                type = "message",
+                duration = 3
+            )
+        }
     })
 
     # Update Predictions Button Handler
@@ -2682,6 +2718,7 @@ server <- function(input, output, session) {
         if(isTRUE(input$section_carry)) sections <- c(sections, "carry")
         if(isTRUE(input$section_auction)) sections <- c(sections, "auction")
         if(isTRUE(input$section_intelligence)) sections <- c(sections, "intelligence")
+        if(isTRUE(input$section_treasury)) sections <- c(sections, "treasury")
         if(isTRUE(input$section_recommendations)) sections <- c(sections, "recommendations")
 
         # Collect ALL selected plots (including new ones)
@@ -2741,6 +2778,19 @@ server <- function(input, output, session) {
             if(isTRUE(input$plot_term_structure)) selected_plots <- c(selected_plots, "3D Term Structure")
         }
 
+        # Treasury Holdings
+        if(isTRUE(input$section_treasury)) {
+            if(isTRUE(input$plot_holdings_area)) selected_plots <- c(selected_plots, "\U0001F3DB Holdings Time Series")
+            if(isTRUE(input$plot_sector_trend)) selected_plots <- c(selected_plots, "\U0001F3DB Sector Trend")
+            if(isTRUE(input$plot_holdings_fixed)) selected_plots <- c(selected_plots, "\U0001F3DB Fixed Rate Holdings")
+            if(isTRUE(input$plot_holdings_ilb)) selected_plots <- c(selected_plots, "\U0001F3DB ILB Holdings")
+            if(isTRUE(input$plot_holdings_frn)) selected_plots <- c(selected_plots, "\U0001F3DB FRN Holdings")
+            if(isTRUE(input$plot_holdings_sukuk)) selected_plots <- c(selected_plots, "\U0001F3DB Sukuk Holdings")
+            if(isTRUE(input$plot_ownership_changes)) selected_plots <- c(selected_plots, "\U0001F3DB Ownership Changes")
+            if(isTRUE(input$plot_holdings_diverging_fixed)) selected_plots <- c(selected_plots, "\U0001F3DB Fixed Rate Changes")
+            if(isTRUE(input$plot_holdings_diverging_ilb)) selected_plots <- c(selected_plots, "\U0001F3DB ILB Changes")
+        }
+
         # Get data counts
         bond_count <- tryCatch(length(unique(filtered_data()$bond)), error = function(e) 0)
         date_range_text <- tryCatch(
@@ -2759,6 +2809,7 @@ server <- function(input, output, session) {
             "carry" = "Carry & Roll Analysis",
             "auction" = "Auction Intelligence",
             "intelligence" = "Market Intelligence",
+            "treasury" = "Treasury Holdings",
             "recommendations" = "Trading Recommendations"
         )
 
@@ -2771,11 +2822,11 @@ server <- function(input, output, session) {
                     style = "display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;",
                     tags$div(
                         tags$strong("Sections: "),
-                        tags$span(paste(length(sections), "of 8"), style = "color: #28a745; font-weight: bold;")
+                        tags$span(paste(length(sections), "of 9"), style = "color: #28a745; font-weight: bold;")
                     ),
                     tags$div(
                         tags$strong("Charts: "),
-                        tags$span(paste(chart_count, "of 26"),
+                        tags$span(paste(chart_count, "of 35"),
                                   style = sprintf("color: %s; font-weight: bold;",
                                                   ifelse(chart_count > 15, "#28a745", "#ffc107")))
                     )
@@ -3519,9 +3570,10 @@ server <- function(input, output, session) {
                 if(isTRUE(input$section_carry)) sections <- c(sections, "carry")
                 if(isTRUE(input$section_auction)) sections <- c(sections, "auction")
                 if(isTRUE(input$section_intelligence)) sections <- c(sections, "intelligence")
+                if(isTRUE(input$section_treasury)) sections <- c(sections, "treasury")
                 if(isTRUE(input$section_recommendations)) sections <- c(sections, "recommendations")
 
-                # Prepare input parameters with selected plots (ALL 26 plots)
+                # Prepare input parameters with selected plots (ALL 35 plots)
                 input_params <- list(
                     report_sections = sections,
                     selected_plots = list(
@@ -3563,7 +3615,18 @@ server <- function(input, output, session) {
 
                         # Intelligence
                         correlation = isTRUE(input$plot_correlation),
-                        term_structure = isTRUE(input$plot_term_structure)
+                        term_structure = isTRUE(input$plot_term_structure),
+
+                        # Treasury Holdings
+                        holdings_area = isTRUE(input$plot_holdings_area),
+                        sector_trend = isTRUE(input$plot_sector_trend),
+                        holdings_fixed = isTRUE(input$plot_holdings_fixed),
+                        holdings_ilb = isTRUE(input$plot_holdings_ilb),
+                        holdings_frn = isTRUE(input$plot_holdings_frn),
+                        holdings_sukuk = isTRUE(input$plot_holdings_sukuk),
+                        ownership_changes = isTRUE(input$plot_ownership_changes),
+                        holdings_diverging_fixed = isTRUE(input$plot_holdings_diverging_fixed),
+                        holdings_diverging_ilb = isTRUE(input$plot_holdings_diverging_ilb)
                     ),
                     # Pass other required params for auction plots
                     auction_bonds_select = input$auction_bonds_select,
@@ -3573,6 +3636,19 @@ server <- function(input, output, session) {
                     tech_bond_select = input$tech_bond_select,
                     tech_indicator_type = input$tech_indicator_type
                 )
+
+                # Get treasury data for report
+                treasury_holdings_ts_val <- tryCatch({
+                    if(!is.null(treasury_module_data) && !is.null(treasury_module_data$holdings_ts)) {
+                        treasury_module_data$holdings_ts()
+                    } else { NULL }
+                }, error = function(e) NULL)
+
+                treasury_bond_holdings_val <- tryCatch({
+                    if(!is.null(treasury_module_data) && !is.null(treasury_module_data$bond_holdings)) {
+                        treasury_module_data$bond_holdings()
+                    } else { NULL }
+                }, error = function(e) NULL)
 
                 # Collect charts with error handling - pass data directly
                 charts <- list()
@@ -3585,6 +3661,8 @@ server <- function(input, output, session) {
                         var_data_val,
                         regime_data_val,
                         carry_data_val,
+                        treasury_holdings_ts_val,    # Treasury time series
+                        treasury_bond_holdings_val,  # Treasury bond holdings
                         input_params
                     )
 
@@ -3900,9 +3978,10 @@ server <- function(input, output, session) {
                 if(isTRUE(input$section_carry)) sections <- c(sections, "carry")
                 if(isTRUE(input$section_auction)) sections <- c(sections, "auction")
                 if(isTRUE(input$section_intelligence)) sections <- c(sections, "intelligence")
+                if(isTRUE(input$section_treasury)) sections <- c(sections, "treasury")
                 if(isTRUE(input$section_recommendations)) sections <- c(sections, "recommendations")
 
-                # Prepare input parameters with selected plots (ALL 26 plots)
+                # Prepare input parameters with selected plots (ALL 35 plots)
                 input_params <- list(
                     report_sections = sections,
                     selected_plots = list(
@@ -3944,7 +4023,18 @@ server <- function(input, output, session) {
 
                         # Intelligence
                         correlation = isTRUE(input$plot_correlation),
-                        term_structure = isTRUE(input$plot_term_structure)
+                        term_structure = isTRUE(input$plot_term_structure),
+
+                        # Treasury Holdings
+                        holdings_area = isTRUE(input$plot_holdings_area),
+                        sector_trend = isTRUE(input$plot_sector_trend),
+                        holdings_fixed = isTRUE(input$plot_holdings_fixed),
+                        holdings_ilb = isTRUE(input$plot_holdings_ilb),
+                        holdings_frn = isTRUE(input$plot_holdings_frn),
+                        holdings_sukuk = isTRUE(input$plot_holdings_sukuk),
+                        ownership_changes = isTRUE(input$plot_ownership_changes),
+                        holdings_diverging_fixed = isTRUE(input$plot_holdings_diverging_fixed),
+                        holdings_diverging_ilb = isTRUE(input$plot_holdings_diverging_ilb)
                     ),
                     # Pass other required params for auction plots
                     auction_bonds_select = input$auction_bonds_select,
@@ -3957,6 +4047,19 @@ server <- function(input, output, session) {
 
                 incProgress(0.2, detail = "Collecting charts")
 
+                # Get treasury data for report (Word export)
+                treasury_holdings_ts_val <- tryCatch({
+                    if(!is.null(treasury_module_data) && !is.null(treasury_module_data$holdings_ts)) {
+                        treasury_module_data$holdings_ts()
+                    } else { NULL }
+                }, error = function(e) NULL)
+
+                treasury_bond_holdings_val <- tryCatch({
+                    if(!is.null(treasury_module_data) && !is.null(treasury_module_data$bond_holdings)) {
+                        treasury_module_data$bond_holdings()
+                    } else { NULL }
+                }, error = function(e) NULL)
+
                 # Collect charts with error handling
                 charts <- list()
                 tryCatch({
@@ -3967,6 +4070,8 @@ server <- function(input, output, session) {
                         var_data_val,
                         regime_data_val,
                         carry_data_val,
+                        treasury_holdings_ts_val,    # Treasury time series
+                        treasury_bond_holdings_val,  # Treasury bond holdings
                         input_params
                     )
 
