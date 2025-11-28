@@ -163,39 +163,52 @@ generate_holdings_area_chart <- function(holdings_long,
         stringsAsFactors = FALSE
     )
 
-    # Join with actual data and fill missing with 0 or interpolated values
+    # Join with actual data
     plot_data <- complete_grid %>%
         left_join(
             clean_data %>% select(date, sector, percentage),
             by = c("date", "sector")
-        ) %>%
-        # Group by sector to handle missing values within each sector
-        group_by(sector) %>%
-        arrange(date) %>%
-        mutate(
-            # Use last observation carried forward for missing values, then fill remaining with 0
-            percentage = if (requireNamespace("zoo", quietly = TRUE)) {
-                zoo::na.locf(percentage, na.rm = FALSE)
-            } else {
-                # Base R fallback for carrying forward
-                {
-                    result <- percentage
-                    current_val <- NA
-                    for (i in seq_along(result)) {
-                        if (!is.na(result[i])) {
-                            current_val <- result[i]
-                        } else {
-                            result[i] <- current_val
-                        }
+        )
+
+    # ===========================================
+    # FIX: Handle NA filling OUTSIDE of mutate()
+    # Cannot use if() inside mutate() - it causes quos error
+    # ===========================================
+
+    # Check if zoo is available BEFORE the mutate
+    use_zoo <- requireNamespace("zoo", quietly = TRUE)
+
+    if (use_zoo) {
+        # Apply na.locf per sector (last observation carried forward)
+        plot_data <- plot_data %>%
+            group_by(sector) %>%
+            arrange(date) %>%
+            mutate(percentage = zoo::na.locf(percentage, na.rm = FALSE)) %>%
+            ungroup()
+    } else {
+        # Base R fallback for carrying forward
+        plot_data <- plot_data %>%
+            group_by(sector) %>%
+            arrange(date) %>%
+            mutate(percentage = {
+                result <- percentage
+                current_val <- NA
+                for (i in seq_along(result)) {
+                    if (!is.na(result[i])) {
+                        current_val <- result[i]
+                    } else {
+                        result[i] <- current_val
                     }
-                    result
                 }
-            },
-            # Fill any remaining NAs (at the start) with 0
-            percentage = ifelse(is.na(percentage), 0, percentage)
-        ) %>%
-        ungroup() %>%
+                result
+            }) %>%
+            ungroup()
+    }
+
+    # Fill any remaining NAs (at the start) with 0 and create display columns
+    plot_data <- plot_data %>%
         mutate(
+            percentage = tidyr::replace_na(percentage, 0),
             sector = factor(sector, levels = sector_order),
             # Convert decimal percentages (0.25) to display percentages (25)
             percentage_display = percentage * 100
