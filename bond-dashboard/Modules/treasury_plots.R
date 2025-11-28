@@ -710,8 +710,12 @@ generate_holdings_change_diverging <- function(bond_pct_long,
     # BOND SELECTION AND ORDERING
     # ==================================================================
 
-    # Select top bonds by absolute change
+    # FIX: Select top bonds by absolute change - ONLY from bonds remaining after exclusion
+    # Get unique bonds that actually exist in change_data after exclusion
+    available_bonds <- unique(change_data$bond)
+
     top_bonds <- bond_total_changes %>%
+        filter(bond %in% available_bonds) %>%  # FIX: Only consider bonds that weren't excluded
         arrange(desc(total_abs_change)) %>%
         slice_head(n = top_n) %>%
         pull(bond)
@@ -734,12 +738,32 @@ generate_holdings_change_diverging <- function(bond_pct_long,
         top_bonds_ordered <- rev(top_bonds)
     }
 
+    # FIX: Filter plot_data first, THEN set factor levels based on what's actually in the data
     plot_data <- change_data %>%
-        filter(bond %in% top_bonds) %>%
+        filter(bond %in% top_bonds)
+
+    # FIX: Only use bonds that are actually in plot_data for factor levels
+    # This prevents empty rows from appearing for excluded bonds
+    actual_bonds_in_plot <- intersect(top_bonds_ordered, unique(plot_data$bond))
+
+    plot_data <- plot_data %>%
         mutate(
-            bond = factor(bond, levels = top_bonds_ordered),
+            bond = factor(bond, levels = actual_bonds_in_plot),  # FIX: Only include actual bonds
             direction = if_else(change_display >= 0, "Increase", "Decrease")
-        )
+        ) %>%
+        filter(!is.na(bond))  # FIX: Remove any rows where bond became NA due to factor mismatch
+
+    # Validate we still have data
+    if (nrow(plot_data) == 0) {
+        p <- create_empty_plot("No data available after filtering")
+        attr(p, "excluded_bonds") <- all_excluded_bonds
+        attr(p, "auto_excluded_bonds") <- auto_excluded_bonds
+        return(p)
+    }
+
+    # Drop unused factor levels to ensure clean y-axis
+    plot_data <- plot_data %>%
+        mutate(bond = droplevels(bond))
 
     # FIX: Use full treasury_sector_colors directly - ggplot will match by name
     # Check for any sectors in data that don't have color mappings (for debugging)
