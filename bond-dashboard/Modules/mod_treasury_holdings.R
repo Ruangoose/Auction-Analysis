@@ -847,7 +847,7 @@ treasury_holdings_server <- function(id) {
 
             generate_bond_holdings_bar_chart(
                 bond_pct_long = treasury_data$bond_holdings,
-                bond_type = input$snapshot_bond_type,
+                selected_bond_type = input$snapshot_bond_type,
                 target_date = as.Date(input$snapshot_date),
                 show_labels = TRUE
             )
@@ -872,7 +872,7 @@ treasury_holdings_server <- function(id) {
             generate_holdings_change_diverging(
                 bond_pct_long = treasury_data$bond_holdings,
                 period_months = as.integer(input$change_period_select),
-                bond_type = input$change_bond_type,
+                selected_bond_type = input$change_bond_type,
                 top_n = 12
             )
         }, res = 96)
@@ -972,7 +972,7 @@ treasury_holdings_server <- function(id) {
             content = function(file) {
                 p <- generate_bond_holdings_bar_chart(
                     bond_pct_long = treasury_data$bond_holdings,
-                    bond_type = input$snapshot_bond_type,
+                    selected_bond_type = input$snapshot_bond_type,
                     target_date = as.Date(input$snapshot_date),
                     show_labels = TRUE
                 )
@@ -1003,7 +1003,7 @@ treasury_holdings_server <- function(id) {
                 p <- generate_holdings_change_diverging(
                     bond_pct_long = treasury_data$bond_holdings,
                     period_months = as.integer(input$change_period_select),
-                    bond_type = input$change_bond_type,
+                    selected_bond_type = input$change_bond_type,
                     top_n = 12
                 )
                 ggsave(file, p, width = 10, height = 8, dpi = 300)
