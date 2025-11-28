@@ -220,12 +220,15 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
             # Process the nested year/month structure
             df_processed <- df %>%
                 mutate(
-                    # Identify year rows (contain just year and colon)
-                    is_year = !is.na(Period) & str_detect(as.character(Period), "^\\d{4}:?$"),
+                    # Identify year rows - match year with optional colon (e.g., "2017:" or "2025")
+                    is_year_row = !is.na(Period) & str_detect(as.character(Period), "^\\d{4}:?$"),
                     # Extract year
-                    year = if_else(is_year,
+                    year = if_else(is_year_row,
                                    as.integer(str_extract(as.character(Period), "\\d{4}")),
-                                   NA_integer_)
+                                   NA_integer_),
+                    # Check if this is an annual-only row (year marker with no month data)
+                    # Annual rows have year in Period but NA/empty in Month column
+                    is_annual_only = is_year_row & (is.na(Month) | str_trim(as.character(Month)) == "")
                 )
 
             # Fill down the year for subsequent month rows
@@ -249,9 +252,9 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
             }
             df_processed$year <- fill_down_year(df_processed$year)
 
-            # Remove year-only rows and process dates
+            # Remove annual-only rows (keep year rows that have month data)
             df_processed <- df_processed %>%
-                filter(!is_year | is.na(is_year)) %>%
+                filter(!is_annual_only) %>%
                 mutate(
                     # Get month name from the Month column
                     month_name = if_else(!is.na(Month), str_trim(as.character(Month)), NA_character_)
@@ -274,7 +277,7 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
             }
 
             df_processed <- df_processed %>%
-                select(-Period, -Month, -is_year, -month_name, -year) %>%
+                select(-Period, -Month, -is_year_row, -is_annual_only, -month_name, -year) %>%
                 filter(!is.na(date))
 
             # Convert all remaining columns to numeric (they should be percentages/proportions)

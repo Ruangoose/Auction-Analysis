@@ -115,6 +115,10 @@ process_holdings_timeseries <- function(source_folder = "bond_holdings",
     # Rename columns for consistency
     col_names <- names(holdings_raw)
     col_names[1] <- "period"
+    # Column 2 contains the month names (may be named "...2" or similar)
+    if (length(col_names) >= 2) {
+        col_names[2] <- "month"
+    }
     col_names <- str_trim(col_names)  # Remove trailing spaces
     names(holdings_raw) <- col_names
 
@@ -125,36 +129,35 @@ process_holdings_timeseries <- function(source_folder = "bond_holdings",
 
     holdings_processed <- holdings_raw %>%
         mutate(
-            # Identify year rows (contain just year and colon)
-            is_year = str_detect(period, "^\\d{4}:$"),
-            # Extract year
-            year = if_else(is_year,
+            # Identify year rows - match year with optional colon (e.g., "2017:" or "2025")
+            is_year_row = !is.na(period) & str_detect(period, "^\\d{4}:?$"),
+            # Extract year from period column when it contains a year
+            year = if_else(is_year_row,
                            as.integer(str_extract(period, "\\d{4}")),
-                           NA_integer_)
+                           NA_integer_),
+            # Check if this is an annual-only row (year marker with no month data)
+            # Annual rows have year in period but NA/empty in month column
+            is_annual_only = is_year_row & (is.na(month) | str_trim(month) == "")
         )
 
     # Fill down the year for subsequent month rows (use helper to avoid zoo dependency)
     holdings_processed$year <- fill_down_na(holdings_processed$year)
 
     holdings_processed <- holdings_processed %>%
-        filter(!is_year) %>%  # Remove year-only rows
+        filter(!is_annual_only) %>%  # Remove annual-only rows (keep year rows that have month data)
         mutate(
-            # Clean up month names
-            month_name = str_trim(period),
+            # Get month name from the month column (column 2), not period
+            month_name = str_trim(month),
             # Create proper date
             date = case_when(
-                # For rows with just a month name
-                !str_detect(month_name, "\\d{4}") ~
+                # For rows with a valid month name (no digits)
+                !is.na(month_name) & month_name != "" & !str_detect(month_name, "\\d{4}") ~
                     as.Date(paste("01", month_name, year), format = "%d %B %Y"),
                 # For any other format
                 TRUE ~ NA_Date_
-            ),
-            # If date is still NA, try to use the year as December of that year
-            date = if_else(is.na(date) & !is.na(year),
-                           as.Date(paste(year, "12", "01", sep = "-")),
-                           date)
+            )
         ) %>%
-        select(-period, -is_year, -month_name, -year) %>%
+        select(-period, -month, -is_year_row, -is_annual_only, -month_name, -year) %>%
         filter(!is.na(date)) %>%
         arrange(date)
 
