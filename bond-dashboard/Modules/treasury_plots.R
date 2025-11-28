@@ -179,87 +179,32 @@ generate_holdings_area_chart <- function(holdings_long,
     }
 
     # ===========================================
-    # CRITICAL: CREATE TRULY CONTINUOUS DATA
-    # This fixes the "Other" segment gap issue caused by irregular/missing dates
+    # SIMPLIFIED DATA PROCESSING (FIX FOR "Other" SEGMENT GAPS)
+    # The key insight: Working test configs do NOT use complex interpolation.
+    # They simply use tidyr::complete() with fill = 0.
     # ===========================================
 
-    date_min <- min(clean_data$date, na.rm = TRUE)
-    date_max <- max(clean_data$date, na.rm = TRUE)
-
-    # Create a continuous monthly sequence
-    # Use floor_date for both to stay within actual data range
-    all_dates <- seq.Date(
-        from = floor_date(date_min, "month"),
-        to = floor_date(date_max, "month"),
-        by = "month"
-    )
-
-    # Get sectors that exist in the data (preserving order)
-    existing_sectors <- intersect(sector_order, unique(clean_data$sector))
-
-    # Create COMPLETE grid of all date-sector combinations
-    complete_grid <- expand.grid(
-        date = all_dates,
-        sector = existing_sectors,
-        stringsAsFactors = FALSE
-    ) %>%
-        as_tibble()
-
-    # Join with actual data - aggregate duplicates by taking mean
-    plot_data <- complete_grid %>%
-        left_join(
-            clean_data %>%
-                select(date, sector, percentage) %>%
-                # Ensure we get one value per date-sector (take mean if duplicates)
-                group_by(date, sector) %>%
-                summarise(percentage = mean(percentage, na.rm = TRUE), .groups = "drop"),
-            by = c("date", "sector")
-        )
-
-    # ===========================================
-    # FIX: Use zoo::na.locf() for robust NA handling
-    # This fixes the "Other" segment gap issue caused by missing months
-    # (e.g., 2011-02, 2011-04, 2013-11)
-    #
-    # na.locf (Last Observation Carried Forward) is more reliable than
-    # approx() for time series with sporadic missing values, especially
-    # at boundaries where extrapolation can fail.
-    # ===========================================
-
-    plot_data <- plot_data %>%
-        group_by(sector) %>%
-        arrange(date) %>%
-        mutate(
-            # Forward fill NAs using last observation carried forward
-            percentage = zoo::na.locf(percentage, na.rm = FALSE),
-            # Backward fill for edge cases where first values are NA
-            percentage = zoo::na.locf(percentage, fromLast = TRUE, na.rm = FALSE),
-            # Final fallback: replace any remaining NAs with 0
-            percentage = tidyr::replace_na(percentage, 0),
-            # Apply minimum floor value to prevent zero-height rendering issues
-            # Very small values (< 0.0001%) can cause visual gaps in geom_area
-            percentage = pmax(percentage, 0.00001)
-        ) %>%
-        ungroup()
-
-    # Ensure continuous data by using tidyr::complete() to fill any gaps
-    # This handles cases where the complete_grid join might have missed combinations
-    plot_data <- plot_data %>%
-        tidyr::complete(
-            date,
-            sector,
-            fill = list(percentage = 0.00001)  # Minimum floor value
-        )
-
-    # Create display columns and factor ordering
-    # CRITICAL: Sort by date first, then sector to ensure geom_area connects points correctly
-    plot_data <- plot_data %>%
-        arrange(date, sector) %>%
+    # Simple, clean data preparation - NO complex interpolation with approx() or na.locf()
+    plot_data <- clean_data %>%
+        filter(sector %in% sector_order) %>%
         mutate(
             sector = factor(sector, levels = sector_order),
             # Convert decimal percentages (0.25) to display percentages (25)
             percentage_display = percentage * 100
-        )
+        ) %>%
+        arrange(date, sector)
+
+    # Fill any gaps with zeros - THIS IS THE KEY FIX
+    # tidyr::complete() ensures every date-sector combination exists
+    plot_data <- plot_data %>%
+        tidyr::complete(
+            date,
+            sector,
+            fill = list(percentage_display = 0)
+        ) %>%
+        # Ensure factor ordering is maintained after complete()
+        mutate(sector = factor(sector, levels = sector_order)) %>%
+        arrange(date, sector)
 
     # Validate that each date sums to ~100% (data integrity check)
     date_totals <- plot_data %>%
@@ -299,8 +244,8 @@ generate_holdings_area_chart <- function(holdings_long,
         ) +
         scale_y_continuous(
             labels = scales::percent_format(scale = 1),
-            expand = c(0, 0),
-            limits = c(0, 100)
+            expand = c(0, 0)
+            # NO limits = c(0, 100) - let ggplot auto-scale to prevent clipping
         ) +
         labs(
             title = "SA Government Bond Holdings",
@@ -565,8 +510,8 @@ generate_bond_holdings_bar_chart <- function(bond_pct_long,
         ) +
         scale_y_continuous(
             labels = scales::percent_format(scale = 1),
-            expand = c(0, 0),
-            limits = c(0, 100)
+            expand = c(0, 0)
+            # NO limits = c(0, 100) - let ggplot auto-scale to prevent clipping
         ) +
         coord_flip() +
         labs(
