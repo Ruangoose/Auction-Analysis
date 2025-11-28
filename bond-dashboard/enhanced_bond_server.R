@@ -94,6 +94,8 @@ required_modules <- c(
     "regime_plots.R",
     "insights_generators.R",
     "report_generators.R",
+    "treasury_plots.R",              # Treasury holdings plot generators
+    "mod_treasury_holdings.R",       # Treasury holdings Shiny module
     "enhanced_bond_ui.R"
 )
 
@@ -137,6 +139,12 @@ server <- function(input, output, session) {
         auction_performance_plot = NULL,  # Add this for storing plot
         carry_refresh = 0  # Add this for carry & roll refresh trigger
     )
+
+    # ================================================================================
+    # TREASURY HOLDINGS MODULE
+    # ================================================================================
+    # Initialize the Treasury Holdings module server
+    treasury_holdings_server("treasury_module")
 
     # ════════════════════════════════════════════════════════════════════════
     # BOND DATA LOADING - BULLETPROOF VERSION

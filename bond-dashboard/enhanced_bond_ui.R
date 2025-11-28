@@ -1435,6 +1435,13 @@ ui <- dashboardPage(
                            )
                        ),
 
+                       # Treasury Holdings Tab (NEW)
+                       tabPanel(
+                           "Treasury Holdings",
+                           icon = icon("building-columns"),
+                           treasury_holdings_ui("treasury_module")
+                       ),
+
                        # Report Generation Tab
                        tabPanel(
                            "Reports & Export",
