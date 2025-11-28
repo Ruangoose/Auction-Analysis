@@ -151,9 +151,12 @@ generate_holdings_area_chart <- function(holdings_long,
             filter(sector %in% sectors_selected)
     }
 
-    # Order sectors for proper stacking (bottom to top)
-    sector_order <- c("Other", "Other financial institutions", "Non-residents",
-                      "Local pension funds", "Insurers", "Banks")
+    # Order sectors for proper stacking
+    # NOTE: With position_stack(reverse = TRUE), the LAST sector in this list
+    # will appear at the BOTTOM of the stack. We put "Other" last so its small
+    # values (0.12% - 3.46%) render at the bottom where gaps are less noticeable.
+    sector_order <- c("Banks", "Insurers", "Local pension funds",
+                      "Non-residents", "Other financial institutions", "Other")
 
     # First, clean the data by removing NA values and invalid sectors
     # BUG FIX: Filter out NA sectors and TOTAL rows that may have slipped through
@@ -279,8 +282,11 @@ generate_holdings_area_chart <- function(holdings_long,
     # Create the stacked area chart
     # CRITICAL: Use group = sector to ensure geom_area connects points within each sector
     # This prevents the "Other" segment from appearing as disconnected rectangles
+    # FIX: Use position_stack(reverse = TRUE) so sectors are stacked in reverse order
+    # (last factor level at bottom). This places "Other" at the bottom where small
+    # values render without gaps - gaps at the chart top are more visually problematic.
     p <- ggplot(plot_data, aes(x = date, y = percentage_display, fill = sector, group = sector)) +
-        geom_area(alpha = 0.9, position = "stack") +
+        geom_area(alpha = 0.9, position = position_stack(reverse = TRUE)) +
         scale_fill_manual(
             values = treasury_aggregate_colors,
             name = "Sector",
@@ -534,24 +540,28 @@ generate_bond_holdings_bar_chart <- function(bond_pct_long,
     plot_data <- plot_data %>%
         mutate(bond_label = factor(bond_label, levels = bond_order))
 
-    # Get available sectors and match colors
-    sectors <- unique(plot_data$sector)
-    sector_colors <- treasury_sector_colors[names(treasury_sector_colors) %in% sectors]
-
-    # Add any missing sectors with default color
-    missing_sectors <- setdiff(sectors, names(sector_colors))
-    if (length(missing_sectors) > 0) {
-        default_colors <- scales::hue_pal()(length(missing_sectors))
-        names(default_colors) <- missing_sectors
-        sector_colors <- c(sector_colors, default_colors)
+    # FIX: Use full treasury_sector_colors directly - ggplot will match by name
+    # The previous subsetting approach was causing "Foreign sector" to get wrong colors
+    # because the name matching wasn't working reliably.
+    #
+    # Check for any sectors in data that don't have color mappings (for debugging)
+    sectors_in_data <- unique(plot_data$sector)
+    unmapped_sectors <- setdiff(sectors_in_data, names(treasury_sector_colors))
+    if (length(unmapped_sectors) > 0) {
+        warning("Bar chart: Unmapped sectors (will get default colors): ",
+                paste(unmapped_sectors, collapse = ", "),
+                "\nSectors in data: ", paste(sort(sectors_in_data), collapse = ", "))
     }
 
     # Create the horizontal stacked bar chart
+    # CRITICAL FIX: Use full treasury_sector_colors mapping - ggplot matches by name
+    # This ensures "Foreign sector" gets orange (#E8913A) as defined in the palette
     p <- ggplot(plot_data, aes(x = bond_label, y = value_display, fill = sector)) +
         geom_col(position = "stack", width = 0.8) +
         scale_fill_manual(
-            values = sector_colors,
-            name = "Sector"
+            values = treasury_sector_colors,  # Use FULL color mapping, not subset
+            name = "Sector",
+            drop = TRUE  # Only show sectors present in data in legend
         ) +
         scale_y_continuous(
             labels = scales::percent_format(scale = 1),
@@ -711,17 +721,24 @@ generate_holdings_change_diverging <- function(bond_pct_long,
             direction = if_else(change_display >= 0, "Increase", "Decrease")
         )
 
-    # Get available sectors and match colors
-    sectors <- unique(plot_data$sector)
-    sector_colors <- treasury_sector_colors[names(treasury_sector_colors) %in% sectors]
+    # FIX: Use full treasury_sector_colors directly - ggplot will match by name
+    # Check for any sectors in data that don't have color mappings (for debugging)
+    sectors_in_data <- unique(plot_data$sector)
+    unmapped_sectors <- setdiff(sectors_in_data, names(treasury_sector_colors))
+    if (length(unmapped_sectors) > 0) {
+        warning("Diverging chart: Unmapped sectors (will get default colors): ",
+                paste(unmapped_sectors, collapse = ", "))
+    }
 
     # Create the diverging bar chart
+    # CRITICAL FIX: Use full treasury_sector_colors mapping - ggplot matches by name
     p <- ggplot(plot_data, aes(x = bond, y = change_display, fill = sector)) +
         geom_col(position = "stack", width = 0.7) +
         geom_hline(yintercept = 0, color = "#333333", linewidth = 0.5) +
         scale_fill_manual(
-            values = sector_colors,
-            name = "Sector"
+            values = treasury_sector_colors,  # Use FULL color mapping, not subset
+            name = "Sector",
+            drop = TRUE  # Only show sectors present in data in legend
         ) +
         scale_y_continuous(
             labels = function(x) paste0(sprintf("%+.1f", x), "%"),
