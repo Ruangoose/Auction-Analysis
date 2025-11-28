@@ -10,6 +10,7 @@ suppressPackageStartupMessages({
     require(tidyr, quietly = TRUE)
     require(lubridate, quietly = TRUE)  # For floor_date, ceiling_date
     require(scales, quietly = TRUE)
+    require(zoo, quietly = TRUE)        # For na.locf() robust NA handling
 })
 
 # ================================================================================
@@ -213,44 +214,45 @@ generate_holdings_area_chart <- function(holdings_long,
         )
 
     # ===========================================
-    # FIX: Use linear interpolation for missing values
-    # This creates smooth continuous data instead of rectangular gaps
+    # FIX: Use zoo::na.locf() for robust NA handling
+    # This fixes the "Other" segment gap issue caused by missing months
+    # (e.g., 2011-02, 2011-04, 2013-11)
+    #
+    # na.locf (Last Observation Carried Forward) is more reliable than
+    # approx() for time series with sporadic missing values, especially
+    # at boundaries where extrapolation can fail.
     # ===========================================
 
     plot_data <- plot_data %>%
         group_by(sector) %>%
         arrange(date) %>%
         mutate(
-            # Linear interpolation for missing values
-            percentage = {
-                pct <- percentage
-                non_na_idx <- which(!is.na(pct))
-                if (length(non_na_idx) >= 2) {
-                    # Use approx for linear interpolation
-                    approx(
-                        x = non_na_idx,
-                        y = pct[non_na_idx],
-                        xout = seq_along(pct),
-                        method = "linear",
-                        rule = 2  # Extend to edges using nearest value
-                    )$y
-                } else if (length(non_na_idx) == 1) {
-                    # Only one value - fill with that value
-                    rep(pct[non_na_idx], length(pct))
-                } else {
-                    # No values - leave as NA (will be filled with 0 later)
-                    pct
-                }
-            }
+            # Forward fill NAs using last observation carried forward
+            percentage = zoo::na.locf(percentage, na.rm = FALSE),
+            # Backward fill for edge cases where first values are NA
+            percentage = zoo::na.locf(percentage, fromLast = TRUE, na.rm = FALSE),
+            # Final fallback: replace any remaining NAs with 0
+            percentage = tidyr::replace_na(percentage, 0),
+            # Apply minimum floor value to prevent zero-height rendering issues
+            # Very small values (< 0.0001%) can cause visual gaps in geom_area
+            percentage = pmax(percentage, 0.00001)
         ) %>%
         ungroup()
 
-    # Fill any remaining NAs with 0 and create display columns
+    # Ensure continuous data by using tidyr::complete() to fill any gaps
+    # This handles cases where the complete_grid join might have missed combinations
+    plot_data <- plot_data %>%
+        tidyr::complete(
+            date,
+            sector,
+            fill = list(percentage = 0.00001)  # Minimum floor value
+        )
+
+    # Create display columns and factor ordering
     # CRITICAL: Sort by date first, then sector to ensure geom_area connects points correctly
     plot_data <- plot_data %>%
         arrange(date, sector) %>%
         mutate(
-            percentage = tidyr::replace_na(percentage, 0),
             sector = factor(sector, levels = sector_order),
             # Convert decimal percentages (0.25) to display percentages (25)
             percentage_display = percentage * 100
@@ -448,12 +450,23 @@ generate_bond_holdings_bar_chart <- function(bond_pct_long,
     # First filter for date and bond type, keeping all valid sectors (including 0% holdings)
     # NOTE: Using selected_bond_type parameter to avoid name collision with bond_type column
     #
-    # BUG FIX: The Excel data contains TOTAL rows where sector = NA and value = 1.0 (100%)
-    # These must be filtered out to ensure each bond sums to ~100%, not ~200%
+    # BUG FIX: The Excel data contains TOTAL rows where sector appears as the STRING "NA"
+    # (not R's NA value) and value = 1.0 (100%). Without proper filtering, each bond sums
+    # to 200% instead of 100%, causing "Foreign sector" (~41% for R2039) to be pushed
+    # past the 100% y-axis limit and become invisible.
+    #
+    # The fix uses MULTIPLE filtering approaches to catch string "NA" reliably:
+    # 1. toupper(trimws(sector)) != "NA" - Simple string comparison (most reliable)
+    # 2. Regex pattern as backup
+    # 3. Character encoding check using nchar() for empty/whitespace strings
     filtered_data <- bond_pct_long %>%
-        # Trim whitespace from sector to catch edge cases like " NA" or "NA "
-        mutate(sector = trimws(as.character(sector))) %>%
+        # CRITICAL: Convert to character and trim whitespace FIRST
+        mutate(
+            sector = trimws(as.character(sector)),
+            bond = trimws(as.character(bond))
+        ) %>%
         filter(
+            # Date and bond type filters
             file_date == target_date,
             bond_type == selected_bond_type,
             # Remove R NA values (null/missing)
@@ -462,17 +475,24 @@ generate_bond_holdings_bar_chart <- function(bond_pct_long,
             !is.na(value),
             # Remove empty strings and whitespace-only sectors
             sector != "",
-            nchar(sector) > 0
-        ) %>%
-        # Remove string "NA" (case-insensitive, with optional whitespace)
+            nchar(sector) > 0,
+            # CRITICAL FIX: Remove literal string "NA" using simple comparison
+            # This is more reliable than regex for catching the TOTAL row issue
+            toupper(sector) != "NA",
+            # Remove TOTAL rows (partial match, case-insensitive)
+            !grepl("TOTAL", sector, ignore.case = TRUE),
+            # Remove CSDP reporting error rows (negligible, clutters legend)
+            !grepl("CSDP", sector, ignore.case = TRUE),
+            # Also filter bonds that are NA or TOTAL (summary rows)
+            toupper(bond) != "NA",
+            !grepl("TOTAL", bond, ignore.case = TRUE)
+        )
+
+    # Additional safety check: remove any rows where sector matches NA patterns
+    # This handles edge cases with special characters or encoding issues
+    filtered_data <- filtered_data %>%
         filter(!grepl("^\\s*NA\\s*$", sector, ignore.case = TRUE)) %>%
-        # Remove TOTAL rows (partial match, case-insensitive)
-        filter(!grepl("TOTAL", sector, ignore.case = TRUE)) %>%
-        # Remove CSDP reporting error rows
-        filter(!grepl("CSDP reporting error", sector, ignore.case = TRUE)) %>%
-        # Also filter bonds that are NA or TOTAL (summary rows)
-        filter(!grepl("^\\s*NA\\s*$", bond, ignore.case = TRUE)) %>%
-        filter(!grepl("TOTAL", bond, ignore.case = TRUE))
+        filter(!grepl("^\\s*NA\\s*$", bond, ignore.case = TRUE))
 
     # Validate that each bond sums to ~100% (data integrity check)
     bond_totals <- filtered_data %>%
@@ -622,11 +642,15 @@ generate_holdings_change_diverging <- function(bond_pct_long,
     # This prevents NA from appearing in the legend
     # NOTE: Using selected_bond_type parameter to avoid name collision with bond_type column
     #
-    # BUG FIX: The Excel data contains TOTAL rows where sector = NA and value = 1.0 (100%)
-    # These must be filtered out to ensure accurate change calculations
+    # BUG FIX: The Excel data contains TOTAL rows where sector appears as the STRING "NA"
+    # (not R's NA value) and value = 1.0 (100%). These must be filtered out using
+    # multiple approaches to ensure accurate change calculations.
     clean_bond_data <- bond_pct_long %>%
-        # Trim whitespace from sector to catch edge cases like " NA" or "NA "
-        mutate(sector = trimws(as.character(sector))) %>%
+        # CRITICAL: Convert to character and trim whitespace FIRST
+        mutate(
+            sector = trimws(as.character(sector)),
+            bond = trimws(as.character(bond))
+        ) %>%
         filter(
             bond_type == selected_bond_type,
             # Remove R NA values (null/missing)
@@ -635,17 +659,20 @@ generate_holdings_change_diverging <- function(bond_pct_long,
             !is.na(value),
             # Remove empty strings and whitespace-only sectors
             sector != "",
-            nchar(sector) > 0
+            nchar(sector) > 0,
+            # CRITICAL FIX: Remove literal string "NA" using simple comparison
+            toupper(sector) != "NA",
+            # Remove TOTAL rows (partial match, case-insensitive)
+            !grepl("TOTAL", sector, ignore.case = TRUE),
+            # Remove CSDP reporting error rows (negligible, clutters legend)
+            !grepl("CSDP", sector, ignore.case = TRUE),
+            # Also filter bonds that are NA or TOTAL (summary rows)
+            toupper(bond) != "NA",
+            !grepl("TOTAL", bond, ignore.case = TRUE)
         ) %>%
-        # Remove string "NA" (case-insensitive, with optional whitespace)
+        # Additional safety check for edge cases
         filter(!grepl("^\\s*NA\\s*$", sector, ignore.case = TRUE)) %>%
-        # Remove TOTAL rows (partial match, case-insensitive)
-        filter(!grepl("TOTAL", sector, ignore.case = TRUE)) %>%
-        # Remove CSDP reporting error rows
-        filter(!grepl("CSDP reporting error", sector, ignore.case = TRUE)) %>%
-        # Also filter bonds that are NA or TOTAL (summary rows)
-        filter(!grepl("^\\s*NA\\s*$", bond, ignore.case = TRUE)) %>%
-        filter(!grepl("TOTAL", bond, ignore.case = TRUE))
+        filter(!grepl("^\\s*NA\\s*$", bond, ignore.case = TRUE))
 
     # Calculate changes using cleaned data
     current_data <- clean_bond_data %>%
