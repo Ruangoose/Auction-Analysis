@@ -15,20 +15,6 @@ process_holdings_timeseries <- function(source_folder = "bond_holdings",
         dir.create(output_folder, recursive = TRUE)
     }
 
-    # Helper function to normalize month abbreviations to full names
-    normalize_month_name <- function(month_str) {
-        month_abbrev_map <- c(
-            "Jan" = "January", "Feb" = "February", "Mar" = "March",
-            "Apr" = "April", "May" = "May", "Jun" = "June",
-            "Jul" = "July", "Aug" = "August", "Sep" = "September",
-            "Oct" = "October", "Nov" = "November", "Dec" = "December"
-        )
-        if (month_str %in% names(month_abbrev_map)) {
-            return(month_abbrev_map[month_str])
-        }
-        return(month_str)
-    }
-
     # Helper function for filling down NA values (zoo fallback)
     fill_down_na <- function(vec) {
         if (requireNamespace("zoo", quietly = TRUE)) {
@@ -50,8 +36,9 @@ process_holdings_timeseries <- function(source_folder = "bond_holdings",
 
     # Get list of Excel files - we'll use the most recent one
     # (since Holdings sheet contains complete historical data)
+    # Only .xlsx format (files from Jan 2023 onwards)
     excel_files <- list.files(source_folder,
-                              pattern = "Historical government bond holdings.*\\.(xls|xlsx)$",
+                              pattern = "Historical government bond holdings.*\\.xlsx$",
                               full.names = TRUE)
 
     if (length(excel_files) == 0) {
@@ -74,12 +61,11 @@ process_holdings_timeseries <- function(source_folder = "bond_holdings",
         filename <- file_info$filename[i]
         filepath <- file_info$filepath[i]
 
-        # Extract date (handles both .xls and .xlsx)
-        pattern <- "Historical government bond holdings ([A-Za-z]+) ([0-9]{4})\\.(xls|xlsx)"
+        # Extract date
+        pattern <- "Historical government bond holdings ([A-Za-z]+) ([0-9]{4})\\.xlsx"
         matches <- regmatches(filename, regexec(pattern, filename))
-        if (length(matches[[1]]) >= 3) {
-            month_name <- normalize_month_name(matches[[1]][2])
-            date_string <- paste("01", month_name, matches[[1]][3])
+        if (length(matches[[1]]) == 3) {
+            date_string <- paste("01", matches[[1]][2], matches[[1]][3])
             file_info$date[i] <- tryCatch(
                 as.Date(date_string, format = "%d %B %Y"),
                 error = function(e) NA

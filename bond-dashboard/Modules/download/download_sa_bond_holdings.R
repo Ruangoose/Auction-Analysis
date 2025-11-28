@@ -20,20 +20,6 @@ download_sa_bond_holdings <- function(start_date = "2018-02-01",
     require(httr)
     require(lubridate)
 
-    # Helper function to normalize month abbreviations to full names
-    normalize_month_name <- function(month_str) {
-        month_abbrev_map <- c(
-            "Jan" = "January", "Feb" = "February", "Mar" = "March",
-            "Apr" = "April", "May" = "May", "Jun" = "June",
-            "Jul" = "July", "Aug" = "August", "Sep" = "September",
-            "Oct" = "October", "Nov" = "November", "Dec" = "December"
-        )
-        if (month_str %in% names(month_abbrev_map)) {
-            return(month_abbrev_map[month_str])
-        }
-        return(month_str)
-    }
-
     # If end_date is NULL, set it to the last day of the previous month
     if (is.null(end_date)) {
         end_date <- floor_date(Sys.Date(), "month") - days(1)
@@ -49,15 +35,20 @@ download_sa_bond_holdings <- function(start_date = "2018-02-01",
     end <- floor_date(as.Date(end_date), "month")
     all_dates <- seq(start, end, by = "month")
 
-    # Helper function to extract date from filename (handles both .xls/.xlsx and abbreviations)
+    # Helper function to extract date from filename
     extract_date_from_filename <- function(filename) {
-        # Extract month and year from filename (handles both .xls and .xlsx, and month abbreviations)
+        # Extract month and year from filename (handles both .xls and .xlsx, and "Feb" variant)
         pattern <- "Historical government bond holdings ([A-Za-z]+) ([0-9]{4})\\.(xls|xlsx)"
         matches <- regmatches(filename, regexec(pattern, filename))
 
         if (length(matches[[1]]) >= 3) {
-            month_name <- normalize_month_name(matches[[1]][2])
+            month_name <- matches[[1]][2]
             year <- matches[[1]][3]
+
+            # Handle "Feb" abbreviation (Feb 2025 special case)
+            if (month_name == "Feb") {
+                month_name <- "February"
+            }
 
             date_string <- paste("01", month_name, year)
             tryCatch({

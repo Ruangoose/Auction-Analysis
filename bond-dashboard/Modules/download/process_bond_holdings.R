@@ -15,23 +15,9 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
         dir.create(output_folder, recursive = TRUE)
     }
 
-    # Helper function to normalize month abbreviations to full names
-    normalize_month_name <- function(month_str) {
-        month_abbrev_map <- c(
-            "Jan" = "January", "Feb" = "February", "Mar" = "March",
-            "Apr" = "April", "May" = "May", "Jun" = "June",
-            "Jul" = "July", "Aug" = "August", "Sep" = "September",
-            "Oct" = "October", "Nov" = "November", "Dec" = "December"
-        )
-        if (month_str %in% names(month_abbrev_map)) {
-            return(month_abbrev_map[month_str])
-        }
-        return(month_str)
-    }
-
-    # Get list of Excel files (both .xls and .xlsx formats)
+    # Get list of Excel files (.xlsx format only - files from Jan 2023 onwards)
     excel_files <- list.files(source_folder,
-                              pattern = "Historical government bond holdings.*\\.(xls|xlsx)$",
+                              pattern = "Historical government bond holdings.*\\.xlsx$",
                               full.names = TRUE)
 
     if (length(excel_files) == 0) {
@@ -79,12 +65,12 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
             next
         }
 
-        # Extract date from filename (handles both .xls and .xlsx)
-        pattern <- "Historical government bond holdings ([A-Za-z]+) ([0-9]{4})\\.(xls|xlsx)"
+        # Extract date from filename
+        pattern <- "Historical government bond holdings ([A-Za-z]+) ([0-9]{4})\\.xlsx"
         matches <- regmatches(filename, regexec(pattern, filename))
 
-        if (length(matches[[1]]) >= 3) {
-            month_name <- normalize_month_name(matches[[1]][2])
+        if (length(matches[[1]]) == 3) {
+            month_name <- matches[[1]][2]
             year <- matches[[1]][3]
             date_string <- paste("01", month_name, year)
             file_date <- tryCatch({

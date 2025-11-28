@@ -20,9 +20,9 @@ validate_bond_files <- function(folder = "bond_holdings",
                                 verbose = TRUE,
                                 min_size = 10000) {  # 10KB minimum
 
-    # Get all Excel files (both .xls and .xlsx formats)
+    # Get all Excel files (.xlsx format only - files from Jan 2023 onwards)
     excel_files <- list.files(folder,
-                              pattern = "Historical government bond holdings.*\\.(xls|xlsx)$",
+                              pattern = "Historical government bond holdings.*\\.xlsx$",
                               full.names = TRUE)
 
     if (length(excel_files) == 0) {
