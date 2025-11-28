@@ -67,6 +67,12 @@ treasury_holdings_ui <- function(id) {
                     background: #e6c200;
                     color: %s;
                 }
+                .no-data-message {
+                    text-align: center;
+                    padding: 50px;
+                    color: #666;
+                    font-style: italic;
+                }
             ", insele_primary, insele_accent, insele_accent, insele_primary, insele_primary)))
         ),
 
@@ -140,7 +146,7 @@ treasury_holdings_ui <- function(id) {
 
                        hr(),
 
-                       # Bond Type Filter
+                       # Bond Type Filter (for Time Series tab)
                        selectInput(
                            ns("bond_type_filter"),
                            "Bond Type:",
@@ -252,28 +258,17 @@ treasury_holdings_ui <- function(id) {
                            )
                        ),
 
-                       # Tab 2: Current Snapshot
+                       # Tab 2: Current Snapshot - RESTRUCTURED
                        tabPanel(
                            title = "Current Snapshot",
                            icon = icon("chart-bar"),
                            value = "snapshot",
 
+                           # Shared date selector at top
                            fluidRow(
                                column(12,
-                                      box(
-                                          title = "Bond Holdings by Sector",
-                                          status = "primary",
-                                          solidHeader = TRUE,
-                                          width = 12,
+                                      div(style = "margin-bottom: 15px;",
                                           fluidRow(
-                                              column(3,
-                                                     selectInput(
-                                                         ns("snapshot_bond_type"),
-                                                         "Bond Type:",
-                                                         choices = c("Fixed Rate", "ILB", "FRN", "Sukuk"),
-                                                         selected = "Fixed Rate"
-                                                     )
-                                              ),
                                               column(3,
                                                      selectInput(
                                                          ns("snapshot_date"),
@@ -281,31 +276,94 @@ treasury_holdings_ui <- function(id) {
                                                          choices = NULL
                                                      )
                                               )
-                                          ),
+                                          )
+                                      )
+                               )
+                           ),
+
+                           # PRIMARY DISPLAY: Fixed Rate (left) and ILB (right)
+                           fluidRow(
+                               column(6,
+                                      box(
+                                          title = "Fixed Rate Holdings",
+                                          status = "primary",
+                                          solidHeader = TRUE,
+                                          width = 12,
                                           withSpinner(
-                                              plotOutput(ns("bond_holdings_bar_chart"), height = "600px"),
+                                              plotOutput(ns("bond_holdings_fixed"), height = "600px"),
                                               type = 4,
                                               color = insele_primary
                                           ),
-                                          downloadButton(ns("download_holdings_chart"), "Download Chart", class = "btn-sm btn-primary")
+                                          downloadButton(ns("download_holdings_fixed"), "Download Chart", class = "btn-sm btn-primary")
+                                      )
+                               ),
+                               column(6,
+                                      box(
+                                          title = "ILB Holdings",
+                                          status = "primary",
+                                          solidHeader = TRUE,
+                                          width = 12,
+                                          withSpinner(
+                                              plotOutput(ns("bond_holdings_ilb"), height = "600px"),
+                                              type = 4,
+                                              color = insele_primary
+                                          ),
+                                          downloadButton(ns("download_holdings_ilb"), "Download Chart", class = "btn-sm btn-primary")
+                                      )
+                               )
+                           ),
+
+                           # SECONDARY DISPLAY: FRN & Sukuk (collapsible)
+                           fluidRow(
+                               column(12,
+                                      box(
+                                          title = "Other Bond Types (FRN & Sukuk)",
+                                          status = "warning",
+                                          solidHeader = TRUE,
+                                          width = 12,
+                                          collapsible = TRUE,
+                                          collapsed = TRUE,
+                                          fluidRow(
+                                              column(6,
+                                                     h5("FRN Holdings", style = sprintf("color: %s; margin-top: 5px;", insele_primary)),
+                                                     withSpinner(
+                                                         plotOutput(ns("bond_holdings_frn"), height = "500px"),
+                                                         type = 4,
+                                                         color = insele_primary
+                                                     ),
+                                                     downloadButton(ns("download_holdings_frn"), "Download Chart", class = "btn-sm btn-primary")
+                                              ),
+                                              column(6,
+                                                     h5("Sukuk Holdings", style = sprintf("color: %s; margin-top: 5px;", insele_primary)),
+                                                     withSpinner(
+                                                         plotOutput(ns("bond_holdings_sukuk"), height = "500px"),
+                                                         type = 4,
+                                                         color = insele_primary
+                                                     ),
+                                                     downloadButton(ns("download_holdings_sukuk"), "Download Chart", class = "btn-sm btn-primary")
+                                              )
+                                          )
                                       )
                                )
                            )
                        ),
 
-                       # Tab 3: Changes View
+                       # Tab 3: Changes View - RESTRUCTURED
                        tabPanel(
                            title = "Changes",
                            icon = icon("exchange-alt"),
                            value = "changes",
 
+                           # Aggregate Ownership Changes (keep existing)
                            fluidRow(
-                               column(6,
+                               column(12,
                                       box(
                                           title = "Aggregate Ownership Changes",
                                           status = "primary",
                                           solidHeader = TRUE,
                                           width = 12,
+                                          collapsible = TRUE,
+                                          collapsed = TRUE,
                                           withSpinner(
                                               plotOutput(ns("ownership_change_chart"), height = "400px"),
                                               type = 4,
@@ -313,46 +371,112 @@ treasury_holdings_ui <- function(id) {
                                           ),
                                           downloadButton(ns("download_change_chart"), "Download Chart", class = "btn-sm btn-primary")
                                       )
-                               ),
-                               column(6,
-                                      box(
-                                          title = "Bond-Level Changes",
-                                          status = "primary",
-                                          solidHeader = TRUE,
-                                          width = 12,
+                               )
+                           ),
+
+                           # Shared controls for Bond-Level Changes
+                           fluidRow(
+                               column(12,
+                                      div(style = "margin-bottom: 15px; margin-top: 10px;",
                                           fluidRow(
-                                              column(6,
-                                                     selectInput(
-                                                         ns("change_bond_type"),
-                                                         "Bond Type:",
-                                                         choices = c("Fixed Rate", "ILB", "FRN", "Sukuk"),
-                                                         selected = "Fixed Rate"
-                                                     )
-                                              ),
-                                              column(6,
+                                              column(3,
                                                      selectInput(
                                                          ns("change_period_select"),
                                                          "Period:",
                                                          choices = c("1 Month" = 1, "3 Months" = 3, "6 Months" = 6, "12 Months" = 12),
                                                          selected = 3
                                                      )
-                                              )
-                                          ),
-                                          # Bond exclusion controls
-                                          fluidRow(
-                                              column(12,
+                                              ),
+                                              column(3,
                                                      checkboxInput(
                                                          ns("auto_exclude_outliers"),
                                                          "Auto-exclude new/matured bonds (>80% change)",
                                                          value = TRUE
                                                      )
                                               )
+                                          )
+                                      )
+                               )
+                           ),
+
+                           # PRIMARY DISPLAY: Fixed Rate (left) and ILB (right) Changes
+                           fluidRow(
+                               column(6,
+                                      box(
+                                          title = "Fixed Rate Bond Changes",
+                                          status = "primary",
+                                          solidHeader = TRUE,
+                                          width = 12,
+                                          selectizeInput(
+                                              ns("exclude_bonds_fixed"),
+                                              "Bonds to exclude:",
+                                              choices = NULL,
+                                              selected = NULL,
+                                              multiple = TRUE,
+                                              options = list(
+                                                  placeholder = "Select bonds to exclude...",
+                                                  plugins = list("remove_button")
+                                              )
                                           ),
+                                          withSpinner(
+                                              plotOutput(ns("diverging_change_fixed"), height = "450px"),
+                                              type = 4,
+                                              color = insele_primary
+                                          ),
+                                          tags$div(
+                                              style = "font-size: 11px; color: #666; margin-top: 5px; margin-bottom: 10px;",
+                                              textOutput(ns("excluded_bonds_info_fixed"))
+                                          ),
+                                          downloadButton(ns("download_diverging_fixed"), "Download Chart", class = "btn-sm btn-primary")
+                                      )
+                               ),
+                               column(6,
+                                      box(
+                                          title = "ILB Bond Changes",
+                                          status = "primary",
+                                          solidHeader = TRUE,
+                                          width = 12,
+                                          selectizeInput(
+                                              ns("exclude_bonds_ilb"),
+                                              "Bonds to exclude:",
+                                              choices = NULL,
+                                              selected = NULL,
+                                              multiple = TRUE,
+                                              options = list(
+                                                  placeholder = "Select bonds to exclude...",
+                                                  plugins = list("remove_button")
+                                              )
+                                          ),
+                                          withSpinner(
+                                              plotOutput(ns("diverging_change_ilb"), height = "450px"),
+                                              type = 4,
+                                              color = insele_primary
+                                          ),
+                                          tags$div(
+                                              style = "font-size: 11px; color: #666; margin-top: 5px; margin-bottom: 10px;",
+                                              textOutput(ns("excluded_bonds_info_ilb"))
+                                          ),
+                                          downloadButton(ns("download_diverging_ilb"), "Download Chart", class = "btn-sm btn-primary")
+                                      )
+                               )
+                           ),
+
+                           # SECONDARY DISPLAY: FRN & Sukuk Changes (collapsible)
+                           fluidRow(
+                               column(12,
+                                      box(
+                                          title = "Other Bond Types (FRN & Sukuk)",
+                                          status = "warning",
+                                          solidHeader = TRUE,
+                                          width = 12,
+                                          collapsible = TRUE,
+                                          collapsed = TRUE,
                                           fluidRow(
-                                              column(12,
+                                              column(6,
+                                                     h5("FRN Bond Changes", style = sprintf("color: %s; margin-top: 5px;", insele_primary)),
                                                      selectizeInput(
-                                                         ns("exclude_bonds"),
-                                                         "Additional bonds to exclude:",
+                                                         ns("exclude_bonds_frn"),
+                                                         "Bonds to exclude:",
                                                          choices = NULL,
                                                          selected = NULL,
                                                          multiple = TRUE,
@@ -360,20 +484,43 @@ treasury_holdings_ui <- function(id) {
                                                              placeholder = "Select bonds to exclude...",
                                                              plugins = list("remove_button")
                                                          )
-                                                     )
+                                                     ),
+                                                     withSpinner(
+                                                         plotOutput(ns("diverging_change_frn"), height = "400px"),
+                                                         type = 4,
+                                                         color = insele_primary
+                                                     ),
+                                                     tags$div(
+                                                         style = "font-size: 11px; color: #666; margin-top: 5px; margin-bottom: 10px;",
+                                                         textOutput(ns("excluded_bonds_info_frn"))
+                                                     ),
+                                                     downloadButton(ns("download_diverging_frn"), "Download Chart", class = "btn-sm btn-primary")
+                                              ),
+                                              column(6,
+                                                     h5("Sukuk Bond Changes", style = sprintf("color: %s; margin-top: 5px;", insele_primary)),
+                                                     selectizeInput(
+                                                         ns("exclude_bonds_sukuk"),
+                                                         "Bonds to exclude:",
+                                                         choices = NULL,
+                                                         selected = NULL,
+                                                         multiple = TRUE,
+                                                         options = list(
+                                                             placeholder = "Select bonds to exclude...",
+                                                             plugins = list("remove_button")
+                                                         )
+                                                     ),
+                                                     withSpinner(
+                                                         plotOutput(ns("diverging_change_sukuk"), height = "400px"),
+                                                         type = 4,
+                                                         color = insele_primary
+                                                     ),
+                                                     tags$div(
+                                                         style = "font-size: 11px; color: #666; margin-top: 5px; margin-bottom: 10px;",
+                                                         textOutput(ns("excluded_bonds_info_sukuk"))
+                                                     ),
+                                                     downloadButton(ns("download_diverging_sukuk"), "Download Chart", class = "btn-sm btn-primary")
                                               )
-                                          ),
-                                          withSpinner(
-                                              plotOutput(ns("diverging_change_chart"), height = "400px"),
-                                              type = 4,
-                                              color = insele_primary
-                                          ),
-                                          # Excluded bonds info
-                                          tags$div(
-                                              style = "font-size: 11px; color: #666; margin-top: 5px; margin-bottom: 10px;",
-                                              textOutput(ns("excluded_bonds_info"))
-                                          ),
-                                          downloadButton(ns("download_diverging_chart"), "Download Chart", class = "btn-sm btn-primary")
+                                          )
                                       )
                                )
                            )
@@ -581,27 +728,68 @@ treasury_holdings_server <- function(id) {
             )
         })
 
-        # Update exclude_bonds choices when change_bond_type changes
-        observe({
-            req(treasury_data$bond_holdings)
-            req(input$change_bond_type)
+        # ==================================================================
+        # EXCLUDE BONDS SELECTORS - One for each bond type
+        # ==================================================================
 
-            # Get available bonds for the selected bond type
-            # Filter out TOTAL rows and NA bonds
-            available_bonds <- treasury_data$bond_holdings %>%
-                filter(bond_type == input$change_bond_type) %>%
+        # Helper function to get available bonds for a bond type
+        get_available_bonds <- function(bond_type) {
+            req(treasury_data$bond_holdings)
+            treasury_data$bond_holdings %>%
+                filter(bond_type == !!bond_type) %>%
                 filter(!grepl("TOTAL", bond, ignore.case = TRUE)) %>%
                 filter(!is.na(bond)) %>%
                 filter(toupper(trimws(bond)) != "NA") %>%
                 pull(bond) %>%
                 unique() %>%
                 sort()
+        }
 
+        # Update exclude_bonds choices for Fixed Rate
+        observe({
+            req(treasury_data$bond_holdings)
+            available_bonds <- get_available_bonds("Fixed Rate")
             updateSelectizeInput(
                 session,
-                "exclude_bonds",
+                "exclude_bonds_fixed",
                 choices = available_bonds,
-                selected = character(0)  # Clear selection when bond type changes
+                selected = character(0)
+            )
+        })
+
+        # Update exclude_bonds choices for ILB
+        observe({
+            req(treasury_data$bond_holdings)
+            available_bonds <- get_available_bonds("ILB")
+            updateSelectizeInput(
+                session,
+                "exclude_bonds_ilb",
+                choices = available_bonds,
+                selected = character(0)
+            )
+        })
+
+        # Update exclude_bonds choices for FRN
+        observe({
+            req(treasury_data$bond_holdings)
+            available_bonds <- get_available_bonds("FRN")
+            updateSelectizeInput(
+                session,
+                "exclude_bonds_frn",
+                choices = available_bonds,
+                selected = character(0)
+            )
+        })
+
+        # Update exclude_bonds choices for Sukuk
+        observe({
+            req(treasury_data$bond_holdings)
+            available_bonds <- get_available_bonds("Sukuk")
+            updateSelectizeInput(
+                session,
+                "exclude_bonds_sukuk",
+                choices = available_bonds,
+                selected = character(0)
             )
         })
 
@@ -866,7 +1054,7 @@ treasury_holdings_server <- function(id) {
         })
 
         # ==================================================================
-        # PLOT OUTPUTS
+        # PLOT OUTPUTS - TIME SERIES TAB
         # ==================================================================
 
         # 1. Holdings Area Chart
@@ -893,21 +1081,91 @@ treasury_holdings_server <- function(id) {
             )
         }, res = 96)
 
-        # 3. Bond Holdings Bar Chart (Snapshot)
-        output$bond_holdings_bar_chart <- renderPlot({
+        # ==================================================================
+        # PLOT OUTPUTS - CURRENT SNAPSHOT TAB (4 charts)
+        # ==================================================================
+
+        # Helper function to check if bond type has data
+        has_bond_data <- function(bond_type) {
+            if (is.null(treasury_data$bond_holdings)) return(FALSE)
+            nrow(treasury_data$bond_holdings %>%
+                     filter(bond_type == !!bond_type) %>%
+                     filter(!grepl("TOTAL", bond, ignore.case = TRUE))) > 0
+        }
+
+        # 3a. Fixed Rate Holdings Bar Chart
+        output$bond_holdings_fixed <- renderPlot({
             req(treasury_data$bond_holdings)
-            req(input$snapshot_bond_type)
             req(input$snapshot_date)
+
+            if (!has_bond_data("Fixed Rate")) {
+                return(create_empty_plot("No Fixed Rate bond data available"))
+            }
 
             generate_bond_holdings_bar_chart(
                 bond_pct_long = treasury_data$bond_holdings,
-                selected_bond_type = input$snapshot_bond_type,
+                selected_bond_type = "Fixed Rate",
                 target_date = as.Date(input$snapshot_date),
                 show_labels = TRUE
             )
         }, res = 96)
 
-        # 4. Ownership Change Chart
+        # 3b. ILB Holdings Bar Chart
+        output$bond_holdings_ilb <- renderPlot({
+            req(treasury_data$bond_holdings)
+            req(input$snapshot_date)
+
+            if (!has_bond_data("ILB")) {
+                return(create_empty_plot("No ILB bond data available"))
+            }
+
+            generate_bond_holdings_bar_chart(
+                bond_pct_long = treasury_data$bond_holdings,
+                selected_bond_type = "ILB",
+                target_date = as.Date(input$snapshot_date),
+                show_labels = TRUE
+            )
+        }, res = 96)
+
+        # 3c. FRN Holdings Bar Chart
+        output$bond_holdings_frn <- renderPlot({
+            req(treasury_data$bond_holdings)
+            req(input$snapshot_date)
+
+            if (!has_bond_data("FRN")) {
+                return(create_empty_plot("No FRN bond data available"))
+            }
+
+            generate_bond_holdings_bar_chart(
+                bond_pct_long = treasury_data$bond_holdings,
+                selected_bond_type = "FRN",
+                target_date = as.Date(input$snapshot_date),
+                show_labels = TRUE
+            )
+        }, res = 96)
+
+        # 3d. Sukuk Holdings Bar Chart
+        output$bond_holdings_sukuk <- renderPlot({
+            req(treasury_data$bond_holdings)
+            req(input$snapshot_date)
+
+            if (!has_bond_data("Sukuk")) {
+                return(create_empty_plot("No Sukuk bond data available"))
+            }
+
+            generate_bond_holdings_bar_chart(
+                bond_pct_long = treasury_data$bond_holdings,
+                selected_bond_type = "Sukuk",
+                target_date = as.Date(input$snapshot_date),
+                show_labels = TRUE
+            )
+        }, res = 96)
+
+        # ==================================================================
+        # PLOT OUTPUTS - CHANGES TAB (5 charts)
+        # ==================================================================
+
+        # 4. Ownership Change Chart (Aggregate)
         output$ownership_change_chart <- renderPlot({
             req(treasury_data$holdings_ts)
 
@@ -917,34 +1175,112 @@ treasury_holdings_server <- function(id) {
             )
         }, res = 96)
 
-        # 5. Diverging Change Chart
-        # Store the current plot as a reactive for accessing excluded bonds info
-        current_diverging_plot <- reactive({
+        # 5a. Fixed Rate Diverging Change Chart
+        current_diverging_plot_fixed <- reactive({
             req(treasury_data$bond_holdings)
-            req(input$change_bond_type)
             req(input$change_period_select)
 
             generate_holdings_change_diverging(
                 bond_pct_long = treasury_data$bond_holdings,
                 period_months = as.integer(input$change_period_select),
-                selected_bond_type = input$change_bond_type,
+                selected_bond_type = "Fixed Rate",
                 top_n = 12,
-                exclude_bonds = input$exclude_bonds,
+                exclude_bonds = input$exclude_bonds_fixed,
                 auto_exclude_outliers = isTRUE(input$auto_exclude_outliers),
                 outlier_threshold = 80,
                 order_by_maturity = TRUE
             )
         })
 
-        output$diverging_change_chart <- renderPlot({
-            current_diverging_plot()
+        output$diverging_change_fixed <- renderPlot({
+            current_diverging_plot_fixed()
         }, res = 96)
 
-        # Output for excluded bonds info text
-        output$excluded_bonds_info <- renderText({
-            p <- current_diverging_plot()
+        output$excluded_bonds_info_fixed <- renderText({
+            p <- current_diverging_plot_fixed()
+            format_excluded_bonds_text(p)
+        })
 
-            # Get excluded bonds from plot attributes
+        # 5b. ILB Diverging Change Chart
+        current_diverging_plot_ilb <- reactive({
+            req(treasury_data$bond_holdings)
+            req(input$change_period_select)
+
+            generate_holdings_change_diverging(
+                bond_pct_long = treasury_data$bond_holdings,
+                period_months = as.integer(input$change_period_select),
+                selected_bond_type = "ILB",
+                top_n = 12,
+                exclude_bonds = input$exclude_bonds_ilb,
+                auto_exclude_outliers = isTRUE(input$auto_exclude_outliers),
+                outlier_threshold = 80,
+                order_by_maturity = TRUE
+            )
+        })
+
+        output$diverging_change_ilb <- renderPlot({
+            current_diverging_plot_ilb()
+        }, res = 96)
+
+        output$excluded_bonds_info_ilb <- renderText({
+            p <- current_diverging_plot_ilb()
+            format_excluded_bonds_text(p)
+        })
+
+        # 5c. FRN Diverging Change Chart
+        current_diverging_plot_frn <- reactive({
+            req(treasury_data$bond_holdings)
+            req(input$change_period_select)
+
+            generate_holdings_change_diverging(
+                bond_pct_long = treasury_data$bond_holdings,
+                period_months = as.integer(input$change_period_select),
+                selected_bond_type = "FRN",
+                top_n = 12,
+                exclude_bonds = input$exclude_bonds_frn,
+                auto_exclude_outliers = isTRUE(input$auto_exclude_outliers),
+                outlier_threshold = 80,
+                order_by_maturity = TRUE
+            )
+        })
+
+        output$diverging_change_frn <- renderPlot({
+            current_diverging_plot_frn()
+        }, res = 96)
+
+        output$excluded_bonds_info_frn <- renderText({
+            p <- current_diverging_plot_frn()
+            format_excluded_bonds_text(p)
+        })
+
+        # 5d. Sukuk Diverging Change Chart
+        current_diverging_plot_sukuk <- reactive({
+            req(treasury_data$bond_holdings)
+            req(input$change_period_select)
+
+            generate_holdings_change_diverging(
+                bond_pct_long = treasury_data$bond_holdings,
+                period_months = as.integer(input$change_period_select),
+                selected_bond_type = "Sukuk",
+                top_n = 12,
+                exclude_bonds = input$exclude_bonds_sukuk,
+                auto_exclude_outliers = isTRUE(input$auto_exclude_outliers),
+                outlier_threshold = 80,
+                order_by_maturity = TRUE
+            )
+        })
+
+        output$diverging_change_sukuk <- renderPlot({
+            current_diverging_plot_sukuk()
+        }, res = 96)
+
+        output$excluded_bonds_info_sukuk <- renderText({
+            p <- current_diverging_plot_sukuk()
+            format_excluded_bonds_text(p)
+        })
+
+        # Helper function to format excluded bonds text
+        format_excluded_bonds_text <- function(p) {
             excluded <- attr(p, "excluded_bonds")
             auto_excluded <- attr(p, "auto_excluded_bonds")
 
@@ -952,16 +1288,13 @@ treasury_holdings_server <- function(id) {
                 return("")
             }
 
-            # Build info text
             info_parts <- character(0)
 
-            # Auto-excluded bonds
             if (!is.null(auto_excluded) && length(auto_excluded) > 0) {
                 info_parts <- c(info_parts,
                                 paste0("Auto-excluded (>80% change): ", paste(auto_excluded, collapse = ", ")))
             }
 
-            # Manually excluded bonds (those not auto-excluded)
             manual_excluded <- setdiff(excluded, auto_excluded)
             if (length(manual_excluded) > 0) {
                 info_parts <- c(info_parts,
@@ -969,7 +1302,7 @@ treasury_holdings_server <- function(id) {
             }
 
             paste(info_parts, collapse = " | ")
-        })
+        }
 
         # ==================================================================
         # DATA TABLE OUTPUT
@@ -979,8 +1312,6 @@ treasury_holdings_server <- function(id) {
             if (input$table_view == "aggregate") {
                 req(treasury_data$holdings_ts)
 
-                # Create wide format table for display
-                # Multiply by 100 to convert decimal percentages (0.25) to display percentages (25%)
                 table_data <- treasury_data$holdings_ts %>%
                     filter(date >= input$date_range[1], date <= input$date_range[2]) %>%
                     mutate(
@@ -998,7 +1329,6 @@ treasury_holdings_server <- function(id) {
                 req(treasury_data$bond_holdings)
                 req(input$table_bond_type)
 
-                # Multiply by 100 to convert decimal percentages to display percentages
                 table_data <- treasury_data$bond_holdings %>%
                     filter(bond_type == input$table_bond_type) %>%
                     filter(!grepl("TOTAL", bond, ignore.case = TRUE)) %>%
@@ -1025,7 +1355,7 @@ treasury_holdings_server <- function(id) {
         })
 
         # ==================================================================
-        # DOWNLOAD HANDLERS
+        # DOWNLOAD HANDLERS - TIME SERIES TAB
         # ==================================================================
 
         # Area chart download
@@ -1058,21 +1388,77 @@ treasury_holdings_server <- function(id) {
             }
         )
 
-        # Holdings bar chart download
-        output$download_holdings_chart <- downloadHandler(
+        # ==================================================================
+        # DOWNLOAD HANDLERS - CURRENT SNAPSHOT TAB (4 charts)
+        # ==================================================================
+
+        # Fixed Rate holdings download
+        output$download_holdings_fixed <- downloadHandler(
             filename = function() {
-                paste0("treasury_bond_holdings_", input$snapshot_bond_type, "_", Sys.Date(), ".png")
+                paste0("treasury_bond_holdings_fixed_rate_", Sys.Date(), ".png")
             },
             content = function(file) {
                 p <- generate_bond_holdings_bar_chart(
                     bond_pct_long = treasury_data$bond_holdings,
-                    selected_bond_type = input$snapshot_bond_type,
+                    selected_bond_type = "Fixed Rate",
                     target_date = as.Date(input$snapshot_date),
                     show_labels = TRUE
                 )
                 ggsave(file, p, width = 10, height = 12, dpi = 300)
             }
         )
+
+        # ILB holdings download
+        output$download_holdings_ilb <- downloadHandler(
+            filename = function() {
+                paste0("treasury_bond_holdings_ilb_", Sys.Date(), ".png")
+            },
+            content = function(file) {
+                p <- generate_bond_holdings_bar_chart(
+                    bond_pct_long = treasury_data$bond_holdings,
+                    selected_bond_type = "ILB",
+                    target_date = as.Date(input$snapshot_date),
+                    show_labels = TRUE
+                )
+                ggsave(file, p, width = 10, height = 12, dpi = 300)
+            }
+        )
+
+        # FRN holdings download
+        output$download_holdings_frn <- downloadHandler(
+            filename = function() {
+                paste0("treasury_bond_holdings_frn_", Sys.Date(), ".png")
+            },
+            content = function(file) {
+                p <- generate_bond_holdings_bar_chart(
+                    bond_pct_long = treasury_data$bond_holdings,
+                    selected_bond_type = "FRN",
+                    target_date = as.Date(input$snapshot_date),
+                    show_labels = TRUE
+                )
+                ggsave(file, p, width = 10, height = 12, dpi = 300)
+            }
+        )
+
+        # Sukuk holdings download
+        output$download_holdings_sukuk <- downloadHandler(
+            filename = function() {
+                paste0("treasury_bond_holdings_sukuk_", Sys.Date(), ".png")
+            },
+            content = function(file) {
+                p <- generate_bond_holdings_bar_chart(
+                    bond_pct_long = treasury_data$bond_holdings,
+                    selected_bond_type = "Sukuk",
+                    target_date = as.Date(input$snapshot_date),
+                    show_labels = TRUE
+                )
+                ggsave(file, p, width = 10, height = 12, dpi = 300)
+            }
+        )
+
+        # ==================================================================
+        # DOWNLOAD HANDLERS - CHANGES TAB (5 charts)
+        # ==================================================================
 
         # Ownership change chart download
         output$download_change_chart <- downloadHandler(
@@ -1088,18 +1474,18 @@ treasury_holdings_server <- function(id) {
             }
         )
 
-        # Diverging chart download
-        output$download_diverging_chart <- downloadHandler(
+        # Fixed Rate diverging chart download
+        output$download_diverging_fixed <- downloadHandler(
             filename = function() {
-                paste0("treasury_bond_changes_", input$change_bond_type, "_", Sys.Date(), ".png")
+                paste0("treasury_bond_changes_fixed_rate_", Sys.Date(), ".png")
             },
             content = function(file) {
                 p <- generate_holdings_change_diverging(
                     bond_pct_long = treasury_data$bond_holdings,
                     period_months = as.integer(input$change_period_select),
-                    selected_bond_type = input$change_bond_type,
+                    selected_bond_type = "Fixed Rate",
                     top_n = 12,
-                    exclude_bonds = input$exclude_bonds,
+                    exclude_bonds = input$exclude_bonds_fixed,
                     auto_exclude_outliers = isTRUE(input$auto_exclude_outliers),
                     outlier_threshold = 80,
                     order_by_maturity = TRUE
@@ -1107,6 +1493,70 @@ treasury_holdings_server <- function(id) {
                 ggsave(file, p, width = 10, height = 8, dpi = 300)
             }
         )
+
+        # ILB diverging chart download
+        output$download_diverging_ilb <- downloadHandler(
+            filename = function() {
+                paste0("treasury_bond_changes_ilb_", Sys.Date(), ".png")
+            },
+            content = function(file) {
+                p <- generate_holdings_change_diverging(
+                    bond_pct_long = treasury_data$bond_holdings,
+                    period_months = as.integer(input$change_period_select),
+                    selected_bond_type = "ILB",
+                    top_n = 12,
+                    exclude_bonds = input$exclude_bonds_ilb,
+                    auto_exclude_outliers = isTRUE(input$auto_exclude_outliers),
+                    outlier_threshold = 80,
+                    order_by_maturity = TRUE
+                )
+                ggsave(file, p, width = 10, height = 8, dpi = 300)
+            }
+        )
+
+        # FRN diverging chart download
+        output$download_diverging_frn <- downloadHandler(
+            filename = function() {
+                paste0("treasury_bond_changes_frn_", Sys.Date(), ".png")
+            },
+            content = function(file) {
+                p <- generate_holdings_change_diverging(
+                    bond_pct_long = treasury_data$bond_holdings,
+                    period_months = as.integer(input$change_period_select),
+                    selected_bond_type = "FRN",
+                    top_n = 12,
+                    exclude_bonds = input$exclude_bonds_frn,
+                    auto_exclude_outliers = isTRUE(input$auto_exclude_outliers),
+                    outlier_threshold = 80,
+                    order_by_maturity = TRUE
+                )
+                ggsave(file, p, width = 10, height = 8, dpi = 300)
+            }
+        )
+
+        # Sukuk diverging chart download
+        output$download_diverging_sukuk <- downloadHandler(
+            filename = function() {
+                paste0("treasury_bond_changes_sukuk_", Sys.Date(), ".png")
+            },
+            content = function(file) {
+                p <- generate_holdings_change_diverging(
+                    bond_pct_long = treasury_data$bond_holdings,
+                    period_months = as.integer(input$change_period_select),
+                    selected_bond_type = "Sukuk",
+                    top_n = 12,
+                    exclude_bonds = input$exclude_bonds_sukuk,
+                    auto_exclude_outliers = isTRUE(input$auto_exclude_outliers),
+                    outlier_threshold = 80,
+                    order_by_maturity = TRUE
+                )
+                ggsave(file, p, width = 10, height = 8, dpi = 300)
+            }
+        )
+
+        # ==================================================================
+        # DOWNLOAD HANDLERS - DATA TABLE
+        # ==================================================================
 
         # CSV export
         output$download_table_csv <- downloadHandler(
