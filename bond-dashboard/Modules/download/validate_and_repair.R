@@ -20,9 +20,9 @@ validate_bond_files <- function(folder = "bond_holdings",
                                 verbose = TRUE,
                                 min_size = 10000) {  # 10KB minimum
 
-    # Get all Excel files
+    # Get all Excel files (both .xls and .xlsx formats)
     excel_files <- list.files(folder,
-                              pattern = "Historical government bond holdings.*\\.xlsx$",
+                              pattern = "Historical government bond holdings.*\\.(xls|xlsx)$",
                               full.names = TRUE)
 
     if (length(excel_files) == 0) {
@@ -30,9 +30,9 @@ validate_bond_files <- function(folder = "bond_holdings",
         return(invisible(NULL))
     }
 
-    cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+    cat(strrep("=", 70), "\n")
     cat("VALIDATING BOND HOLDINGS FILES\n")
-    cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+    cat(strrep("=", 70), "\n\n")
     cat(sprintf("Checking %d files in: %s\n\n", length(excel_files), folder))
 
     # Storage for results
@@ -113,9 +113,9 @@ validate_bond_files <- function(folder = "bond_holdings",
 
     # Summary
     cat("\n")
-    cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+    cat(strrep("=", 70), "\n")
     cat("VALIDATION SUMMARY\n")
-    cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+    cat(strrep("=", 70), "\n\n")
 
     n_valid <- sum(validation_results$status == "Valid")
     n_invalid <- nrow(validation_results) - n_valid
@@ -156,9 +156,9 @@ remove_corrupted_files <- function(folder = "bond_holdings",
     }
 
     cat("\n")
-    cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+    cat(strrep("=", 70), "\n")
     cat("CORRUPTED FILE CLEANUP\n")
-    cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+    cat(strrep("=", 70), "\n\n")
 
     cat(sprintf("Found %d corrupted file(s) to remove:\n\n", nrow(corrupted_files)))
 
@@ -224,9 +224,9 @@ redownload_corrupted_files <- function(folder = "bond_holdings",
     }
 
     cat("\n")
-    cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+    cat(strrep("=", 70), "\n")
     cat("RE-DOWNLOADING CORRUPTED FILES\n")
-    cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+    cat(strrep("=", 70), "\n\n")
 
     cat(sprintf("Will attempt to re-download %d file(s):\n\n", nrow(corrupted_files)))
 
@@ -302,9 +302,9 @@ redownload_corrupted_files <- function(folder = "bond_holdings",
 
     # Summary
     cat("\n")
-    cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+    cat(strrep("=", 70), "\n")
     cat("RE-DOWNLOAD SUMMARY\n")
-    cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+    cat(strrep("=", 70), "\n\n")
 
     n_success <- sum(results$status == "Success")
     cat(sprintf("Successful: %d/%d\n", n_success, nrow(results)))
@@ -326,13 +326,13 @@ repair_bond_files <- function(folder = "bond_holdings",
                               backup_folder = "bond_holdings_backup",
                               sleep_time = 1) {
 
-    cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+    cat(strrep("=", 70), "\n")
     cat("BOND HOLDINGS FILE REPAIR WORKFLOW\n")
-    cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+    cat(strrep("=", 70), "\n\n")
 
     # Step 1: Validate
     cat("STEP 1: Validating files...\n")
-    cat("-" %>% rep(70) %>% paste(collapse = ""), "\n")
+    cat(strrep("-", 70), "\n")
     validation <- validate_bond_files(folder, verbose = TRUE)
 
     corrupted <- validation %>% filter(status != "Valid")
@@ -345,25 +345,25 @@ repair_bond_files <- function(folder = "bond_holdings",
     # Step 2: Backup corrupted files
     cat("\n\n")
     cat("STEP 2: Backing up corrupted files...\n")
-    cat("-" %>% rep(70) %>% paste(collapse = ""), "\n")
+    cat(strrep("-", 70), "\n")
     removed <- remove_corrupted_files(folder, backup_folder, dry_run = FALSE)
 
     # Step 3: Re-download
     cat("\n\n")
     cat("STEP 3: Re-downloading files...\n")
-    cat("-" %>% rep(70) %>% paste(collapse = ""), "\n")
+    cat(strrep("-", 70), "\n")
     download_results <- redownload_corrupted_files(folder, sleep_time)
 
     # Step 4: Final validation
     cat("\n\n")
     cat("STEP 4: Final validation...\n")
-    cat("-" %>% rep(70) %>% paste(collapse = ""), "\n")
+    cat(strrep("-", 70), "\n")
     final_validation <- validate_bond_files(folder, verbose = FALSE)
 
     cat("\n")
-    cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+    cat(strrep("=", 70), "\n")
     cat("REPAIR COMPLETE\n")
-    cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+    cat(strrep("=", 70), "\n\n")
 
     n_valid <- sum(final_validation$status == "Valid")
     n_total <- nrow(final_validation)
@@ -398,16 +398,17 @@ quick_fix <- function() {
 # Usage Examples
 # ============================================================================
 
-cat("\n")
-cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
-cat("FILE VALIDATION UTILITY LOADED\n")
-cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
-cat("\nAvailable functions:\n\n")
-cat("  validate_bond_files()         - Check all files for corruption\n")
-cat("  remove_corrupted_files()      - Move corrupted files to backup\n")
-cat("  redownload_corrupted_files()  - Re-download problematic files\n")
-cat("  repair_bond_files()           - Complete repair workflow (RECOMMENDED)\n")
-cat("  quick_fix()                   - Same as repair_bond_files()\n")
-cat("\nQuick start:\n")
-cat("  repair_bond_files()  # Fix everything automatically\n")
-cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+# Note: Load messages are commented out to avoid noise when sourcing
+# cat("\n")
+# cat(strrep("=", 70), "\n")
+# cat("FILE VALIDATION UTILITY LOADED\n")
+# cat(strrep("=", 70), "\n")
+# cat("\nAvailable functions:\n\n")
+# cat("  validate_bond_files()         - Check all files for corruption\n")
+# cat("  remove_corrupted_files()      - Move corrupted files to backup\n")
+# cat("  redownload_corrupted_files()  - Re-download problematic files\n")
+# cat("  repair_bond_files()           - Complete repair workflow (RECOMMENDED)\n")
+# cat("  quick_fix()                   - Same as repair_bond_files()\n")
+# cat("\nQuick start:\n")
+# cat("  repair_bond_files()  # Fix everything automatically\n")
+# cat(strrep("=", 70), "\n\n")

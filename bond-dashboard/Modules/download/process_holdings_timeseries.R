@@ -1,6 +1,7 @@
 process_holdings_timeseries <- function(source_folder = "bond_holdings",
                                         output_folder = "bond_holdings_rds",
-                                        overwrite = FALSE) {
+                                        overwrite = FALSE,
+                                        verbose = TRUE) {
 
     # Load required packages
     require(readxl)
@@ -14,10 +15,43 @@ process_holdings_timeseries <- function(source_folder = "bond_holdings",
         dir.create(output_folder, recursive = TRUE)
     }
 
+    # Helper function to normalize month abbreviations to full names
+    normalize_month_name <- function(month_str) {
+        month_abbrev_map <- c(
+            "Jan" = "January", "Feb" = "February", "Mar" = "March",
+            "Apr" = "April", "May" = "May", "Jun" = "June",
+            "Jul" = "July", "Aug" = "August", "Sep" = "September",
+            "Oct" = "October", "Nov" = "November", "Dec" = "December"
+        )
+        if (month_str %in% names(month_abbrev_map)) {
+            return(month_abbrev_map[month_str])
+        }
+        return(month_str)
+    }
+
+    # Helper function for filling down NA values (zoo fallback)
+    fill_down_na <- function(vec) {
+        if (requireNamespace("zoo", quietly = TRUE)) {
+            return(zoo::na.locf(vec, na.rm = FALSE))
+        } else {
+            # Base R fallback
+            result <- vec
+            current_val <- NA
+            for (i in seq_along(result)) {
+                if (!is.na(result[i])) {
+                    current_val <- result[i]
+                } else {
+                    result[i] <- current_val
+                }
+            }
+            return(result)
+        }
+    }
+
     # Get list of Excel files - we'll use the most recent one
     # (since Holdings sheet contains complete historical data)
     excel_files <- list.files(source_folder,
-                              pattern = "Historical government bond holdings.*\\.xlsx$",
+                              pattern = "Historical government bond holdings.*\\.(xls|xlsx)$",
                               full.names = TRUE)
 
     if (length(excel_files) == 0) {
@@ -25,7 +59,7 @@ process_holdings_timeseries <- function(source_folder = "bond_holdings",
     }
 
     # Get the most recent VALID file
-    cat("Finding most recent valid file...\n")
+    if (verbose) cat("Finding most recent valid file...\n")
 
     file_info <- data.frame(
         filepath = excel_files,
@@ -40,12 +74,16 @@ process_holdings_timeseries <- function(source_folder = "bond_holdings",
         filename <- file_info$filename[i]
         filepath <- file_info$filepath[i]
 
-        # Extract date
-        pattern <- "Historical government bond holdings ([A-Za-z]+) ([0-9]{4})\\.xlsx"
+        # Extract date (handles both .xls and .xlsx)
+        pattern <- "Historical government bond holdings ([A-Za-z]+) ([0-9]{4})\\.(xls|xlsx)"
         matches <- regmatches(filename, regexec(pattern, filename))
-        if (length(matches[[1]]) == 3) {
-            date_string <- paste("01", matches[[1]][2], matches[[1]][3])
-            file_info$date[i] <- as.Date(date_string, format = "%d %B %Y")
+        if (length(matches[[1]]) >= 3) {
+            month_name <- normalize_month_name(matches[[1]][2])
+            date_string <- paste("01", month_name, matches[[1]][3])
+            file_info$date[i] <- tryCatch(
+                as.Date(date_string, format = "%d %B %Y"),
+                error = function(e) NA
+            )
         }
 
         # Validate file
@@ -72,9 +110,11 @@ process_holdings_timeseries <- function(source_folder = "bond_holdings",
     most_recent_file <- valid_files$filepath[which.max(valid_files$date)]
     most_recent_date <- valid_files$date[which.max(valid_files$date)]
 
-    cat(sprintf("Using most recent valid file: %s\n", basename(most_recent_file)))
-    cat(sprintf("File date: %s\n", format(most_recent_date, "%B %Y")))
-    cat(sprintf("Valid files available: %d out of %d total\n\n", nrow(valid_files), length(excel_files)))
+    if (verbose) {
+        cat(sprintf("Using most recent valid file: %s\n", basename(most_recent_file)))
+        cat(sprintf("File date: %s\n", format(most_recent_date, "%B %Y")))
+        cat(sprintf("Valid files available: %d out of %d total\n\n", nrow(valid_files), length(excel_files)))
+    }
 
     # Check if Holdings sheet exists
     sheets <- excel_sheets(most_recent_file)
@@ -83,7 +123,7 @@ process_holdings_timeseries <- function(source_folder = "bond_holdings",
     }
 
     # Read the Holdings sheet
-    cat("Reading Holdings sheet...\n")
+    if (verbose) cat("Reading Holdings sheet...\n")
     holdings_raw <- read_excel(most_recent_file, sheet = "Holdings", skip = 0)
 
     # Rename columns for consistency
@@ -92,10 +132,10 @@ process_holdings_timeseries <- function(source_folder = "bond_holdings",
     col_names <- str_trim(col_names)  # Remove trailing spaces
     names(holdings_raw) <- col_names
 
-    cat(sprintf("Raw data: %d rows, %d columns\n", nrow(holdings_raw), ncol(holdings_raw)))
+    if (verbose) cat(sprintf("Raw data: %d rows, %d columns\n", nrow(holdings_raw), ncol(holdings_raw)))
 
     # Process the data - handle the nested year/month structure
-    cat("\nProcessing nested time structure...\n")
+    if (verbose) cat("\nProcessing nested time structure...\n")
 
     holdings_processed <- holdings_raw %>%
         mutate(
@@ -104,10 +144,13 @@ process_holdings_timeseries <- function(source_folder = "bond_holdings",
             # Extract year
             year = if_else(is_year,
                            as.integer(str_extract(period, "\\d{4}")),
-                           NA_integer_),
-            # Fill down the year for subsequent month rows
-            year = zoo::na.locf(year, na.rm = FALSE)
-        ) %>%
+                           NA_integer_)
+        )
+
+    # Fill down the year for subsequent month rows (use helper to avoid zoo dependency)
+    holdings_processed$year <- fill_down_na(holdings_processed$year)
+
+    holdings_processed <- holdings_processed %>%
         filter(!is_year) %>%  # Remove year-only rows
         mutate(
             # Clean up month names
@@ -129,7 +172,7 @@ process_holdings_timeseries <- function(source_folder = "bond_holdings",
         filter(!is.na(date)) %>%
         arrange(date)
 
-    cat(sprintf("Processed data: %d rows\n", nrow(holdings_processed)))
+    if (verbose) cat(sprintf("Processed data: %d rows\n", nrow(holdings_processed)))
 
     # Create wide format (as is)
     holdings_wide <- holdings_processed
@@ -138,7 +181,7 @@ process_holdings_timeseries <- function(source_folder = "bond_holdings",
     # These are created when Excel file has empty/unnamed columns
     unnamed_cols <- grep("^\\.\\.\\.\\d+$", names(holdings_wide), value = TRUE)
     if (length(unnamed_cols) > 0) {
-        cat(sprintf("Removing %d unnamed column(s): %s\n",
+        if (verbose) cat(sprintf("Removing %d unnamed column(s): %s\n",
                     length(unnamed_cols),
                     paste(unnamed_cols, collapse = ", ")))
         holdings_wide <- holdings_wide %>%
@@ -150,7 +193,7 @@ process_holdings_timeseries <- function(source_folder = "bond_holdings",
         mutate(across(-date, ~as.numeric(as.character(.))))
 
     # Create long format
-    cat("Creating long format...\n")
+    if (verbose) cat("Creating long format...\n")
 
     sector_cols <- setdiff(names(holdings_wide), "date")
 
@@ -168,35 +211,37 @@ process_holdings_timeseries <- function(source_folder = "bond_holdings",
         arrange(date, sector)
 
     # Save datasets
-    cat("\n=== Saving RDS files ===\n")
+    if (verbose) cat("\n=== Saving RDS files ===\n")
 
     # Save wide format
     wide_path <- file.path(output_folder, "holdings_historical_wide.rds")
     if (!file.exists(wide_path) || overwrite) {
         saveRDS(holdings_wide, wide_path)
-        cat(sprintf("✓ Saved: holdings_historical_wide.rds (%d rows, %d cols)\n",
+        if (verbose) cat(sprintf("✓ Saved: holdings_historical_wide.rds (%d rows, %d cols)\n",
                     nrow(holdings_wide), ncol(holdings_wide)))
     } else {
-        cat(sprintf("⊘ Skipped (already exists): holdings_historical_wide.rds\n"))
+        if (verbose) cat(sprintf("⊘ Skipped (already exists): holdings_historical_wide.rds\n"))
     }
 
     # Save long format
     long_path <- file.path(output_folder, "holdings_historical_long.rds")
     if (!file.exists(long_path) || overwrite) {
         saveRDS(holdings_long, long_path)
-        cat(sprintf("✓ Saved: holdings_historical_long.rds (%d rows, %d cols)\n",
+        if (verbose) cat(sprintf("✓ Saved: holdings_historical_long.rds (%d rows, %d cols)\n",
                     nrow(holdings_long), ncol(holdings_long)))
     } else {
-        cat(sprintf("⊘ Skipped (already exists): holdings_historical_long.rds\n"))
+        if (verbose) cat(sprintf("⊘ Skipped (already exists): holdings_historical_long.rds\n"))
     }
 
     # Print summary
-    cat("\n=== Summary ===\n")
-    cat(sprintf("Date range: %s to %s\n",
-                min(holdings_wide$date),
-                max(holdings_wide$date)))
-    cat(sprintf("Number of observations: %d\n", nrow(holdings_wide)))
-    cat(sprintf("Sectors: %s\n", paste(sector_cols, collapse = ", ")))
+    if (verbose) {
+        cat("\n=== Summary ===\n")
+        cat(sprintf("Date range: %s to %s\n",
+                    min(holdings_wide$date),
+                    max(holdings_wide$date)))
+        cat(sprintf("Number of observations: %d\n", nrow(holdings_wide)))
+        cat(sprintf("Sectors: %s\n", paste(sector_cols, collapse = ", ")))
+    }
 
     # Return both formats
     invisible(list(
@@ -208,53 +253,64 @@ process_holdings_timeseries <- function(source_folder = "bond_holdings",
 # Complete processing workflow function
 process_all_sa_bond_data <- function(source_folder = "bond_holdings",
                                      output_folder = "bond_holdings_rds",
-                                     overwrite = FALSE) {
+                                     overwrite = FALSE,
+                                     verbose = TRUE) {
 
-    cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
-    cat("PROCESSING ALL SA BOND HOLDINGS DATA\n")
-    cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+    if (verbose) {
+        cat(strrep("=", 70), "\n")
+        cat("PROCESSING ALL SA BOND HOLDINGS DATA\n")
+        cat(strrep("=", 70), "\n\n")
 
-    # Process historical holdings time series
-    cat("STEP 1: Processing Historical Holdings Time Series\n")
-    cat("-" %>% rep(70) %>% paste(collapse = ""), "\n")
+        # Process historical holdings time series
+        cat("STEP 1: Processing Historical Holdings Time Series\n")
+        cat(strrep("-", 70), "\n")
+    }
+
     holdings_result <- process_holdings_timeseries(
         source_folder = source_folder,
         output_folder = output_folder,
-        overwrite = overwrite
+        overwrite = overwrite,
+        verbose = verbose
     )
 
-    cat("\n")
-    cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+    if (verbose) {
+        cat("\n")
+        cat(strrep("=", 70), "\n\n")
 
-    # Process all bond holdings by type
-    cat("STEP 2: Processing Bond Holdings by Type and Sector\n")
-    cat("-" %>% rep(70) %>% paste(collapse = ""), "\n")
+        # Process all bond holdings by type
+        cat("STEP 2: Processing Bond Holdings by Type and Sector\n")
+        cat(strrep("-", 70), "\n")
+    }
+
     bonds_result <- process_sa_bond_holdings_tidy(
         source_folder = source_folder,
         output_folder = output_folder,
         create_long_format = TRUE,
-        overwrite = overwrite
+        overwrite = overwrite,
+        verbose = verbose
     )
 
-    cat("\n")
-    cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
-    cat("PROCESSING COMPLETE!\n")
-    cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+    if (verbose) {
+        cat("\n")
+        cat(strrep("=", 70), "\n")
+        cat("PROCESSING COMPLETE!\n")
+        cat(strrep("=", 70), "\n\n")
 
-    cat("All datasets saved to:", output_folder, "\n\n")
+        cat("All datasets saved to:", output_folder, "\n\n")
 
-    cat("Available datasets:\n")
-    cat("  1. holdings_historical_wide.rds / holdings_historical_long.rds\n")
-    cat("  2. fixed_rate_values_wide.rds / fixed_rate_values_long.rds\n")
-    cat("  3. fixed_rate_pct_wide.rds / fixed_rate_pct_long.rds\n")
-    cat("  4. ilb_values_wide.rds / ilb_values_long.rds\n")
-    cat("  5. ilb_pct_wide.rds / ilb_pct_long.rds\n")
-    cat("  6. frn_values_wide.rds / frn_values_long.rds\n")
-    cat("  7. frn_pct_wide.rds / frn_pct_long.rds\n")
-    cat("  8. sukuk_values_wide.rds / sukuk_values_long.rds\n")
-    cat("  9. sukuk_pct_wide.rds / sukuk_pct_long.rds\n")
-    cat(" 10. all_bonds_values_long.rds\n")
-    cat(" 11. all_bonds_pct_long.rds\n\n")
+        cat("Available datasets:\n")
+        cat("  1. holdings_historical_wide.rds / holdings_historical_long.rds\n")
+        cat("  2. fixed_rate_values_wide.rds / fixed_rate_values_long.rds\n")
+        cat("  3. fixed_rate_pct_wide.rds / fixed_rate_pct_long.rds\n")
+        cat("  4. ilb_values_wide.rds / ilb_values_long.rds\n")
+        cat("  5. ilb_pct_wide.rds / ilb_pct_long.rds\n")
+        cat("  6. frn_values_wide.rds / frn_values_long.rds\n")
+        cat("  7. frn_pct_wide.rds / frn_pct_long.rds\n")
+        cat("  8. sukuk_values_wide.rds / sukuk_values_long.rds\n")
+        cat("  9. sukuk_pct_wide.rds / sukuk_pct_long.rds\n")
+        cat(" 10. all_bonds_values_long.rds\n")
+        cat(" 11. all_bonds_pct_long.rds\n\n")
+    }
 
     invisible(list(
         holdings = holdings_result,

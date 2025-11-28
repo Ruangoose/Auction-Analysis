@@ -1,7 +1,8 @@
 process_sa_bond_holdings_tidy <- function(source_folder = "bond_holdings",
                                           output_folder = "bond_holdings_rds",
                                           create_long_format = TRUE,
-                                          overwrite = FALSE) {
+                                          overwrite = FALSE,
+                                          verbose = TRUE) {
 
     # Load required packages
     require(readxl)
@@ -15,16 +16,30 @@ process_sa_bond_holdings_tidy <- function(source_folder = "bond_holdings",
         dir.create(output_folder, recursive = TRUE)
     }
 
-    # Get list of Excel files
+    # Helper function to normalize month abbreviations to full names
+    normalize_month_name <- function(month_str) {
+        month_abbrev_map <- c(
+            "Jan" = "January", "Feb" = "February", "Mar" = "March",
+            "Apr" = "April", "May" = "May", "Jun" = "June",
+            "Jul" = "July", "Aug" = "August", "Sep" = "September",
+            "Oct" = "October", "Nov" = "November", "Dec" = "December"
+        )
+        if (month_str %in% names(month_abbrev_map)) {
+            return(month_abbrev_map[month_str])
+        }
+        return(month_str)
+    }
+
+    # Get list of Excel files (both .xls and .xlsx formats)
     excel_files <- list.files(source_folder,
-                              pattern = "Historical government bond holdings.*\\.xlsx$",
+                              pattern = "Historical government bond holdings.*\\.(xls|xlsx)$",
                               full.names = TRUE)
 
     if (length(excel_files) == 0) {
         stop("No Excel files found in the specified folder.")
     }
 
-    cat(sprintf("Found %d Excel files to process.\n\n", length(excel_files)))
+    if (verbose) cat(sprintf("Found %d Excel files to process.\n\n", length(excel_files)))
 
     # Initialize storage for all data
     all_fixed_rate_values <- list()
@@ -54,27 +69,35 @@ process_sa_bond_holdings_tidy <- function(source_folder = "bond_holdings",
     # Process each file
     for (file_path in excel_files) {
         filename <- basename(file_path)
-        cat(sprintf("Processing: %s\n", filename))
+        if (verbose) cat(sprintf("Processing: %s\n", filename))
 
         # Validate file first
         if (!is_valid_excel(file_path)) {
-            cat(sprintf("  ✗ SKIPPED - File is corrupted or invalid (size: %d bytes)\n",
-                        file.size(file_path)))
-            cat(sprintf("     Consider re-downloading this file.\n"))
+            if (verbose) {
+                cat(sprintf("  ✗ SKIPPED - File is corrupted or invalid (size: %d bytes)\n",
+                            file.size(file_path)))
+                cat(sprintf("     Consider re-downloading this file.\n"))
+            }
             next
         }
 
-        # Extract date from filename
-        pattern <- "Historical government bond holdings ([A-Za-z]+) ([0-9]{4})\\.xlsx"
+        # Extract date from filename (handles both .xls and .xlsx)
+        pattern <- "Historical government bond holdings ([A-Za-z]+) ([0-9]{4})\\.(xls|xlsx)"
         matches <- regmatches(filename, regexec(pattern, filename))
 
-        if (length(matches[[1]]) == 3) {
-            month_name <- matches[[1]][2]
+        if (length(matches[[1]]) >= 3) {
+            month_name <- normalize_month_name(matches[[1]][2])
             year <- matches[[1]][3]
             date_string <- paste("01", month_name, year)
-            file_date <- as.Date(date_string, format = "%d %B %Y")
+            file_date <- tryCatch({
+                as.Date(date_string, format = "%d %B %Y")
+            }, error = function(e) {
+                if (verbose) cat(sprintf("  Warning: Could not parse date from '%s'. Skipping.\n", date_string))
+                return(NA)
+            })
+            if (is.na(file_date)) next
         } else {
-            cat(sprintf("  Warning: Could not extract date from filename. Skipping.\n"))
+            if (verbose) cat(sprintf("  Warning: Could not extract date from filename. Skipping.\n"))
             next
         }
 
@@ -170,24 +193,24 @@ process_sa_bond_holdings_tidy <- function(source_folder = "bond_holdings",
                 }
             }
 
-            cat(sprintf("  ✓ Successfully processed\n"))
+            if (verbose) cat(sprintf("  ✓ Successfully processed\n"))
 
         }, error = function(e) {
-            cat(sprintf("  ✗ Error processing file: %s\n", e$message))
+            if (verbose) cat(sprintf("  ✗ Error processing file: %s\n", e$message))
         })
     }
 
     # Combine all data by sheet type
-    cat("\n=== Combining and tidying data ===\n")
+    if (verbose) cat("\n=== Combining and tidying data ===\n")
 
     # Helper function to combine and optionally pivot to long format
     combine_and_tidy <- function(data_list, list_name, bond_type, create_long) {
         if (length(data_list) == 0) {
-            cat(sprintf("No data found for %s\n", list_name))
+            if (verbose) cat(sprintf("No data found for %s\n", list_name))
             return(list(wide = NULL, long = NULL))
         }
 
-        cat(sprintf("Processing %d files for %s...\n", length(data_list), list_name))
+        if (verbose) cat(sprintf("Processing %d files for %s...\n", length(data_list), list_name))
 
         # Coerce all numeric columns to handle mixed types (e.g., "k" in numeric cells)
         data_list_coerced <- lapply(data_list, function(df) {
@@ -239,7 +262,7 @@ process_sa_bond_holdings_tidy <- function(source_folder = "bond_holdings",
     sukuk_pct_data <- combine_and_tidy(all_sukuk_pct, "Sukuk (%)", "Sukuk", create_long_format)
 
     # Save all datasets as RDS
-    cat("\n=== Saving RDS files ===\n")
+    if (verbose) cat("\n=== Saving RDS files ===\n")
 
     save_dataset <- function(data_list, base_name) {
         saved_files <- c()
@@ -249,11 +272,11 @@ process_sa_bond_holdings_tidy <- function(source_folder = "bond_holdings",
             filepath <- file.path(output_folder, paste0(base_name, "_wide.rds"))
             if (!file.exists(filepath) || overwrite) {
                 saveRDS(data_list$wide, filepath)
-                cat(sprintf("✓ Saved: %s (%d rows, %d cols)\n",
+                if (verbose) cat(sprintf("✓ Saved: %s (%d rows, %d cols)\n",
                             basename(filepath), nrow(data_list$wide), ncol(data_list$wide)))
                 saved_files <- c(saved_files, filepath)
             } else {
-                cat(sprintf("⊘ Skipped (already exists): %s\n", basename(filepath)))
+                if (verbose) cat(sprintf("⊘ Skipped (already exists): %s\n", basename(filepath)))
             }
         }
 
@@ -262,11 +285,11 @@ process_sa_bond_holdings_tidy <- function(source_folder = "bond_holdings",
             filepath <- file.path(output_folder, paste0(base_name, "_long.rds"))
             if (!file.exists(filepath) || overwrite) {
                 saveRDS(data_list$long, filepath)
-                cat(sprintf("✓ Saved: %s (%d rows, %d cols)\n",
+                if (verbose) cat(sprintf("✓ Saved: %s (%d rows, %d cols)\n",
                             basename(filepath), nrow(data_list$long), ncol(data_list$long)))
                 saved_files <- c(saved_files, filepath)
             } else {
-                cat(sprintf("⊘ Skipped (already exists): %s\n", basename(filepath)))
+                if (verbose) cat(sprintf("⊘ Skipped (already exists): %s\n", basename(filepath)))
             }
         }
 
@@ -284,7 +307,7 @@ process_sa_bond_holdings_tidy <- function(source_folder = "bond_holdings",
 
     # Create a combined long format dataset with all bond types
     if (create_long_format) {
-        cat("\n=== Creating combined dataset ===\n")
+        if (verbose) cat("\n=== Creating combined dataset ===\n")
 
         all_values_long <- bind_rows(
             fixed_values_data$long,
@@ -308,7 +331,7 @@ process_sa_bond_holdings_tidy <- function(source_folder = "bond_holdings",
             filepath <- file.path(output_folder, "all_bonds_values_long.rds")
             if (!file.exists(filepath) || overwrite) {
                 saveRDS(all_values_long, filepath)
-                cat(sprintf("✓ Saved combined values: %s (%d rows)\n",
+                if (verbose) cat(sprintf("✓ Saved combined values: %s (%d rows)\n",
                             basename(filepath), nrow(all_values_long)))
             }
         }
@@ -317,16 +340,18 @@ process_sa_bond_holdings_tidy <- function(source_folder = "bond_holdings",
             filepath <- file.path(output_folder, "all_bonds_pct_long.rds")
             if (!file.exists(filepath) || overwrite) {
                 saveRDS(all_pct_long, filepath)
-                cat(sprintf("✓ Saved combined percentages: %s (%d rows)\n",
+                if (verbose) cat(sprintf("✓ Saved combined percentages: %s (%d rows)\n",
                             basename(filepath), nrow(all_pct_long)))
             }
         }
     }
 
     # Create summary
-    cat("\n=== Processing Summary ===\n")
-    cat(sprintf("Total files processed: %d\n", length(excel_files)))
-    cat(sprintf("Output folder: %s\n", output_folder))
+    if (verbose) {
+        cat("\n=== Processing Summary ===\n")
+        cat(sprintf("Total files processed: %d\n", length(excel_files)))
+        cat(sprintf("Output folder: %s\n", output_folder))
+    }
 
     # Return list of all datasets
     invisible(list(
