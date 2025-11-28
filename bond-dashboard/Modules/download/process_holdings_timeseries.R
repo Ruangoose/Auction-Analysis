@@ -194,9 +194,17 @@ process_holdings_timeseries <- function(source_folder = "bond_holdings",
         ) %>%
         mutate(
             sector = str_trim(sector),
-            percentage = as.numeric(percentage)
+            percentage = as.numeric(percentage),
+            # Replace NA with 0 instead of filtering - ensures continuous data for area charts
+            percentage = ifelse(is.na(percentage), 0, percentage)
         ) %>%
-        filter(!is.na(percentage)) %>%
+        # Filter out any invalid sectors (but keep rows with 0% holdings)
+        filter(
+            !is.na(sector),
+            sector != "",
+            !grepl("^NA$", sector, ignore.case = TRUE),
+            !grepl("TOTAL", sector, ignore.case = TRUE)
+        ) %>%
         arrange(date, sector)
 
     # Save datasets

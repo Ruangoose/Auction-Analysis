@@ -223,11 +223,25 @@ process_sa_bond_holdings_tidy <- function(source_folder = "bond_holdings",
                     names_to = "bond",
                     values_to = "value"
                 ) %>%
-                filter(!is.na(value)) %>%
+                # CRITICAL FIX: Replace NA with 0 instead of filtering out
+                # This ensures sectors with 0% holdings are kept, so bars sum to 100%
                 mutate(
+                    value = ifelse(is.na(value), 0, value),
                     bond_type = bond_type,
                     # Extract maturity year from bond name
                     maturity_year = as.integer(str_extract(bond, "\\d{4}"))
+                ) %>%
+                # Filter out invalid sectors and bonds AFTER pivot (not by filtering NA values)
+                filter(
+                    !is.na(sector),
+                    sector != "",
+                    !grepl("^NA$", sector, ignore.case = TRUE),
+                    !grepl("^TOTAL", sector, ignore.case = TRUE),
+                    !grepl("CSDP reporting error", sector, ignore.case = TRUE),
+                    !is.na(bond),
+                    bond != "",
+                    !grepl("^NA$", bond, ignore.case = TRUE),
+                    !grepl("^TOTAL", bond, ignore.case = TRUE)
                 ) %>%
                 arrange(file_date, sector, bond)
 
