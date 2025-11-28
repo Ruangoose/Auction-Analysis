@@ -50,6 +50,7 @@ treasury_aggregate_colors <- c(
 )
 
 # Bond-level holdings - for bond-specific views (more colors needed)
+# NOTE: Do NOT include "NA" as a valid sector - filter it out instead
 treasury_sector_colors <- c(
     "Foreign sector" = "#E8913A",             # Orange (highlight foreign)
     "Monetary institutions" = "#1B3A6B",      # Navy dark
@@ -59,8 +60,7 @@ treasury_sector_colors <- c(
     "Private self-administered funds" = "#9AB5C0", # Slate light
     "Other sector" = "#4A5568",               # Gray dark
     "Short-term insurers" = "#718096",        # Gray medium
-    "CSDP reporting error" = "#A0AEC0",       # Gray light
-    "NA" = "#CBD5E0",                         # Very light gray
+    "CSDP reporting error" = "#A0AEC0",       # Gray light (filtered but kept for edge cases)
     # Aliases for aggregate sectors
     "Non-residents" = "#E8913A",              # Orange (alias)
     "Banks" = "#1B3A6B",                      # Navy dark (alias)
@@ -120,21 +120,43 @@ generate_holdings_area_chart <- function(holdings_long,
             filter(sector %in% sectors_selected)
     }
 
-    # Remove NA values and ensure proper ordering
     # Order sectors for proper stacking (bottom to top)
     sector_order <- c("Other", "Other financial institutions", "Non-residents",
                       "Local pension funds", "Insurers", "Banks")
-    plot_data <- plot_data %>%
-        filter(!is.na(percentage), !is.na(date), !is.na(sector)) %>%
+
+    # First, clean the data by removing NA values
+    clean_data <- plot_data %>%
+        filter(!is.na(percentage), !is.na(date), !is.na(sector))
+
+    if (nrow(clean_data) == 0) {
+        return(create_empty_plot("No data available for selected filters"))
+    }
+
+    # CRITICAL: Ensure complete date-sector combinations to prevent gaps
+    # Fill missing combinations with 0 instead of having gaps in the area chart
+    all_dates <- unique(clean_data$date)
+    all_sectors <- intersect(sector_order, unique(clean_data$sector))
+
+    # Create complete grid of all date-sector combinations
+    complete_grid <- expand.grid(
+        date = all_dates,
+        sector = all_sectors,
+        stringsAsFactors = FALSE
+    )
+
+    # Join with actual data and fill missing with 0
+    plot_data <- complete_grid %>%
+        left_join(
+            clean_data %>% select(date, sector, percentage),
+            by = c("date", "sector")
+        ) %>%
         mutate(
+            # Replace NA with 0 for continuous area chart
+            percentage = ifelse(is.na(percentage), 0, percentage),
             sector = factor(sector, levels = sector_order),
             # Convert decimal percentages (0.25) to display percentages (25)
             percentage_display = percentage * 100
         )
-
-    if (nrow(plot_data) == 0) {
-        return(create_empty_plot("No data available for selected filters"))
-    }
 
     # Get date range for title
     date_min <- min(plot_data$date, na.rm = TRUE)
@@ -308,15 +330,23 @@ generate_bond_holdings_bar_chart <- function(bond_pct_long,
         target_date <- max(bond_pct_long$file_date, na.rm = TRUE)
     }
 
-    # Filter data
+    # Filter data - CRITICAL: Filter out NA sectors and summary rows BEFORE any processing
     plot_data <- bond_pct_long %>%
         filter(
             file_date == target_date,
-            bond_type == !!bond_type
+            bond_type == !!bond_type,
+            # Remove R NA values (null/missing)
+            !is.na(sector),
+            !is.na(bond),
+            !is.na(value),
+            value > 0
         ) %>%
-        filter(!grepl("TOTAL|^NA$|CSDP reporting error", sector, ignore.case = TRUE)) %>%
-        filter(!grepl("TOTAL|^NA$", bond, ignore.case = TRUE)) %>%
-        filter(!is.na(value), value > 0)
+        # Remove string "NA", TOTAL rows, and error rows
+        filter(!grepl("^NA$", sector, ignore.case = TRUE)) %>%
+        filter(!grepl("TOTAL", sector, ignore.case = TRUE)) %>%
+        filter(!grepl("CSDP reporting error", sector, ignore.case = TRUE)) %>%
+        filter(!grepl("^NA$", bond, ignore.case = TRUE)) %>%
+        filter(!grepl("TOTAL", bond, ignore.case = TRUE))
 
     if (nrow(plot_data) == 0) {
         return(create_empty_plot(sprintf("No data available for %s bonds", bond_type)))
@@ -447,13 +477,30 @@ generate_holdings_change_diverging <- function(bond_pct_long,
     target_historical <- current_date %m-% months(period_months)
     historical_date <- all_dates[which.min(abs(all_dates - target_historical))]
 
-    # Calculate changes
-    current_data <- bond_pct_long %>%
-        filter(file_date == current_date, bond_type == !!bond_type) %>%
+    # CRITICAL: Filter out NA sectors and summary rows BEFORE any calculations
+    # This prevents NA from appearing in the legend
+    clean_bond_data <- bond_pct_long %>%
+        filter(
+            bond_type == !!bond_type,
+            # Remove R NA values (null/missing)
+            !is.na(sector),
+            !is.na(bond),
+            !is.na(value)
+        ) %>%
+        # Remove string "NA", TOTAL rows, and error rows
+        filter(!grepl("^NA$", sector, ignore.case = TRUE)) %>%
+        filter(!grepl("TOTAL", sector, ignore.case = TRUE)) %>%
+        filter(!grepl("CSDP reporting error", sector, ignore.case = TRUE)) %>%
+        filter(!grepl("^NA$", bond, ignore.case = TRUE)) %>%
+        filter(!grepl("TOTAL", bond, ignore.case = TRUE))
+
+    # Calculate changes using cleaned data
+    current_data <- clean_bond_data %>%
+        filter(file_date == current_date) %>%
         select(sector, bond, current_value = value)
 
-    historical_data <- bond_pct_long %>%
-        filter(file_date == historical_date, bond_type == !!bond_type) %>%
+    historical_data <- clean_bond_data %>%
+        filter(file_date == historical_date) %>%
         select(sector, bond, historical_value = value)
 
     change_data <- current_data %>%
@@ -463,8 +510,6 @@ generate_holdings_change_diverging <- function(bond_pct_long,
             # Convert decimal changes to percentage changes (0.01 -> 1%)
             change_display = (current_value - historical_value) * 100
         ) %>%
-        filter(!grepl("TOTAL|^NA$|CSDP reporting error", sector, ignore.case = TRUE)) %>%
-        filter(!grepl("TOTAL|^NA$", bond, ignore.case = TRUE)) %>%
         filter(!is.na(change))
 
     if (nrow(change_data) == 0) {
