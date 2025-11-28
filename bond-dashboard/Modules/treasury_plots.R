@@ -3,6 +3,15 @@
 # Professional visualizations for SA Government Bond institutional ownership
 # ================================================================================
 
+# Required packages (loaded quietly - main app should already have them)
+suppressPackageStartupMessages({
+    require(ggplot2, quietly = TRUE)
+    require(dplyr, quietly = TRUE)
+    require(tidyr, quietly = TRUE)
+    require(lubridate, quietly = TRUE)  # For floor_date, ceiling_date
+    require(scales, quietly = TRUE)
+})
+
 # ================================================================================
 # INSELE CAPITAL PARTNERS - BRAND COLOR PALETTE
 # ================================================================================
@@ -133,8 +142,18 @@ generate_holdings_area_chart <- function(holdings_long,
     }
 
     # CRITICAL: Ensure complete date-sector combinations to prevent gaps
-    # Fill missing combinations with 0 instead of having gaps in the area chart
-    all_dates <- unique(clean_data$date)
+    # Generate a CONTINUOUS monthly date sequence from min to max date
+    # This fixes the "Other" segment gap issue caused by irregular/missing dates
+    date_min <- min(clean_data$date, na.rm = TRUE)
+    date_max <- max(clean_data$date, na.rm = TRUE)
+
+    # Create complete monthly date sequence
+    all_dates <- seq.Date(
+        from = floor_date(date_min, "month"),
+        to = ceiling_date(date_max, "month"),
+        by = "month"
+    )
+
     all_sectors <- intersect(sector_order, unique(clean_data$sector))
 
     # Create complete grid of all date-sector combinations
@@ -144,19 +163,57 @@ generate_holdings_area_chart <- function(holdings_long,
         stringsAsFactors = FALSE
     )
 
-    # Join with actual data and fill missing with 0
+    # Join with actual data and fill missing with 0 or interpolated values
     plot_data <- complete_grid %>%
         left_join(
             clean_data %>% select(date, sector, percentage),
             by = c("date", "sector")
         ) %>%
+        # Group by sector to handle missing values within each sector
+        group_by(sector) %>%
+        arrange(date) %>%
         mutate(
-            # Replace NA with 0 for continuous area chart
-            percentage = ifelse(is.na(percentage), 0, percentage),
+            # Use last observation carried forward for missing values, then fill remaining with 0
+            percentage = if (requireNamespace("zoo", quietly = TRUE)) {
+                zoo::na.locf(percentage, na.rm = FALSE)
+            } else {
+                # Base R fallback for carrying forward
+                {
+                    result <- percentage
+                    current_val <- NA
+                    for (i in seq_along(result)) {
+                        if (!is.na(result[i])) {
+                            current_val <- result[i]
+                        } else {
+                            result[i] <- current_val
+                        }
+                    }
+                    result
+                }
+            },
+            # Fill any remaining NAs (at the start) with 0
+            percentage = ifelse(is.na(percentage), 0, percentage)
+        ) %>%
+        ungroup() %>%
+        mutate(
             sector = factor(sector, levels = sector_order),
             # Convert decimal percentages (0.25) to display percentages (25)
             percentage_display = percentage * 100
         )
+
+    # Validate that each date sums to ~100% (data integrity check)
+    date_totals <- plot_data %>%
+        group_by(date) %>%
+        summarise(total = sum(percentage_display, na.rm = TRUE), .groups = "drop")
+
+    outlier_dates <- date_totals %>% filter(total < 95 | total > 105)
+    if (nrow(outlier_dates) > 0 && nrow(outlier_dates) <= 10) {
+        warning("Holdings data integrity issue - these dates don't sum to ~100%: ",
+                paste(format(outlier_dates$date, "%Y-%m"), sprintf("(%.1f%%)", outlier_dates$total), collapse = ", "))
+    } else if (nrow(outlier_dates) > 10) {
+        warning(sprintf("Holdings data integrity issue - %d dates don't sum to ~100%% (range: %.1f%% to %.1f%%)",
+                        nrow(outlier_dates), min(outlier_dates$total), max(outlier_dates$total)))
+    }
 
     # Get date range for title
     date_min <- min(plot_data$date, na.rm = TRUE)
@@ -331,15 +388,15 @@ generate_bond_holdings_bar_chart <- function(bond_pct_long,
     }
 
     # Filter data - CRITICAL: Filter out NA sectors and summary rows BEFORE any processing
-    plot_data <- bond_pct_long %>%
+    # First filter for date and bond type, keeping all valid sectors (including 0% holdings)
+    filtered_data <- bond_pct_long %>%
         filter(
             file_date == target_date,
             bond_type == !!bond_type,
             # Remove R NA values (null/missing)
             !is.na(sector),
             !is.na(bond),
-            !is.na(value),
-            value > 0
+            !is.na(value)
         ) %>%
         # Remove string "NA", TOTAL rows, and error rows
         filter(!grepl("^NA$", sector, ignore.case = TRUE)) %>%
@@ -347,6 +404,21 @@ generate_bond_holdings_bar_chart <- function(bond_pct_long,
         filter(!grepl("CSDP reporting error", sector, ignore.case = TRUE)) %>%
         filter(!grepl("^NA$", bond, ignore.case = TRUE)) %>%
         filter(!grepl("TOTAL", bond, ignore.case = TRUE))
+
+    # Validate that each bond sums to ~100% (data integrity check)
+    bond_totals <- filtered_data %>%
+        group_by(bond) %>%
+        summarise(total = sum(value, na.rm = TRUE) * 100, .groups = "drop")
+
+    incomplete_bonds <- bond_totals %>% filter(total < 95 | total > 105)
+    if (nrow(incomplete_bonds) > 0) {
+        warning("Bond holdings data integrity issue - these bonds don't sum to ~100%: ",
+                paste(incomplete_bonds$bond, sprintf("(%.1f%%)", incomplete_bonds$total), collapse = ", "))
+    }
+
+    # Now filter for positive values only (for display purposes)
+    plot_data <- filtered_data %>%
+        filter(value > 0)
 
     if (nrow(plot_data) == 0) {
         return(create_empty_plot(sprintf("No data available for %s bonds", bond_type)))
