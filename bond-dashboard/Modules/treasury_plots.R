@@ -4,42 +4,75 @@
 # ================================================================================
 
 # ================================================================================
-# COLOR PALETTES
+# INSELE CAPITAL PARTNERS - BRAND COLOR PALETTE
 # ================================================================================
 
-# Aggregate holdings (greens) - for historical time series
+# Official Insele palette (extracted from logo)
+insele_palette <- list(
+    # Primary colors from logo
+    navy_dark = "#1B3A6B",      # Primary dark navy (main brand color)
+    navy_medium = "#2B4F7F",    # Medium navy blue
+    navy_light = "#3D6494",     # Lighter navy
+
+    # Secondary colors from logo
+    slate_dark = "#5B7B8A",     # Dark slate/teal gray
+    slate_medium = "#7A9BA8",   # Medium slate
+    slate_light = "#9AB5C0",    # Light slate
+
+    # Accent color
+    orange = "#E8913A",         # Orange accent (from logo highlight)
+    orange_light = "#F5A54D",   # Lighter orange
+
+    # Neutral tones
+    gray_dark = "#4A5568",      # Dark gray
+    gray_medium = "#718096",    # Medium gray
+    gray_light = "#A0AEC0",     # Light gray
+
+    # Background/light tones
+    cream = "#F7FAFC",          # Off-white background
+    white = "#FFFFFF"
+)
+
+# ================================================================================
+# COLOR PALETTES - INSELE BRAND COLORS
+# ================================================================================
+
+# Aggregate holdings (navy/slate/orange) - for historical time series
 treasury_aggregate_colors <- c(
-    "Banks" = "#1a5c3a",                      # Dark green
-    "Insurers" = "#2e8b57",                   # Medium green
-    "Local pension funds" = "#66cdaa",        # Light teal
-    "Non-residents" = "#b2e0d4",              # Very light teal
-    "Other financial institutions" = "#e0f4f0", # Pale teal
-    "Other" = "#f5fafa"                       # Near white
+    "Banks" = "#1B3A6B",                      # Navy dark (top of stack)
+    "Insurers" = "#2B4F7F",                   # Navy medium
+    "Local pension funds" = "#5B7B8A",        # Slate dark
+    "Non-residents" = "#7A9BA8",              # Slate medium
+    "Other financial institutions" = "#9AB5C0", # Slate light
+    "Other" = "#E8913A"                       # Orange accent (bottom)
 )
 
-# Bond-level holdings (colorful) - for bond-specific views
+# Bond-level holdings - for bond-specific views (more colors needed)
 treasury_sector_colors <- c(
-    "Foreign sector" = "#e74c3c",                    # Red
-    "Long-term insurers" = "#3498db",                # Blue
-    "Monetary institutions" = "#2ecc71",             # Green
-    "Official pension funds" = "#9b59b6",            # Purple
-    "Other financial institutions" = "#e67e22",      # Orange
-    "Private self-administered funds" = "#ff69b4",   # Pink
-    "Other sector" = "#795548",                      # Brown
-    "Short-term insurers" = "#95a5a6",               # Gray
-    "Non-residents" = "#e74c3c",                     # Red (alias)
-    "Banks" = "#2ecc71",                             # Green (alias)
-    "Insurers" = "#3498db",                          # Blue (alias)
-    "Local pension funds" = "#9b59b6",               # Purple (alias)
-    "Other" = "#795548"                              # Brown (alias)
+    "Foreign sector" = "#E8913A",             # Orange (highlight foreign)
+    "Monetary institutions" = "#1B3A6B",      # Navy dark
+    "Official pension funds" = "#2B4F7F",     # Navy medium
+    "Other financial institutions" = "#5B7B8A", # Slate dark
+    "Long-term insurers" = "#7A9BA8",         # Slate medium
+    "Private self-administered funds" = "#9AB5C0", # Slate light
+    "Other sector" = "#4A5568",               # Gray dark
+    "Short-term insurers" = "#718096",        # Gray medium
+    "CSDP reporting error" = "#A0AEC0",       # Gray light
+    "NA" = "#CBD5E0",                         # Very light gray
+    # Aliases for aggregate sectors
+    "Non-residents" = "#E8913A",              # Orange (alias)
+    "Banks" = "#1B3A6B",                      # Navy dark (alias)
+    "Insurers" = "#2B4F7F",                   # Navy medium (alias)
+    "Local pension funds" = "#5B7B8A",        # Slate dark (alias)
+    "Other" = "#4A5568"                       # Gray dark (alias)
 )
 
-# Change periods (yellow-green gradient)
+# Change periods (navy gradient - lightest to darkest)
 treasury_change_period_colors <- c(
-    "1-month" = "#c5e063",
-    "3-month" = "#7cb342",
-    "6-month" = "#558b2f",
-    "12-month" = "#33691e"
+    "1-month" = "#9AB5C0",     # Lightest (slate light)
+    "3-month" = "#5B7B8A",     # Medium (slate dark)
+    "6-month" = "#2B4F7F",     # Medium-dark (navy medium)
+    "12-month" = "#1B3A6B"     # Darkest (navy)
 )
 
 # ================================================================================
@@ -86,9 +119,16 @@ generate_holdings_area_chart <- function(holdings_long,
     }
 
     # Remove NA values and ensure proper ordering
+    # Order sectors for proper stacking (bottom to top)
+    sector_order <- c("Other", "Other financial institutions", "Non-residents",
+                      "Local pension funds", "Insurers", "Banks")
     plot_data <- plot_data %>%
         filter(!is.na(percentage), !is.na(date), !is.na(sector)) %>%
-        mutate(sector = factor(sector, levels = rev(names(treasury_aggregate_colors))))
+        mutate(
+            sector = factor(sector, levels = sector_order),
+            # Convert decimal percentages (0.25) to display percentages (25)
+            percentage_display = percentage * 100
+        )
 
     if (nrow(plot_data) == 0) {
         return(create_empty_plot("No data available for selected filters"))
@@ -99,7 +139,7 @@ generate_holdings_area_chart <- function(holdings_long,
     date_max <- max(plot_data$date, na.rm = TRUE)
 
     # Create the stacked area chart
-    p <- ggplot(plot_data, aes(x = date, y = percentage, fill = sector)) +
+    p <- ggplot(plot_data, aes(x = date, y = percentage_display, fill = sector)) +
         geom_area(alpha = 0.9, position = "stack") +
         scale_fill_manual(
             values = treasury_aggregate_colors,
@@ -194,14 +234,16 @@ generate_ownership_change_chart <- function(holdings_long,
                 period == "change_12m" ~ "12-month",
                 TRUE ~ period
             ),
-            period_label = factor(period_label, levels = c("1-month", "3-month", "6-month", "12-month"))
+            period_label = factor(period_label, levels = c("1-month", "3-month", "6-month", "12-month")),
+            # Convert decimal changes to percentage changes (0.01 -> 1%)
+            change_display = change * 100
         ) %>%
         filter(!is.na(change))
 
     # Create the grouped bar chart
-    p <- ggplot(change_long, aes(x = sector, y = change, fill = period_label)) +
+    p <- ggplot(change_long, aes(x = sector, y = change_display, fill = period_label)) +
         geom_col(position = position_dodge(width = 0.8), width = 0.7) +
-        geom_hline(yintercept = 0, color = "#333333", size = 0.5) +
+        geom_hline(yintercept = 0, color = "#333333", linewidth = 0.5) +
         scale_fill_manual(
             values = treasury_change_period_colors,
             name = "Period"
@@ -270,7 +312,7 @@ generate_bond_holdings_bar_chart <- function(bond_pct_long,
             file_date == target_date,
             bond_type == !!bond_type
         ) %>%
-        filter(!grepl("TOTAL|^NA$", sector, ignore.case = TRUE)) %>%
+        filter(!grepl("TOTAL|^NA$|CSDP reporting error", sector, ignore.case = TRUE)) %>%
         filter(!grepl("TOTAL|^NA$", bond, ignore.case = TRUE)) %>%
         filter(!is.na(value), value > 0)
 
@@ -278,14 +320,16 @@ generate_bond_holdings_bar_chart <- function(bond_pct_long,
         return(create_empty_plot(sprintf("No data available for %s bonds", bond_type)))
     }
 
-    # Create bond label with maturity year
+    # Create bond label with maturity year and convert decimal percentages to display percentages
     plot_data <- plot_data %>%
         mutate(
             bond_label = if_else(
                 !is.na(maturity_year),
                 sprintf("%s (%d)", gsub(" \\(\\d{4}\\)$", "", bond), maturity_year),
                 bond
-            )
+            ),
+            # Convert decimal percentages (0.25) to display percentages (25)
+            value_display = value * 100
         )
 
     # Order bonds by maturity year
@@ -310,7 +354,7 @@ generate_bond_holdings_bar_chart <- function(bond_pct_long,
     }
 
     # Create the horizontal stacked bar chart
-    p <- ggplot(plot_data, aes(x = bond_label, y = value, fill = sector)) +
+    p <- ggplot(plot_data, aes(x = bond_label, y = value_display, fill = sector)) +
         geom_col(position = "stack", width = 0.8) +
         scale_fill_manual(
             values = sector_colors,
@@ -345,21 +389,21 @@ generate_bond_holdings_bar_chart <- function(bond_pct_long,
 
     # Add labels if requested
     if (show_labels) {
-        # Calculate label positions
+        # Calculate label positions (using value_display which is in 0-100 scale)
         label_data <- plot_data %>%
             arrange(bond_label, desc(sector)) %>%
             group_by(bond_label) %>%
             mutate(
-                cumsum_value = cumsum(value),
-                label_pos = cumsum_value - value / 2
+                cumsum_value = cumsum(value_display),
+                label_pos = cumsum_value - value_display / 2
             ) %>%
             ungroup() %>%
-            filter(value >= min_pct_label)
+            filter(value_display >= min_pct_label)
 
         p <- p +
             geom_text(
                 data = label_data,
-                aes(x = bond_label, y = label_pos, label = sprintf("%.0f%%", value)),
+                aes(x = bond_label, y = label_pos, label = sprintf("%.0f%%", value_display)),
                 color = "white",
                 fontface = "bold",
                 size = 2.5
@@ -412,8 +456,12 @@ generate_holdings_change_diverging <- function(bond_pct_long,
 
     change_data <- current_data %>%
         inner_join(historical_data, by = c("sector", "bond")) %>%
-        mutate(change = current_value - historical_value) %>%
-        filter(!grepl("TOTAL|^NA$", sector, ignore.case = TRUE)) %>%
+        mutate(
+            change = current_value - historical_value,
+            # Convert decimal changes to percentage changes (0.01 -> 1%)
+            change_display = (current_value - historical_value) * 100
+        ) %>%
+        filter(!grepl("TOTAL|^NA$|CSDP reporting error", sector, ignore.case = TRUE)) %>%
         filter(!grepl("TOTAL|^NA$", bond, ignore.case = TRUE)) %>%
         filter(!is.na(change))
 
@@ -424,7 +472,7 @@ generate_holdings_change_diverging <- function(bond_pct_long,
     # Select top bonds by absolute change
     top_bonds <- change_data %>%
         group_by(bond) %>%
-        summarize(total_abs_change = sum(abs(change), na.rm = TRUE)) %>%
+        summarize(total_abs_change = sum(abs(change_display), na.rm = TRUE)) %>%
         arrange(desc(total_abs_change)) %>%
         slice_head(n = top_n) %>%
         pull(bond)
@@ -433,7 +481,7 @@ generate_holdings_change_diverging <- function(bond_pct_long,
         filter(bond %in% top_bonds) %>%
         mutate(
             bond = factor(bond, levels = rev(top_bonds)),
-            direction = if_else(change >= 0, "Increase", "Decrease")
+            direction = if_else(change_display >= 0, "Increase", "Decrease")
         )
 
     # Get available sectors and match colors
@@ -441,9 +489,9 @@ generate_holdings_change_diverging <- function(bond_pct_long,
     sector_colors <- treasury_sector_colors[names(treasury_sector_colors) %in% sectors]
 
     # Create the diverging bar chart
-    p <- ggplot(plot_data, aes(x = bond, y = change, fill = sector)) +
+    p <- ggplot(plot_data, aes(x = bond, y = change_display, fill = sector)) +
         geom_col(position = "stack", width = 0.7) +
-        geom_hline(yintercept = 0, color = "#333333", size = 0.5) +
+        geom_hline(yintercept = 0, color = "#333333", linewidth = 0.5) +
         scale_fill_manual(
             values = sector_colors,
             name = "Sector"
@@ -508,17 +556,18 @@ generate_sector_treemap <- function(holdings_long, target_date = NULL) {
         target_date <- max(holdings_long$date, na.rm = TRUE)
     }
 
-    # Filter to target date
+    # Filter to target date and convert percentages
     plot_data <- holdings_long %>%
         filter(date == target_date) %>%
-        filter(!is.na(percentage), percentage > 0)
+        filter(!is.na(percentage), percentage > 0) %>%
+        mutate(percentage_display = percentage * 100)
 
     if (nrow(plot_data) == 0) {
         return(create_empty_plot("No data available for selected date"))
     }
 
-    # Create the treemap
-    p <- ggplot(plot_data, aes(area = percentage, fill = sector, label = sprintf("%s\n%.1f%%", sector, percentage))) +
+    # Create the treemap (using percentage_display for labels, percentage for area)
+    p <- ggplot(plot_data, aes(area = percentage_display, fill = sector, label = sprintf("%s\n%.1f%%", sector, percentage_display))) +
         treemapify::geom_treemap() +
         treemapify::geom_treemap_text(color = "white", place = "centre", grow = FALSE, fontface = "bold") +
         scale_fill_manual(
@@ -577,14 +626,13 @@ generate_sector_trend_chart <- function(holdings_long,
             filter(date >= date_range[1], date <= date_range[2])
     }
 
-    # Get sector color
-    sector_color <- treasury_aggregate_colors[sector_name]
-    if (is.na(sector_color)) sector_color <- "#1B3A6B"
+    # Use Insele navy color for single sector trend (professional, consistent look)
+    sector_color <- insele_palette$navy_dark
 
-    # Create the line chart
-    p <- ggplot(plot_data, aes(x = date, y = percentage)) +
+    # Create the line chart - convert decimal percentages to display percentages
+    p <- ggplot(plot_data, aes(x = date, y = percentage * 100)) +
         geom_area(fill = sector_color, alpha = 0.3) +
-        geom_line(color = sector_color, size = 1.2) +
+        geom_line(color = sector_color, linewidth = 1.2) +
         geom_point(color = sector_color, size = 2) +
         scale_x_date(
             date_breaks = "1 year",
