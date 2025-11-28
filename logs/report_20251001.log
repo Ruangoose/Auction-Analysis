@@ -1,0 +1,6 @@
+[2025-10-01 12:57:23] Session: 2fc5d598414ddeeaa493ef6ab1cb97e1 | Context: chart_collection | Error: could not find function "processed_data"
+Call: processed_data()
+[2025-10-01 12:57:23] Context: summary_generation | Error: could not find function "filtered_data"
+Call: filtered_data()
+[2025-10-01 12:58:05] Session: 2fc5d598414ddeeaa493ef6ab1cb97e1 | Context: chart_collection | Error: could not find function "processed_data"
+Call: processed_data()

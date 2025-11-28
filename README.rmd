@@ -1,0 +1,129 @@
+---
+output:
+  md_document:
+    variant: markdown_github
+editor_options: 
+  chunk_output_type: console
+---
+
+# Purpose
+
+Purpose of this work folder.
+
+Ideally store a minimum working example data set in data folder.
+
+Add binary files in bin, and closed R functions in code. Human Readable settings files (e.g. csv) should be placed in settings/
+
+
+```{r}
+
+rm(list = ls()) # Clean your environment:
+gc() # garbage collection - It can be useful to call gc after a large object has been removed, as this may prompt R to return memory to the operating system.
+library(tidyverse)
+list.files('code/', full.names = T, recursive = T) %>% .[grepl('.R', .)] %>% as.list() %>% walk(~source(.))
+```
+
+```{r}
+
+
+
+pacman::p_load(readxl, dplyr, tidyverse)
+
+last_date <- today()
+
+mod_dur_df <- read_excel("data/Siyanda Bonds.xlsx", 
+    sheet = "mod_dur", col_types = c("date", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric")) %>% 
+    filter(date<last_date) %>% 
+    select(date, R186, R2030,  R213, R2032, R2033, R2035, R2038,  R209, R2037, R2040, R2044,  R214, R2053, R2048) %>% 
+    mutate(date = lubridate::ymd(date)) %>% 
+    pivot_longer(-date,
+                 names_to = "bond", 
+                 values_to = "modified_duration") 
+
+ytm_df <- read_excel("data/Siyanda Bonds.xlsx", 
+    sheet = "ytm", col_types = c("date", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric")) %>% 
+    filter(date<last_date) %>% 
+    select(date, R186, R2030,  R213, R2032, R2033, R2035, R2038,  R209, R2037, R2040, R2044,  R214, R2053, R2048)%>% 
+    mutate(date = lubridate::ymd(date)) %>% 
+    pivot_longer(-date,
+                 names_to = "bond", 
+                 values_to = "yield_to_maturity") 
+
+
+dur_df <- read_excel("data/Siyanda Bonds.xlsx", 
+    sheet = "dur", col_types = c("date", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric")) %>% 
+    filter(date<last_date) %>% 
+    select(date, R186, R2030,  R213, R2032, R2033, R2035, R2038,  R209, R2037, R2040, R2044,  R214, R2053, R2048)%>% 
+    mutate(date = lubridate::ymd(date)) %>% 
+    pivot_longer(-date,
+                 names_to = "bond", 
+                 values_to = "duration") 
+
+
+auction_df <- read_excel("data/Siyanda Bonds.xlsx", 
+    sheet = "auctions") %>% 
+    mutate(announcement_date = lubridate::ymd(announce_date),
+           offer_date = lubridate::ymd(offer_date),
+           settle_date = lubridate::ymd(sett_date),
+           mature_date = lubridate::ymd(mat_date)) %>% 
+    select(offer_date, bond, offer, allocation, bids, bid_to_cover, announcement_date, settle_date, mature_date) %>% 
+    mutate(date = offer_date)
+
+
+conv_df <- read_excel("data/Siyanda Bonds.xlsx", 
+    sheet = "conv", col_types = c("date", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric")) %>% 
+    filter(date<last_date) %>% 
+    select(date, R186, R2030,  R213, R2032, R2033, R2035, R2038,  R209, R2037, R2040, R2044,  R214, R2053, R2048)%>% 
+    mutate(date = lubridate::ymd(date)) %>% 
+    pivot_longer(-date,
+                 names_to = "bond", 
+                 values_to = "convexity") 
+
+
+cpn_df <- read_excel("data/Siyanda Bonds.xlsx", 
+    sheet = "cpn", col_types = c("date", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric")) %>% 
+    select(date, R186, R2030,  R213, R2032, R2033, R2035, R2038,  R209, R2037, R2040, R2044,  R214, R2053, R2048) %>% 
+    mutate(date = lubridate::ymd(date)) %>% 
+    pivot_longer(-date,
+                 names_to = "bond", 
+                 values_to = "coupon") %>% 
+    filter(!is.na(coupon)) %>% 
+    group_by(bond) %>% 
+    distinct(coupon) %>% 
+    ungroup() 
+
+full_df <- mod_dur_df %>% 
+    left_join(., ytm_df) %>% 
+    left_join(., dur_df) %>% 
+    left_join(., conv_df) %>% 
+    left_join(., cpn_df) %>% 
+    left_join(., auction_df)
+
+
+```
+

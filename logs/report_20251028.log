@@ -1,0 +1,10 @@
+[2025-10-28 14:35:05] Session: 7aff9e424e5aab732051837fbd677ee2 | Context: chart_collection | Error: cannot open the connection
+Call: gzfile(file, "rb")
+[2025-10-28 15:57:56] Context:  | Error: In argument: `prev_clean_price = lag(clean_price)`.
+Call: mutate(., prev_clean_price = lag(clean_price), prev_accrued = lag(accrued_interest),      days_since_last = as.numeric(date - lag(date)), coupon_payment = ifelse(days_since_last >=          180, coupon/2, 0), daily_return = ((clean_price + accrued_interest +          coupon_payment)/(prev_clean_price + prev_accrued) - 1) *          100)
+[2025-10-28 15:57:56] Context:  | Error: missing value where TRUE/FALSE needed
+Call: if (!is.null(var_data) && nrow(var_data) > 0) {     highest_var <- var_data %>% arrange(desc(VaR_99_bps)) %>%          head(1)     if (highest_var$VaR_99_bps > 50) {         insights[[length(insights) + 1]] <- list(icon = "⚠️",              text = sprintf("%s showing elevated risk: 99%% VaR at %.0f bps",                  highest_var$bond, highest_var$VaR_99_bps), priority = 9,              category = "Risk Alert")     } }
+[2025-10-28 15:59:09] Context:  | Error: missing value where TRUE/FALSE needed
+Call: if (!is.null(var_data) && nrow(var_data) > 0) {     highest_var <- var_data %>% arrange(desc(VaR_99_bps)) %>%          head(1)     if (highest_var$VaR_99_bps > 50) {         insights[[length(insights) + 1]] <- list(icon = "⚠️",              text = sprintf("%s showing elevated risk: 99%% VaR at %.0f bps",                  highest_var$bond, highest_var$VaR_99_bps), priority = 9,              category = "Risk Alert")     } }
+[2025-10-28 16:39:00] Context:  | Error: In argument: `daily_return = case_when(...)`.
+Call: mutate(., daily_return = case_when(has_price_data ~ {     prev_clean_price <- lag(clean_price)     prev_accrued <- lag(accrued_interest)     ((clean_price + accrued_interest)/(prev_clean_price + prev_accrued) -          1) * 100 }, has_full_price ~ {     prev_full <- lag(full_price)     (full_price/prev_full - 1) * 100 }, TRUE ~ {     yield_change <- (yield_to_maturity - lag(yield_to_maturity))/100     -modified_duration * yield_change * 100 }))

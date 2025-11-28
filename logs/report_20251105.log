@@ -1,0 +1,10 @@
+[2025-11-05 09:58:08] Session: 3251fce88c59a7b6d786f8eacfbd1687 | Context: chart_collection | Error: cannot open the connection
+Call: gzfile(file, "rb")
+[2025-11-05 12:31:53] Context:  | Error: In argument: `date >= current_date - days(30)`.
+Call: filter(., !is.na(bid_to_cover), date >= current_date - days(30))
+[2025-11-05 12:32:15] Context:  | Error: In argument: `date >= current_date - days(30)`.
+Call: filter(., !is.na(bid_to_cover), date >= current_date - days(30))
+[2025-11-05 14:52:48] Session: e18604eb6004c7c4aec31bfc9ff60d55 | Context: chart_collection | Error: cannot open the connection
+Call: gzfile(file, "rb")
+[2025-11-05 15:32:59] Session: 18d64734144c6c023470dd9938a916c5 | Context: chart_collection | Error: cannot open the connection
+Call: gzfile(file, "rb")

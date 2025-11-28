@@ -1,0 +1,14 @@
+[2025-11-06 09:28:44] Session: 43568cf1a49cec8d3ff220b93a9d395d | Context: chart_collection | Error: cannot open the connection
+Call: gzfile(file, "rb")
+[2025-11-06 12:17:58] Session: e26484d3159769b40fac5ccb759ab1e1 | Context: chart_collection | Error: cannot open the connection
+Call: gzfile(file, "rb")
+[2025-11-06 13:33:02] Session: e3ae36b75cb9dd661cf210b7f70cfe2c | Context: chart_collection | Error: cannot open the connection
+Call: gzfile(file, "rb")
+[2025-11-06 14:05:22] Session: 27ab6a0a0db46e1ec51f922bf45eeef9 | Context: chart_collection | Error: cannot open the connection
+Call: gzfile(file, "rb")
+[2025-11-06 15:25:45] Session: 228779e2190882e6e189c96c19bb8145 | Context: chart_collection | Error: cannot open the connection
+Call: gzfile(file, "rb")
+[2025-11-06 15:51:20] Session: 789036a3b906cf096eb0bf8a51e0d39f | Context: chart_collection | Error: cannot open the connection
+Call: gzfile(file, "rb")
+[2025-11-06 15:54:48] Session: 789036a3b906cf096eb0bf8a51e0d39f | Context: chart_collection | Error: cannot open the connection
+Call: gzfile(file, "rb")

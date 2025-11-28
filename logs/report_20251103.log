@@ -1,0 +1,2 @@
+[2025-11-03 10:17:12] Session: e6c3c4bcc4118bc1607597337e2b805a | Context: chart_collection | Error: cannot open the connection
+Call: gzfile(file, "rb")
