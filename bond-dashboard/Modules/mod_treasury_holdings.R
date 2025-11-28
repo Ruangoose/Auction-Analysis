@@ -1592,6 +1592,17 @@ treasury_holdings_server <- function(id) {
             }
         )
 
+        # ==================================================================
+        # RETURN DATA FOR REPORT GENERATION
+        # ==================================================================
+        # Return treasury data as reactives for use by other modules (e.g., Reports)
+        return(list(
+            holdings_ts = reactive({ treasury_data$holdings_ts }),
+            bond_holdings = reactive({ treasury_data$bond_holdings }),
+            last_update = reactive({ treasury_data$last_update }),
+            data_loaded = reactive({ treasury_data$data_loaded })
+        ))
+
     })
 }
 
