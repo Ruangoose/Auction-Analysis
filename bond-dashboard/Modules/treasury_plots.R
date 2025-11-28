@@ -8,7 +8,9 @@
 # ================================================================================
 
 # Official Insele palette (extracted from logo)
-insele_palette <- list(
+# NOTE: Named treasury_brand_colors to avoid conflict with global insele_palette
+# from theme_config.R which has a different structure
+treasury_brand_colors <- list(
     # Primary colors from logo
     navy_dark = "#1B3A6B",      # Primary dark navy (main brand color)
     navy_medium = "#2B4F7F",    # Medium navy blue
@@ -627,7 +629,7 @@ generate_sector_trend_chart <- function(holdings_long,
     }
 
     # Use Insele navy color for single sector trend (professional, consistent look)
-    sector_color <- insele_palette$navy_dark
+    sector_color <- treasury_brand_colors$navy_dark
 
     # Create the line chart - convert decimal percentages to display percentages
     p <- ggplot(plot_data, aes(x = date, y = percentage * 100)) +
