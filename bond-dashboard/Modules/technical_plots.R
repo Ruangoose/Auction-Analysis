@@ -455,7 +455,7 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
                     xmax = max(tech_data$date, na.rm = TRUE),
                     ymin = 70, ymax = 100,
                     fill = "#C8E6C9",  # Light green - good for bonds
-                    alpha = 0.3
+                    alpha = 0.5  # FIX 3: More visible shading
                 ) +
 
                 # SHADED OVERSOLD ZONE (0-30) - Bond context: yields oversold = may rise = bad
@@ -465,7 +465,31 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
                     xmax = max(tech_data$date, na.rm = TRUE),
                     ymin = 0, ymax = 30,
                     fill = "#FFCDD2",  # Light red - bad for bonds
-                    alpha = 0.3
+                    alpha = 0.5  # FIX 3: More visible shading
+                ) +
+
+                # FIX 3: OVERBOUGHT zone label
+                annotate(
+                    "text",
+                    x = min(tech_data$date, na.rm = TRUE) + 5,
+                    y = 85,
+                    label = "OVERBOUGHT",
+                    color = "#1B5E20",
+                    size = 2.5,
+                    hjust = 0,
+                    fontface = "bold"
+                ) +
+
+                # FIX 3: OVERSOLD zone label
+                annotate(
+                    "text",
+                    x = min(tech_data$date, na.rm = TRUE) + 5,
+                    y = 15,
+                    label = "OVERSOLD",
+                    color = "#B71C1C",
+                    size = 2.5,
+                    hjust = 0,
+                    fontface = "bold"
                 ) +
 
                 # Neutral zone label
@@ -759,23 +783,45 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
             latest_rsi_all <- tail(tech_data$rsi_14[!is.na(tech_data$rsi_14)], 1)
 
             p2 <- ggplot(tech_data, aes(x = date)) +
-                # Shaded overbought zone (70-100) - green for bonds
+                # FIX 3: Shaded overbought zone (70-100) - green for bonds (MORE VISIBLE)
                 annotate(
                     "rect",
                     xmin = min(tech_data$date, na.rm = TRUE),
                     xmax = max(tech_data$date, na.rm = TRUE),
                     ymin = 70, ymax = 100,
                     fill = "#C8E6C9",
-                    alpha = 0.3
+                    alpha = 0.5  # FIX 3: More visible shading
                 ) +
-                # Shaded oversold zone (0-30) - red for bonds
+                # FIX 3: Shaded oversold zone (0-30) - red for bonds (MORE VISIBLE)
                 annotate(
                     "rect",
                     xmin = min(tech_data$date, na.rm = TRUE),
                     xmax = max(tech_data$date, na.rm = TRUE),
                     ymin = 0, ymax = 30,
                     fill = "#FFCDD2",
-                    alpha = 0.3
+                    alpha = 0.5  # FIX 3: More visible shading
+                ) +
+                # FIX 3: OVERBOUGHT zone label
+                annotate(
+                    "text",
+                    x = min(tech_data$date, na.rm = TRUE) + 5,
+                    y = 85,
+                    label = "OVERBOUGHT",
+                    color = "#1B5E20",
+                    size = 2.5,
+                    hjust = 0,
+                    fontface = "bold"
+                ) +
+                # FIX 3: OVERSOLD zone label
+                annotate(
+                    "text",
+                    x = min(tech_data$date, na.rm = TRUE) + 5,
+                    y = 15,
+                    label = "OVERSOLD",
+                    color = "#B71C1C",
+                    size = 2.5,
+                    hjust = 0,
+                    fontface = "bold"
                 ) +
                 geom_hline(
                     yintercept = c(30, 50, 70),

@@ -1068,34 +1068,62 @@ ui <- dashboardPage(
                                    width = 12,
 
                                    fluidRow(
-                                       column(3,
-                                              selectInput("tech_bond_select", "Select Bond:",
-                                                          choices = NULL,
-                                                          width = "100%")
+                                       # LEFT COLUMN - Controls + Bond Profile + Signal History (fills white space)
+                                       column(4,
+                                              # Controls Panel
+                                              wellPanel(
+                                                  style = "background-color: #F8F9FA; padding: 15px; border-radius: 8px;",
+                                                  selectInput(
+                                                      "tech_bond_select",
+                                                      "Select Bond:",
+                                                      choices = NULL,
+                                                      width = "100%"
+                                                  ),
+                                                  selectInput(
+                                                      "tech_indicator_type",
+                                                      "Indicator Type:",
+                                                      choices = list(
+                                                          "All Indicators" = "all",
+                                                          "Momentum" = "momentum",
+                                                          "Volatility" = "volatility",
+                                                          "Mean Reversion" = "mean_reversion"
+                                                      ),
+                                                      selected = "all",
+                                                      width = "100%"
+                                                  ),
+                                                  hr(style = "margin: 10px 0;"),
+                                                  # Quick Actions
+                                                  actionButton(
+                                                      "tech_refresh",
+                                                      "Refresh Data",
+                                                      icon = icon("sync"),
+                                                      class = "btn-sm btn-outline-primary",
+                                                      width = "100%"
+                                                  ),
+                                                  br(), br(),
+                                                  downloadButton(
+                                                      "download_technical_plot",
+                                                      "Download Analysis",
+                                                      class = "btn-sm btn-outline-secondary",
+                                                      style = "width: 100%;"
+                                                  )
+                                              ),
+
+                                              # Bond Profile Card (NEW - fills white space)
+                                              uiOutput("bond_profile_card"),
+
+                                              # Signal History Mini Chart (NEW)
+                                              uiOutput("signal_history_mini")
                                        ),
-                                       column(3,
-                                              selectInput("tech_indicator_type", "Indicator Type:",
-                                                          choices = list(
-                                                              "Momentum" = "momentum",
-                                                              "Volatility" = "volatility",
-                                                              "Mean Reversion" = "mean_reversion",
-                                                              "All" = "all"
-                                                          ),
-                                                          selected = "all",
-                                                          width = "100%")
-                                       ),
-                                       column(6,
-                                              tags$div(
-                                                  style = "padding: 8px; background: #e8f4f8; border-radius: 6px;",
-                                                  uiOutput("technical_indicators_summary")
-                                              )
+
+                                       # RIGHT COLUMN - Technical Summary Panel
+                                       column(8,
+                                              uiOutput("technical_summary_panel")
                                        )
                                    ),
 
-                                   plotOutput("advanced_technical_plot", height = "500px"),
-
-                                   # ADD THIS LINE
-                                   downloadButton("download_technical_plot", "Download Chart", class = "btn-sm btn-primary")
+                                   # Main Technical Chart
+                                   plotOutput("advanced_technical_plot", height = "500px")
                                )
                            ),
 
