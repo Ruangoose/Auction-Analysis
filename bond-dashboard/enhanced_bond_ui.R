@@ -935,9 +935,39 @@ ui <- dashboardPage(
                                )
                            ),
 
+                           # Notional Input Control
+                           fluidRow(
+                               column(12,
+                                   tags$div(
+                                       style = "background: #E3F2FD; padding: 10px 15px; border-radius: 5px; margin-bottom: 15px; display: flex; align-items: center;",
+                                       tags$span(
+                                           style = "font-weight: bold; color: #1B3A6B; margin-right: 15px;",
+                                           "Portfolio Notional:"
+                                       ),
+                                       selectInput(
+                                           "dv01_notional",
+                                           NULL,
+                                           choices = c(
+                                               "R10 million" = 10000000,
+                                               "R50 million" = 50000000,
+                                               "R100 million" = 100000000,
+                                               "R500 million" = 500000000,
+                                               "R1 billion" = 1000000000
+                                           ),
+                                           selected = 10000000,
+                                           width = "200px"
+                                       ),
+                                       tags$small(
+                                           style = "color: #666; margin-left: 15px;",
+                                           "DV01 = Notional × Modified Duration × 0.01%"
+                                       )
+                                   )
+                               )
+                           ),
+
                            fluidRow(
                                box(
-                                   title = "DV01 Ladder",
+                                   title = "DV01 Risk Ladder",
                                    status = "primary",
                                    solidHeader = TRUE,
                                    width = 6,

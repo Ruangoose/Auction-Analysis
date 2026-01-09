@@ -1750,14 +1750,26 @@ server <- function(input, output, session) {
     # 6. DV01 Ladder Plot
     output$dv01_ladder_plot <- renderPlot({
         req(processed_data())
-        p <- generate_dv01_ladder_plot(processed_data(), list())
+
+        # Get notional from input (default R10 million)
+        notional <- as.numeric(input$dv01_notional) %||% 10000000
+
+        p <- generate_dv01_ladder_plot(processed_data(), list(
+            notional = notional
+        ))
         if(!is.null(p)) print(p)
     })
 
     # 7. Enhanced Convexity Plot
     output$enhanced_convexity_plot <- renderPlot({
         req(processed_data())
-        p <- generate_enhanced_convexity_plot(processed_data(), list())
+
+        # Get notional from input (same as DV01 ladder for consistency)
+        notional <- as.numeric(input$dv01_notional) %||% 10000000
+
+        p <- generate_enhanced_convexity_plot(processed_data(), list(
+            notional = notional
+        ))
         if(!is.null(p)) print(p)
     })
 
@@ -2062,16 +2074,24 @@ server <- function(input, output, session) {
     output$risk_metrics_summary <- renderUI({
         req(processed_data(), var_data())
 
+        # Get notional from input (same as DV01 ladder for consistency)
+        notional <- as.numeric(input$dv01_notional) %||% 10000000
+
         # Get the data
         risk_data <- processed_data()
         var_metrics <- var_data()
 
-        # Calculate comprehensive risk metrics
+        # Calculate comprehensive risk metrics using correct DV01 formula
+        # DV01 = Notional × Modified Duration × 0.0001
         metrics <- risk_data %>%
+            group_by(bond) %>%
+            filter(date == max(date)) %>%
+            slice(1) %>%
+            ungroup() %>%
             summarise(
                 avg_duration = mean(modified_duration, na.rm = TRUE),
                 avg_convexity = mean(convexity, na.rm = TRUE),
-                avg_dv01 = mean(modified_duration * 10000 / 1e6, na.rm = TRUE),
+                avg_dv01 = mean(notional * modified_duration * 0.0001 / 1e6, na.rm = TRUE),
                 portfolio_yield = weighted.mean(yield_to_maturity,
                                                 modified_duration, na.rm = TRUE)
             )
@@ -2143,30 +2163,32 @@ server <- function(input, output, session) {
     output$risk_metrics_table <- DT::renderDataTable({
         req(processed_data(), var_data())
 
-        # Combine processed data with VaR metrics
-        risk_summary <- processed_data() %>%
-            left_join(var_data(), by = "bond") %>%
+        # Get notional from input (same as DV01 ladder for consistency)
+        notional <- as.numeric(input$dv01_notional) %||% 10000000
+
+        # Get latest data per bond from processed_data
+        bond_latest <- processed_data() %>%
+            group_by(bond) %>%
+            filter(date == max(date)) %>%
+            slice(1) %>%
+            ungroup() %>%
+            select(bond, yield_to_maturity, modified_duration, duration, convexity)
+
+        # Combine with VaR metrics - use full join to ensure all bonds appear
+        risk_summary <- bond_latest %>%
+            full_join(var_data(), by = "bond") %>%
             mutate(
-                # Calculate DV01 if not present
-                dv01_value = if("basis_point_value" %in% names(.)) {
-                    basis_point_value / 1e6
-                } else {
-                    modified_duration * 10000 / 1e6  # Assuming R10mm notional
-                }
+                # Calculate DV01 using same formula as DV01 ladder
+                # DV01 = Notional × Modified Duration × 0.0001
+                dv01_absolute = notional * modified_duration * 0.0001,
+                dv01_millions = dv01_absolute / 1e6
             ) %>%
-            select(
-                bond,
-                yield_to_maturity,
-                modified_duration,
-                duration,
-                convexity,
-                dv01_value,
-                VaR_95_bps,
-                VaR_99_bps,
-                CVaR_95,
-                vol
-            ) %>%
-            arrange(modified_duration)
+            filter(!is.na(bond)) %>%
+            # Sort by 95% VaR descending (highest risk first)
+            arrange(desc(abs(VaR_95_bps)))
+
+        # Verify bond count
+        message(sprintf("Risk Metrics Table: %d bonds", nrow(risk_summary)))
 
         # Format for display
         display_table <- risk_summary %>%
@@ -2175,11 +2197,11 @@ server <- function(input, output, session) {
                 `Mod Duration` = sprintf("%.2f", modified_duration),
                 Duration = sprintf("%.2f", duration),
                 Convexity = sprintf("%.2f", convexity),
-                `DV01 (R mn)` = sprintf("%.2f", dv01_value),
+                `DV01 (R mn)` = sprintf("%.3f", dv01_millions),
                 `95% VaR` = sprintf("%.0f bps", abs(VaR_95_bps)),
                 `99% VaR` = sprintf("%.0f bps", abs(VaR_99_bps)),
                 `CVaR (95%)` = sprintf("%.0f bps", abs(CVaR_95) * 100),
-                Volatility = sprintf("%.1f%%", vol * 100)
+                Volatility = sprintf("%.2f%%", vol)
             ) %>%
             select(
                 Bond = bond,
@@ -2194,7 +2216,14 @@ server <- function(input, output, session) {
                 Volatility
             )
 
-        # Create enhanced datatable
+        # Get notional display for caption
+        notional_display <- if(notional >= 1e9) {
+            sprintf("R%.0fbn", notional / 1e9)
+        } else {
+            sprintf("R%.0fm", notional / 1e6)
+        }
+
+        # Create enhanced datatable - sorted by 95% VaR (column 6) descending by default
         datatable(
             display_table,
             options = list(
@@ -2206,7 +2235,8 @@ server <- function(input, output, session) {
                     list(className = 'dt-center', targets = '_all'),
                     list(width = '80px', targets = 0)
                 ),
-                order = list(list(2, 'asc'))  # Sort by Mod Duration
+                # Sort by 95% VaR (column index 6, 0-indexed = 5) descending
+                order = list(list(6, 'desc'))
             ),
             rownames = FALSE,
             class = 'table-striped table-bordered compact',
@@ -2214,23 +2244,30 @@ server <- function(input, output, session) {
                 style = 'caption-side: top; text-align: left; padding: 10px;',
                 htmltools::tags$strong('Comprehensive Risk Metrics'),
                 htmltools::tags$br(),
-                htmltools::tags$small('Key risk measures for portfolio management and risk assessment')
+                htmltools::tags$small(sprintf('DV01 calculated with %s notional | Sorted by 95%% VaR (highest risk first)', notional_display))
             )
         ) %>%
             formatStyle(
                 "95% VaR",
                 backgroundColor = styleInterval(
-                    c(30, 50),
+                    c(100, 200),
                     c("#E8F5E9", "#FFF3E0", "#FFEBEE")
                 )
             ) %>%
             formatStyle(
                 "99% VaR",
                 backgroundColor = styleInterval(
-                    c(50, 100),
+                    c(150, 300),
                     c("#E8F5E9", "#FFF3E0", "#FFEBEE")
                 ),
-                fontWeight = styleInterval(100, c("normal", "bold"))
+                fontWeight = styleInterval(200, c("normal", "bold"))
+            ) %>%
+            formatStyle(
+                "DV01 (R mn)",
+                background = styleColorBar(range(risk_summary$dv01_millions, na.rm = TRUE), '#E3F2FD'),
+                backgroundSize = '98% 88%',
+                backgroundRepeat = 'no-repeat',
+                backgroundPosition = 'center'
             )
     })
 
@@ -3875,7 +3912,11 @@ server <- function(input, output, session) {
         },
         content = function(file) {
             req(processed_data())
-            p <- generate_enhanced_convexity_plot(processed_data(), list())
+            # Get notional from input (same as DV01 ladder for consistency)
+            notional <- as.numeric(input$dv01_notional) %||% 10000000
+            p <- generate_enhanced_convexity_plot(processed_data(), list(
+                notional = notional
+            ))
             if(!is.null(p)) {
                 ggsave(file, plot = p, width = 12, height = 8, dpi = 300, bg = "white")
             }
@@ -3917,7 +3958,11 @@ server <- function(input, output, session) {
         },
         content = function(file) {
             req(processed_data())
-            p <- generate_dv01_ladder_plot(processed_data(), list())
+            # Get notional from input (default R10 million)
+            notional <- as.numeric(input$dv01_notional) %||% 10000000
+            p <- generate_dv01_ladder_plot(processed_data(), list(
+                notional = notional
+            ))
             if(!is.null(p)) {
                 ggsave(file, plot = p, width = 10, height = 8, dpi = 300, bg = "white")
             }
