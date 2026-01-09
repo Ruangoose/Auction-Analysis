@@ -96,18 +96,18 @@ create_bloomberg_theme <- function(config = visual_config) {
                 size = config$fonts$size_title,
                 face = config$fonts$weight_title,
                 color = config$colors$primary,
-                margin = margin(b = 5)
+                margin = ggplot2::margin(b = 5)
             ),
             plot.subtitle = element_text(
                 size = config$fonts$size_subtitle,
                 color = config$colors$text_secondary,
-                margin = margin(b = 10)
+                margin = ggplot2::margin(b = 10)
             ),
             plot.caption = element_text(
                 size = config$fonts$size_caption,
                 color = config$colors$text_secondary,
                 hjust = 1,
-                margin = margin(t = 10)
+                margin = ggplot2::margin(t = 10)
             ),
 
             # Grid system with integrated alpha in color

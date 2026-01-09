@@ -2812,7 +2812,7 @@ server <- function(input, output, session) {
             theme_void() +
             theme(
                 axis.text.y = element_text(size = 8, color = "#666666"),
-                plot.margin = margin(t = 5, r = 10, b = 5, l = 5, unit = "pt")
+                plot.margin = ggplot2::margin(t = 5, r = 10, b = 5, l = 5, unit = "pt")
             )
     }, bg = "transparent")
 
