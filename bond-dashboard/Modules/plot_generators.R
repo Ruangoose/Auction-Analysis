@@ -11,7 +11,7 @@
 #' @param palette Color palette with success/danger colors
 #' @param scale_name Name for the legend
 #' @return ggplot2 scale_fill_gradient2 object
-get_spread_color_scale <- function(data, palette, scale_name = "Spread to Fair Value (bps)\nGreen = Cheap | Red = Rich") {
+get_spread_color_scale <- function(data, palette, scale_name = "Spread to Fair Value (bps)\nRed = Rich | Green = Cheap") {
     # Calculate dynamic limits
     if ("spread_to_curve" %in% names(data) && sum(!is.na(data$spread_to_curve)) > 0) {
         spread_range <- range(data$spread_to_curve, na.rm = TRUE)
@@ -222,8 +222,8 @@ generate_enhanced_yield_curve <- function(data, params) {
                                          exp(-x_bonds/exp(params_nss[6])))
                 data$fitted_yield <- data$fitted_yield * 100
 
-                # Recalculate spread_to_curve based on new fit
-                data$spread_to_curve <- data$yield_to_maturity - data$fitted_yield
+                # Recalculate spread_to_curve based on new fit (in basis points)
+                data$spread_to_curve <- (data$yield_to_maturity - data$fitted_yield) * 100
 
                 # Calculate confidence bands based on residuals
                 residuals <- data$yield_to_maturity - data$fitted_yield
@@ -247,9 +247,9 @@ generate_enhanced_yield_curve <- function(data, params) {
                 curve_data$yield_lower <- curve_predictions$fit - 1.96 * curve_predictions$se.fit
                 curve_data$yield_upper <- curve_predictions$fit + 1.96 * curve_predictions$se.fit
 
-                # Calculate spread for fallback
+                # Calculate spread for fallback (in basis points)
                 data$fitted_yield <- predict(lm_model, newdata = data.frame(x_var = x_data))
-                data$spread_to_curve <- data$yield_to_maturity - data$fitted_yield
+                data$spread_to_curve <- (data$yield_to_maturity - data$fitted_yield) * 100
             }
         }, error = function(e) {
             # NSS failed - fallback to polynomial
@@ -264,9 +264,9 @@ generate_enhanced_yield_curve <- function(data, params) {
             curve_data$yield_lower <- curve_predictions$fit - 1.96 * curve_predictions$se.fit
             curve_data$yield_upper <- curve_predictions$fit + 1.96 * curve_predictions$se.fit
 
-            # Calculate spread for fallback
+            # Calculate spread for fallback (in basis points)
             data$fitted_yield <- predict(lm_model, newdata = data.frame(x_var = x_data))
-            data$spread_to_curve <- data$yield_to_maturity - data$fitted_yield
+            data$spread_to_curve <- (data$yield_to_maturity - data$fitted_yield) * 100
         })
 
     } else if (params$curve_model == "loess") {
@@ -281,9 +281,9 @@ generate_enhanced_yield_curve <- function(data, params) {
                                          se = TRUE)
             curve_data$yield <- curve_predictions$fit
 
-            # Calculate fitted values for bonds and recalculate spread
+            # Calculate fitted values for bonds and recalculate spread (in basis points)
             data$fitted_yield <- predict(model_fit, newdata = data.frame(x_var = x_data))
-            data$spread_to_curve <- data$yield_to_maturity - data$fitted_yield
+            data$spread_to_curve <- (data$yield_to_maturity - data$fitted_yield) * 100
 
             if(any(is.na(curve_predictions$se.fit))) {
                 # Fallback SE calculation
@@ -310,9 +310,9 @@ generate_enhanced_yield_curve <- function(data, params) {
             curve_data$yield_lower <- curve_data$yield - 1.96 * se
             curve_data$yield_upper <- curve_data$yield + 1.96 * se
 
-            # Calculate spread for fallback
+            # Calculate spread for fallback (in basis points)
             data$fitted_yield <- predict(lm_model, newdata = data.frame(x_var = x_data))
-            data$spread_to_curve <- data$yield_to_maturity - data$fitted_yield
+            data$spread_to_curve <- (data$yield_to_maturity - data$fitted_yield) * 100
         })
 
     } else if (params$curve_model == "spline") {
@@ -323,9 +323,9 @@ generate_enhanced_yield_curve <- function(data, params) {
                                        spar = 0.6)
             curve_data$yield <- predict(model_fit, curve_data$x_var)$y
 
-            # Calculate fitted values for bonds and recalculate spread
+            # Calculate fitted values for bonds and recalculate spread (in basis points)
             data$fitted_yield <- predict(model_fit, x_data)$y
-            data$spread_to_curve <- data$yield_to_maturity - data$fitted_yield
+            data$spread_to_curve <- (data$yield_to_maturity - data$fitted_yield) * 100
 
             # Calculate proper SE with degrees of freedom
             residuals <- data$yield_to_maturity - data$fitted_yield
@@ -360,9 +360,9 @@ generate_enhanced_yield_curve <- function(data, params) {
             curve_data$yield_lower <- curve_predictions$fit - 1.96 * curve_predictions$se.fit
             curve_data$yield_upper <- curve_predictions$fit + 1.96 * curve_predictions$se.fit
 
-            # Calculate fitted values for bonds and recalculate spread
+            # Calculate fitted values for bonds and recalculate spread (in basis points)
             data$fitted_yield <- predict(lm_model, newdata = data.frame(x_var = x_data))
-            data$spread_to_curve <- data$yield_to_maturity - data$fitted_yield
+            data$spread_to_curve <- (data$yield_to_maturity - data$fitted_yield) * 100
         }, error = function(e) {
             # Final fallback - simple linear
             lm_model <- lm(yield_to_maturity ~ x_var,
@@ -374,9 +374,9 @@ generate_enhanced_yield_curve <- function(data, params) {
             curve_data$yield_lower <- curve_data$yield - 1.96 * se
             curve_data$yield_upper <- curve_data$yield + 1.96 * se
 
-            # Calculate spread for fallback
+            # Calculate spread for fallback (in basis points)
             data$fitted_yield <- predict(lm_model, newdata = data.frame(x_var = x_data))
-            data$spread_to_curve <- data$yield_to_maturity - data$fitted_yield
+            data$spread_to_curve <- (data$yield_to_maturity - data$fitted_yield) * 100
         })
     } else {
         # Unknown model - use polynomial as default
@@ -534,7 +534,7 @@ generate_enhanced_yield_curve <- function(data, params) {
             y = "Yield to Maturity",
             caption = paste0(
                 "Z-Score = Signal Strength (|Z| > 2 = Strong, |Z| > 1.5 = Moderate) | ",
-                "Color = Spread to Fair Value (Green = Cheap/BUY, Red = Rich/SELL) | ",
+                "Color = Spread to Fair Value (Red = Rich/SELL, Green = Cheap/BUY) | ",
                 "95% confidence band shown"
             )
         ) +
