@@ -71,14 +71,15 @@ generate_var_distribution_plot <- function(data, params = list()) {
     # Extract parameters with defaults
     confidence_levels <- params$confidence_levels %||% c(0.95, 0.99)
     horizon_days <- params$horizon_days %||% 1  # Daily VaR by default
-    method <- params$method %||% "historical"  # "historical", "parametric", or "both"
-    show_stats <- params$show_stats %||% TRUE
+    method <- params$method %||% "historical"  # "historical", "parametric", or "cornish-fisher"
+    show_stats <- params$show_stats %||% FALSE  # CHANGED: Don't show stats in facets by default
     max_bonds <- params$max_bonds %||% 12
     outlier_threshold <- params$outlier_threshold  # Will use adaptive if NULL
     min_observations <- params$min_observations %||% 60
-    enable_diagnostics <- params$enable_diagnostics %||% TRUE
+    enable_diagnostics <- params$enable_diagnostics %||% FALSE  # CHANGED: Disable verbose diagnostics by default
     max_daily_return <- params$max_daily_return %||% 10  # Cap at 10% daily return
     recalculate_volatility_if_low <- params$recalculate_volatility_if_low %||% TRUE  # Failsafe for upstream bugs
+    bond_order <- params$bond_order  # Optional: pre-specified bond order for consistency
 
     # Validate required columns
     required_cols <- c("bond", "date", "yield_to_maturity", "modified_duration", "convexity")
@@ -772,6 +773,23 @@ generate_var_distribution_plot <- function(data, params = list()) {
         cat("\n========================================\n\n")
     }
 
+    # =========================================================================
+    # ORDER BONDS BY 95% VaR (highest risk first) - for consistency
+    # =========================================================================
+    if (is.null(bond_order)) {
+        bond_order <- var_levels %>%
+            arrange(desc(abs(VaR_95))) %>%
+            pull(bond)
+    }
+
+    # Apply bond ordering to returns data
+    returns_data <- returns_data %>%
+        mutate(bond = factor(bond, levels = bond_order))
+
+    # Apply ordering to var_levels as well
+    var_levels <- var_levels %>%
+        mutate(bond = factor(bond, levels = bond_order))
+
     # Determine dynamic layout
     n_bonds <- n_distinct(returns_data$bond)
     n_cols <- case_when(
@@ -782,172 +800,138 @@ generate_var_distribution_plot <- function(data, params = list()) {
         TRUE ~ 4
     )
 
-    # Create the plot
+    # Prepare VaR lines data for cleaner legend
+    var_lines <- var_levels %>%
+        select(bond, VaR_95, VaR_99) %>%
+        tidyr::pivot_longer(cols = c(VaR_95, VaR_99), names_to = "var_type", values_to = "var_value") %>%
+        mutate(
+            var_type = factor(var_type, levels = c("VaR_95", "VaR_99"),
+                              labels = c("95% VaR", "99% VaR"))
+        )
+
+    # Create the IMPROVED plot (decluttered facets)
     p <- ggplot(returns_data, aes(x = scaled_return)) +
 
-        # Risk zones (shaded regions)
-        geom_rect(data = var_levels,
-                  aes(xmin = -Inf, xmax = VaR_99, ymin = -Inf, ymax = Inf),
-                  fill = insele_palette$danger,
-                  alpha = 0.1,
-                  inherit.aes = FALSE) +
-        geom_rect(data = var_levels,
-                  aes(xmin = VaR_99, xmax = VaR_95, ymin = -Inf, ymax = Inf),
-                  fill = insele_palette$warning,
-                  alpha = 0.1,
-                  inherit.aes = FALSE) +
+        # Histogram with density
+        geom_histogram(
+            aes(y = after_stat(density)),
+            bins = 30,
+            fill = "#64B5F6",
+            color = "white",
+            alpha = 0.7
+        ) +
 
-        # Density plot with better aesthetics
-        stat_density(geom = "area",
-                     fill = insele_palette$primary,
-                     alpha = 0.4,
-                     color = insele_palette$primary,
-                     linewidth = 1,
-                     adjust = 1.5) +  # Smoother density
+        # Density curve overlay
+        geom_density(
+            color = insele_palette$primary,
+            linewidth = 0.8
+        ) +
 
-        # Add histogram for reference (transparent)
-        geom_histogram(aes(y = after_stat(density)),
-                       bins = 30,
-                       fill = insele_palette$secondary,
-                       alpha = 0.2,
-                       color = NA) +
-
-        # Reference lines
-        geom_vline(data = var_levels,
-                   aes(xintercept = mean_return),
-                   color = insele_palette$secondary,
-                   linetype = "solid",
-                   linewidth = 0.8,
-                   alpha = 0.8) +
+        # VaR threshold lines - 95% (dashed orange)
         geom_vline(data = var_levels,
                    aes(xintercept = VaR_95),
-                   color = insele_palette$warning,
+                   color = "#FF9800",
                    linetype = "dashed",
                    linewidth = 1) +
+
+        # VaR threshold lines - 99% (solid red)
         geom_vline(data = var_levels,
                    aes(xintercept = VaR_99),
-                   color = insele_palette$danger,
+                   color = "#D32F2F",
                    linetype = "solid",
                    linewidth = 1) +
-        geom_vline(data = var_levels,
-                   aes(xintercept = CVaR_95),
-                   color = insele_palette$danger,
-                   linetype = "dotted",
-                   linewidth = 0.8,
-                   alpha = 0.7) +
 
-        # VaR labels
-        geom_text(data = var_levels,
-                  aes(x = VaR_95, y = Inf,
-                      label = sprintf("VaR₉₅: %.2f%%", VaR_95)),
-                  vjust = 1.5,
-                  hjust = -0.1,
-                  color = insele_palette$warning,
-                  size = 3,
-                  fontface = 2) +
-        geom_text(data = var_levels,
-                  aes(x = VaR_99, y = Inf,
-                      label = sprintf("VaR₉₉: %.2f%%", VaR_99)),
-                  vjust = 3,
-                  hjust = -0.1,
-                  color = insele_palette$danger,
-                  size = 3,
-                  fontface = 2) +
-        geom_text(data = var_levels,
-                  aes(x = CVaR_95, y = Inf,
-                      label = sprintf("CVaR: %.2f%%", CVaR_95)),
-                  vjust = 4.5,
-                  hjust = -0.1,
-                  color = insele_palette$danger,
-                  size = 2.5,
-                  fontface = 3) +
-
-        # Statistics box (if enabled)
-        {if(show_stats) {
-            geom_text(data = var_levels,
-                      aes(x = Inf, y = Inf,
-                          label = sprintf("μ: %.2f%%\nσ: %.2f%%\nSkew: %.2f\nKurt: %.2f\nn: %.0f",
-                                          mean_return, vol, skewness, kurtosis, n_observations)),
-                      vjust = 1.1,
-                      hjust = 1.1,
-                      size = 2.5,
-                      color = insele_palette$dark_gray,
-                      fontface = 3)
-        }} +
-
-        # Facet by bond
-        facet_wrap(~bond, scales = "free_y", ncol = n_cols) +
+        # Facet by bond - SAME ORDER as Risk Ladder
+        facet_wrap(
+            ~ bond,
+            ncol = n_cols,
+            scales = "free_y"  # Free y, but we'll constrain x
+        ) +
 
         # Scales
         scale_x_continuous(
-            labels = function(x) paste0(sprintf("%.1f", x), "%"),
-            breaks = pretty_breaks(n = 5)
+            labels = scales::percent_format(accuracy = 1, scale = 1),
+            limits = c(-8, 8)  # -8% to +8% covers most bond moves
         ) +
+
         scale_y_continuous(
-            labels = function(x) format(x, scientific = FALSE),
             expand = c(0, 0, 0.1, 0)
         ) +
 
         # Labels
         labs(
-            title = sprintf("Value-at-Risk (VaR) Distribution Analysis - %s Method",
-                            str_to_title(method)),
+            title = "Daily Return Distributions",
             subtitle = sprintf(
-                "%.0f-day horizon | Price returns with convexity adjustment | %.0f observations per bond (min)",
-                horizon_days,
-                min_observations
+                "%s Method | %d-day horizon | Dashed orange = 95%% VaR | Solid red = 99%% VaR",
+                str_to_title(method),
+                horizon_days
             ),
-            x = sprintf("Daily Price Return (%%) - %.0f day horizon", horizon_days),
-            y = "Probability Density",
-            caption = paste(
-                sprintf("VaR %.0f%%: Potential loss exceeded %.0f%% of the time",
-                        confidence_levels[1]*100, (1-confidence_levels[1])*100),
-                sprintf("| VaR %.0f%%: Potential loss exceeded %.0f%% of the time",
-                        confidence_levels[2]*100, (1-confidence_levels[2])*100),
-                "\nCVaR: Expected loss when VaR is breached (dotted line)",
-                sprintf("| Method: %s", str_to_title(method)),
-                ifelse(!is.null(outlier_threshold),
-                       sprintf("| Outliers (>%.0fσ) removed", outlier_threshold), ""),
-                sep = " "
-            )
+            x = "Daily Price Return (%)",
+            y = "Density",
+            caption = "Returns calculated using modified duration and convexity adjustment | Bonds ordered by 95% VaR (highest risk first)"
         ) +
 
         create_insele_theme() +
         theme(
-            strip.background = element_rect(fill = insele_palette$primary, color = NA),
-            strip.text = element_text(color = "white", face = "bold", size = 10),
-            panel.spacing = unit(1.5, "lines"),
+            strip.background = element_rect(fill = "#E3F2FD", color = NA),
+            strip.text = element_text(face = "bold", size = 9, color = insele_palette$primary),
+            panel.spacing = unit(1, "lines"),
+            plot.title = element_text(face = "bold", color = insele_palette$primary),
             plot.caption = element_text(
                 hjust = 0,
                 size = 8,
                 lineheight = 1.2,
-                margin = ggplot2::margin(t = 10, r = 0, b = 0, l = 0, unit = "pt")  # FIX: Use ggplot2::margin
+                margin = ggplot2::margin(t = 10, r = 0, b = 0, l = 0, unit = "pt")
             ),
-            legend.position = "none",
-            plot.subtitle = element_text(size = 10, face = "italic")
+            legend.position = "top",
+            panel.grid.minor = element_blank()
         )
 
-    # Add summary table as attribute
+    # Add summary table as attribute (for external statistics table)
     attr(p, "var_summary") <- var_levels %>%
-        select(bond, VaR_95_hist, VaR_99_hist, CVaR_95, CVaR_99,
-               mean_return, vol, skewness, kurtosis, sharpe_ratio)
+        arrange(desc(abs(VaR_95))) %>%
+        select(bond, VaR_95, VaR_99, VaR_95_hist, VaR_99_hist, CVaR_95, CVaR_99,
+               mean_return, vol, skewness, kurtosis, n_observations)
 
     # Add returns data as attribute
     attr(p, "returns_data") <- returns_data
+
+    # Add bond order as attribute (for consistent ordering in Risk Ladder)
+    attr(p, "bond_order") <- bond_order
 
     return(p)
 }
 
 #' @export
-# 5. VAR Ladder Plot Generation
-generate_var_ladder_plot <- function(var_data, params) {
+# 5. VAR Ladder Plot Generation - IMPROVED VERSION
+generate_var_ladder_plot <- function(var_data, params = list()) {
+
+    # Extract parameters with defaults
+    bond_order <- params$bond_order  # Optional: pre-specified bond order for consistency
+
+    # Prepare data
     var_ladder <- var_data %>%
         select(bond, VaR_95_bps, VaR_99_bps, CVaR_95) %>%
         arrange(desc(VaR_95_bps))
 
-    avg_var_95 <- mean(var_ladder$VaR_95_bps)
+    # Apply pre-specified order if provided, otherwise use 95% VaR ordering
+    if (!is.null(bond_order)) {
+        var_ladder <- var_ladder %>%
+            mutate(bond = factor(bond, levels = rev(bond_order)))  # Reverse for coord_flip
+    } else {
+        # Order bonds by 95% VaR (highest risk at top)
+        var_ladder <- var_ladder %>%
+            mutate(bond = factor(bond, levels = rev(bond[order(VaR_95_bps)])))
+    }
 
-    p <- ggplot(var_ladder) +
+    # Calculate portfolio average
+    avg_var_95 <- mean(var_ladder$VaR_95_bps, na.rm = TRUE)
+    avg_var_99 <- mean(var_ladder$VaR_99_bps, na.rm = TRUE)
+
+    # IMPROVED Risk Ladder plot
+    p <- ggplot(var_ladder, aes(y = bond)) +
+
+        # Background risk zones
         annotate("rect", xmin = -Inf, xmax = Inf,
                  ymin = 0, ymax = 200,
                  alpha = 0.02, fill = insele_palette$success) +
@@ -957,69 +941,99 @@ generate_var_ladder_plot <- function(var_data, params) {
         annotate("rect", xmin = -Inf, xmax = Inf,
                  ymin = 300, ymax = Inf,
                  alpha = 0.02, fill = insele_palette$danger) +
-        geom_hline(yintercept = avg_var_95,
-                   linetype = "dotted",
-                   color = insele_palette$primary,
-                   alpha = 0.5,
-                   linewidth = 0.8) +
-        geom_col(aes(x = reorder(bond, VaR_95_bps), y = VaR_95_bps),
-                 fill = insele_palette$warning,
-                 alpha = 0.7,
-                 width = 0.6) +
-        geom_col(aes(x = reorder(bond, VaR_95_bps), y = VaR_99_bps),
-                 fill = insele_palette$danger,
-                 alpha = 0.8,
-                 width = 0.3) +
-        geom_point(aes(x = bond, y = abs(CVaR_95) * 100),
-                   shape = 23,
-                   size = 4,
-                   fill = insele_palette$primary,
-                   color = "white",
-                   stroke = 1.5) +
-        geom_text(aes(x = bond, y = VaR_95_bps,
-                      label = sprintf("%.0f", VaR_95_bps)),
-                  vjust = -0.3,
-                  hjust = 1.2,
-                  size = 3,
-                  fontface = 2,
-                  color = insele_palette$warning) +
-        geom_text(aes(x = bond, y = VaR_99_bps,
-                      label = sprintf("%.0f", VaR_99_bps)),
-                  vjust = -0.3,
-                  hjust = -0.2,
-                  size = 3,
-                  fontface = 2,
-                  color = insele_palette$danger) +
-        annotate("text", x = Inf, y = avg_var_95,
-                 label = sprintf("Avg: %.0f bps", avg_var_95),
-                 hjust = 1.1, vjust = -0.5,
-                 color = insele_palette$primary,
-                 size = 3, fontface = 3) +
-        coord_flip() +
-        scale_y_continuous(
-            labels = function(x) paste0(x, " bps"),
-            expand = c(0, 0, 0.12, 0),
-            breaks = seq(0, 500, 100)
+
+        # 95% VaR bar (outer, lighter orange)
+        geom_col(
+            aes(x = VaR_95_bps),
+            fill = "#FFB74D",
+            width = 0.7,
+            alpha = 0.9
         ) +
+
+        # 99% VaR bar (inner, darker red)
+        geom_col(
+            aes(x = VaR_99_bps),
+            fill = "#E57373",
+            width = 0.5,
+            alpha = 0.9
+        ) +
+
+        # CVaR point (larger, with white outline for visibility)
+        geom_point(
+            aes(x = abs(CVaR_95) * 100),
+            shape = 23,  # Diamond
+            size = 4,
+            fill = "#1565C0",
+            color = "white",
+            stroke = 1.5
+        ) +
+
+        # Portfolio average line (dashed)
+        geom_vline(
+            xintercept = avg_var_95,
+            linetype = "dashed",
+            color = insele_palette$primary,
+            linewidth = 1
+        ) +
+
+        # Portfolio average annotation
+        annotate(
+            "text",
+            x = avg_var_95,
+            y = Inf,
+            label = sprintf("Portfolio Avg\n%.0f bps", avg_var_95),
+            vjust = 1.5,
+            hjust = 0.5,
+            size = 3,
+            fontface = "bold",
+            color = insele_palette$primary
+        ) +
+
+        # Value labels at end of 95% bar
+        geom_text(
+            aes(x = VaR_95_bps, label = sprintf("%.0f", VaR_95_bps)),
+            hjust = -0.2,
+            size = 3,
+            fontface = "bold"
+        ) +
+
+        # CVaR label (blue, near diamond)
+        geom_text(
+            aes(x = abs(CVaR_95) * 100, label = sprintf("%.0f", abs(CVaR_95) * 100)),
+            hjust = -0.3,
+            vjust = -1,
+            size = 2.5,
+            color = "#1565C0"
+        ) +
+
+        # Scales
+        scale_x_continuous(
+            expand = expansion(mult = c(0, 0.15)),
+            breaks = seq(0, 600, 100),
+            labels = function(x) paste0(x, " bps")
+        ) +
+
+        # Labels
         labs(
-            title = "Risk Ladder: Value-at-Risk & Expected Shortfall Analysis",
-            subtitle = "Daily risk in basis points | Bonds ordered by 95% VaR (highest risk at top)",
-            x = "",
-            y = "Risk (basis points)",
-            caption = paste(
-                "Wide bar: 95% VaR (5% worst days) | Narrow bar: 99% VaR (1% worst days)",
-                "\nDiamond: CVaR (Average loss beyond VaR) | Dotted line: Portfolio average"
-            )
+            title = "Risk Ladder: VaR & Expected Shortfall",
+            subtitle = "Sorted by 95% VaR (highest risk at top) | Daily horizon",
+            x = "Risk (basis points of price)",
+            y = NULL,
+            caption = "Wide bar = 95% VaR | Narrow bar = 99% VaR | ◆ = CVaR (Expected Shortfall)"
         ) +
+
         create_insele_theme() +
         theme(
+            plot.title = element_text(face = "bold", color = insele_palette$primary, size = 14),
+            plot.subtitle = element_text(color = "#666666", size = 10),
             panel.grid.major.y = element_blank(),
-            panel.grid.minor.x = element_line(color = "#F5F5F5", linetype = "dotted"),
+            panel.grid.minor = element_blank(),
+            axis.text.y = element_text(face = "bold"),
             plot.caption = element_text(
                 hjust = 0,
                 size = 8,
                 lineheight = 1.2,
-                margin = ggplot2::margin(t = 10, r = 0, b = 0, l = 0, unit = "pt")  # FIX: Use ggplot2::margin
+                margin = ggplot2::margin(t = 10, r = 0, b = 0, l = 0, unit = "pt")
             )
         )
 

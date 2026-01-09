@@ -1571,18 +1571,135 @@ server <- function(input, output, session) {
         if(!is.null(p)) print(p)
     })
 
+    # =========================================================================
+    # VaR ANALYSIS REACTIVES AND OUTPUTS
+    # =========================================================================
+
+    # Reactive to store the VaR distribution plot and its bond ordering
+    var_distribution_results <- reactive({
+        req(filtered_data())
+
+        # Get parameters from UI controls
+        horizon_days <- as.numeric(input$var_horizon) %||% 1
+        lookback_days <- input$var_lookback %||% 252
+        method <- input$var_method %||% "historical"
+
+        # Filter data based on lookback period
+        data <- filtered_data()
+        if (!is.null(lookback_days) && lookback_days < 504) {
+            cutoff_date <- max(data$date, na.rm = TRUE) - lookback_days
+            data <- data %>% filter(date >= cutoff_date)
+        }
+
+        # Generate the plot with parameters
+        params <- list(
+            horizon_days = horizon_days,
+            method = method,
+            show_stats = FALSE,  # Stats are in separate table now
+            enable_diagnostics = FALSE
+        )
+
+        p <- generate_var_distribution_plot(data, params)
+
+        # Return both plot and bond order
+        list(
+            plot = p,
+            bond_order = attr(p, "bond_order"),
+            var_summary = attr(p, "var_summary")
+        )
+    })
+
     # 4. VaR Distribution Plot
     output$var_distribution_plot <- renderPlot({
-        req(filtered_data())
-        p <- generate_var_distribution_plot(filtered_data(), list())
+        req(var_distribution_results())
+        p <- var_distribution_results()$plot
         if(!is.null(p)) print(p)
     })
 
-    # 5. VaR Ladder Plot
+    # 5. VaR Ladder Plot - uses SAME bond ordering as distribution plot
     output$var_ladder_plot <- renderPlot({
-        req(var_data())
-        p <- generate_var_ladder_plot(var_data(), list())
+        req(var_data(), var_distribution_results())
+
+        # Pass the bond order from distribution plot for consistency
+        params <- list(
+            bond_order = var_distribution_results()$bond_order
+        )
+
+        p <- generate_var_ladder_plot(var_data(), params)
         if(!is.null(p)) print(p)
+    })
+
+    # 6. VaR Statistics Table - NEW
+    output$var_statistics_table <- DT::renderDataTable({
+        req(var_distribution_results())
+
+        var_summary <- var_distribution_results()$var_summary
+
+        # Handle case where summary might be NULL
+        if (is.null(var_summary) || nrow(var_summary) == 0) {
+            return(DT::datatable(data.frame(Message = "No VaR data available")))
+        }
+
+        # Create table with interpretations
+        table_data <- var_summary %>%
+            mutate(
+                # Interpret skewness
+                skew_signal = case_when(
+                    skewness < -0.5 ~ "Left tail risk",
+                    skewness > 0.5 ~ "Right skewed",
+                    TRUE ~ "Symmetric"
+                ),
+                # Interpret kurtosis (excess kurtosis, normal = 3)
+                kurt_signal = case_when(
+                    kurtosis > 4 ~ "Fat tails",
+                    kurtosis < 2 ~ "Thin tails",
+                    TRUE ~ "Normal tails"
+                ),
+                # Tail risk indicator
+                tail_ratio = abs(VaR_99) / abs(VaR_95),
+                tail_risk = case_when(
+                    tail_ratio > 1.6 ~ "High",
+                    tail_ratio > 1.4 ~ "Moderate",
+                    TRUE ~ "Low"
+                )
+            ) %>%
+            select(
+                Bond = bond,
+                `95% VaR` = VaR_95,
+                `99% VaR` = VaR_99,
+                `CVaR` = CVaR_95,
+                Skew = skewness,
+                `Skew Signal` = skew_signal,
+                Kurtosis = kurtosis,
+                `Tail Risk` = tail_risk,
+                Obs = n_observations
+            )
+
+        DT::datatable(
+            table_data,
+            options = list(
+                pageLength = 15,
+                dom = 't',  # Table only, no search/pagination
+                columnDefs = list(list(className = 'dt-center', targets = '_all'))
+            ),
+            rownames = FALSE
+        ) %>%
+            DT::formatRound(c('95% VaR', '99% VaR', 'CVaR'), digits = 2) %>%
+            DT::formatRound(c('Skew', 'Kurtosis'), digits = 2) %>%
+            DT::formatStyle(
+                'Tail Risk',
+                backgroundColor = DT::styleEqual(
+                    c('High', 'Moderate', 'Low'),
+                    c('#FFCDD2', '#FFF9C4', '#C8E6C9')
+                )
+            ) %>%
+            DT::formatStyle(
+                'Skew Signal',
+                backgroundColor = DT::styleEqual(
+                    c('Left tail risk', 'Right skewed', 'Symmetric'),
+                    c('#FFCDD2', '#FFF9C4', '#C8E6C9')
+                )
+            )
     })
 
     # 6. DV01 Ladder Plot
@@ -3767,8 +3884,12 @@ server <- function(input, output, session) {
             paste0("var_ladder_", format(Sys.Date(), "%Y%m%d"), ".png")
         },
         content = function(file) {
-            req(var_data())
-            p <- generate_var_ladder_plot(var_data(), list())
+            req(var_data(), var_distribution_results())
+            # Use same bond order as distribution plot
+            params <- list(
+                bond_order = var_distribution_results()$bond_order
+            )
+            p <- generate_var_ladder_plot(var_data(), params)
             if(!is.null(p)) {
                 ggsave(file, plot = p, width = 10, height = 8, dpi = 300, bg = "white")
             }
@@ -3780,8 +3901,9 @@ server <- function(input, output, session) {
             paste0("var_distribution_", format(Sys.Date(), "%Y%m%d"), ".png")
         },
         content = function(file) {
-            req(filtered_data())
-            p <- generate_var_distribution_plot(filtered_data(), list())
+            req(var_distribution_results())
+            # Use the already-generated plot from reactive
+            p <- var_distribution_results()$plot
             if(!is.null(p)) {
                 ggsave(file, plot = p, width = 14, height = 10, dpi = 300, bg = "white")
             }
