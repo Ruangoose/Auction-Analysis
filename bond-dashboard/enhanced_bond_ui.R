@@ -767,53 +767,119 @@ ui <- dashboardPage(
                            "Risk Analytics",
                            icon = icon("shield-alt"),
 
-                           # ADD THE INFORMATION BOX HERE - FIRST ITEM IN THE TAB
+                           # Understanding VaR Info Box
                            fluidRow(
                                column(12,
                                       tags$div(
-                                          class = "alert alert-info",
-                                          style = "margin-bottom: 20px;",
-                                          tags$h4("Understanding Value-at-Risk (VaR)", style = "margin-top: 0;"),
+                                          class = "info-box",
+                                          style = "background-color: #1B3A6B; color: white; padding: 15px; border-radius: 5px; margin-bottom: 15px;",
+
+                                          tags$h4(icon("shield-alt"), " Understanding Value-at-Risk (VaR)", style = "margin-top: 0;"),
+
+                                          tags$p("VaR measures the potential loss in ", tags$strong("bond price"),
+                                                 " (in basis points) that could occur on the worst trading days:"),
+
+                                          tags$ul(
+                                              tags$li(tags$strong("95% VaR (e.g., 350 bps):"), " On 95% of days, losses will be less than 3.5%. ",
+                                                      tags$em("Expect to exceed this ~1 day per month.")),
+                                              tags$li(tags$strong("99% VaR (e.g., 500 bps):"), " On 99% of days, losses will be less than 5.0%. ",
+                                                      tags$em("Expect to exceed this ~2-3 days per year.")),
+                                              tags$li(tags$strong("CVaR (Expected Shortfall):"), " When VaR IS breached, this is the ",
+                                                      tags$em("average"), " loss you can expect.")
+                                          ),
+
                                           tags$p(
-                                              "VaR measures the potential loss in yield (basis points) that could occur on the worst trading days:",
-                                              tags$ul(
-                                                  tags$li(tags$strong("95% VaR:"),
-                                                          "The loss that won't be exceeded on 95% of days (1 in 20 days will be worse)"),
-                                                  tags$li(tags$strong("99% VaR:"),
-                                                          "The loss that won't be exceeded on 99% of days (1 in 100 days will be worse)"),
-                                                  tags$li(tags$strong("CVaR (Expected Shortfall):"),
-                                                          "The average loss when losses exceed the VaR threshold")
-                                              ),
-                                              "Lower (more negative) VaR values indicate higher risk."
+                                              tags$strong("Key Insight: "),
+                                              "Compare 99% VaR to 95% VaR. A large gap indicates ", tags$strong("fat tails"),
+                                              " - the bond has more extreme risk than a normal distribution would suggest."
                                           )
                                       )
                                )
                            ),
 
-                           # Add this in your Risk Analytics tab, after the VaR info box but before the plots
+                           # Reading the Risk Ladder Info Box
                            fluidRow(
                                column(12,
                                       tags$div(
-                                          class = "alert alert-warning",
-                                          style = "margin-bottom: 20px; margin-top: 10px;",
-                                          tags$h5("Reading the Risk Ladder", style = "margin-top: 0;"),
+                                          class = "info-box",
+                                          style = "background-color: #FF9800; color: white; padding: 15px; border-radius: 5px; margin-bottom: 15px;",
+
+                                          tags$h5(icon("chart-bar"), " Reading the Risk Metrics", style = "margin-top: 0;"),
+
+                                          tags$p(tags$strong("VaR Bars:")),
+                                          tags$ul(
+                                              tags$li(tags$strong("Wide (orange) bar:"), " 95% VaR - exceeded ~1 day per month"),
+                                              tags$li(tags$strong("Narrow (red) bar:"), " 99% VaR - exceeded ~2-3 days per year"),
+                                              tags$li(tags$strong("Blue diamond:"), " CVaR - average loss when VaR is breached")
+                                          ),
+
+                                          tags$p(tags$strong("Distribution Statistics:")),
+                                          tags$ul(
+                                              tags$li(tags$strong("Skewness < -0.5:"), " Left tail risk - larger losses more likely than gains"),
+                                              tags$li(tags$strong("Kurtosis > 1:"), " Fat tails - extreme moves more likely than normal"),
+                                              tags$li(tags$strong("Tail Ratio (99%/95% > 1.5):"), " Significant tail risk present")
+                                          ),
+
                                           tags$p(
-                                              "The Risk Ladder shows three risk metrics for each bond:",
-                                              tags$ul(
-                                                  tags$li("The ", tags$strong("outer (orange) bar"),
-                                                          " shows 95% VaR - the daily loss that will be exceeded only 5% of the time"),
-                                                  tags$li("The ", tags$strong("inner (red) bar"),
-                                                          " shows 99% VaR - a more extreme risk measure exceeded only 1% of the time"),
-                                                  tags$li("The ", tags$strong("blue diamond"),
-                                                          " shows CVaR - the average loss when the VaR threshold is breached")
-                                              ),
-                                              "Higher values indicate higher risk. Compare the gap between 95% and 99% VaR to assess tail risk."
+                                              style = "margin-top: 10px; font-style: italic;",
+                                              HTML("&#9888; Higher values = higher risk. Watch for bonds with high kurtosis AND negative skew.")
                                           )
                                       )
                                )
                            ),
 
-                           # THEN YOUR EXISTING VAR PLOTS BOX
+                           # VaR Control Panel
+                           fluidRow(
+                               column(12,
+                                      tags$div(
+                                          class = "well",
+                                          style = "background-color: #F5F5F5; margin-bottom: 15px; padding: 15px; border-radius: 5px;",
+
+                                          fluidRow(
+                                              column(3,
+                                                     selectInput(
+                                                         "var_horizon",
+                                                         "VaR Horizon:",
+                                                         choices = c("1 Day" = 1, "5 Days" = 5, "10 Days" = 10, "21 Days (1 Month)" = 21),
+                                                         selected = 1
+                                                     )
+                                              ),
+
+                                              column(3,
+                                                     sliderInput(
+                                                         "var_lookback",
+                                                         "Lookback Period (days):",
+                                                         min = 60, max = 504, value = 252, step = 21,
+                                                         post = " days"
+                                                     )
+                                              ),
+
+                                              column(3,
+                                                     selectInput(
+                                                         "var_method",
+                                                         "Calculation Method:",
+                                                         choices = c(
+                                                             "Historical Simulation" = "historical",
+                                                             "Parametric (Normal)" = "parametric",
+                                                             "Cornish-Fisher" = "cornish-fisher"
+                                                         ),
+                                                         selected = "historical"
+                                                     )
+                                              ),
+
+                                              column(3,
+                                                     checkboxInput(
+                                                         "var_show_stats_table",
+                                                         "Show Statistics Table",
+                                                         value = TRUE
+                                                     )
+                                              )
+                                          )
+                                      )
+                               )
+                           ),
+
+                           # VaR Plots Box
                            fluidRow(
                                box(
                                    title = "Value-at-Risk Analysis",
@@ -842,6 +908,20 @@ ui <- dashboardPage(
                                                                  style = "margin-left: 10px;")
                                               )
                                        )
+                                   )
+                               )
+                           ),
+
+                           # VaR Statistics Table (conditional)
+                           fluidRow(
+                               conditionalPanel(
+                                   condition = "input.var_show_stats_table == true",
+                                   box(
+                                       title = "VaR Statistics Summary",
+                                       status = "info",
+                                       solidHeader = TRUE,
+                                       width = 12,
+                                       DT::dataTableOutput("var_statistics_table")
                                    )
                                )
                            ),
