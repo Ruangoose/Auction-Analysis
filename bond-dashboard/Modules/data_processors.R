@@ -1,3 +1,65 @@
+# ================================================================================
+# CONVICTION SCORE CALCULATOR (0-10 Scale)
+# ================================================================================
+#' Calculate conviction score on 0-10 scale
+#' @description Components: spread magnitude (0-4), z-score confirmation (0-4), liquidity (0-2)
+#' @param spread_bps Spread to fair value in basis points
+#' @param zscore Z-score of the spread
+#' @param bid_to_cover Bid-to-cover ratio (optional, default NA)
+#' @return Numeric score between 0 and 10
+#' @export
+calculate_conviction_score <- function(spread_bps, zscore, bid_to_cover = NA_real_) {
+    # Handle NA inputs
+    if (is.na(spread_bps) || is.na(zscore)) {
+        return(NA_real_)
+    }
+
+    # ==========================================================================
+    # COMPONENT 1: Spread magnitude (0-4 points)
+    # Captures: How mispriced is the bond right now?
+    # ==========================================================================
+    # Normalize: 20 bps spread = 4 points (max)
+    spread_component <- min(abs(spread_bps) / 5, 4)
+
+    # ==========================================================================
+    # COMPONENT 2: Z-Score confirmation (0-4 points)
+    # Captures: Is this mispricing statistically significant?
+    # ==========================================================================
+    # Check if Z-Score CONFIRMS spread direction
+    # (positive spread + positive Z = both say cheap = confirming)
+    # (negative spread + negative Z = both say rich = confirming)
+    zscore_confirms <- sign(spread_bps) == sign(zscore)
+
+    if (zscore_confirms) {
+        # Confirming: reward based on |Z-Score|
+        # |Z| = 2 gives full 4 points
+        zscore_component <- min(abs(zscore) * 2, 4)
+    } else {
+        # Contradicting: Z-Score says "this mispricing is reversing"
+        # Still give some credit but reduced
+        zscore_component <- min(abs(zscore) * 0.5, 1)
+    }
+
+    # ==========================================================================
+    # COMPONENT 3: Liquidity bonus (0-2 points)
+    # Captures: Can we actually trade this?
+    # ==========================================================================
+    if (!is.na(bid_to_cover) && bid_to_cover > 0) {
+        # bid_to_cover of 2.0 = healthy liquidity = 2 points
+        liquidity_component <- min(bid_to_cover, 2)
+    } else {
+        # No data: assume average liquidity
+        liquidity_component <- 1
+    }
+
+    # ==========================================================================
+    # TOTAL SCORE (0-10 scale)
+    # ==========================================================================
+    total_score <- spread_component + zscore_component + liquidity_component
+
+    return(round(total_score, 1))
+}
+
 #' @export
 calculate_relative_value <- function(data, lookback = NULL) {
     # Set default lookback if NULL or invalid
