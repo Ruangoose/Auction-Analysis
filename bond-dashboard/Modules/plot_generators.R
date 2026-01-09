@@ -490,7 +490,6 @@ generate_enhanced_yield_curve <- function(data, params) {
                 name = size_name,
                 breaks = size_breaks,
                 labels = size_labels,
-                oob = scales::squish,
                 guide = guide_legend(
                     title.position = "top",
                     title.hjust = 0.5,
