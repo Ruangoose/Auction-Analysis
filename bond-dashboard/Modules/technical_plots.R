@@ -1332,39 +1332,59 @@ generate_signal_matrix_heatmap <- function(data) {
             # Apply sorted bond order (reverse for ggplot y-axis)
             bond = factor(bond, levels = rev(bond_order)),
             # Order indicators logically
-            indicator = factor(indicator, levels = c("rsi_signal", "bb_signal", "macd_signal_score", "momentum_signal", "total_signal"))
+            indicator = factor(indicator, levels = c("rsi_signal", "bb_signal", "macd_signal_score", "momentum_signal", "total_signal")),
+
+            # ═══════════════════════════════════════════════════════════════
+            # FIX: Create discrete color categories with different thresholds
+            # for TOTAL column (range -8 to +8) vs individual indicators (-2 to +2)
+            # ═══════════════════════════════════════════════════════════════
+            color_category = case_when(
+                # TOTAL column uses different thresholds (sum of 4 indicators)
+                indicator == "total_signal" & score >= 4 ~ "strong_buy",
+                indicator == "total_signal" & score >= 2 ~ "buy",
+                indicator == "total_signal" & score >= -1 ~ "neutral",
+                indicator == "total_signal" & score >= -3 ~ "sell",
+                indicator == "total_signal" ~ "strong_sell",
+                # Individual indicators (-2 to +2 scale)
+                score == 2 ~ "strong_buy",
+                score == 1 ~ "buy",
+                score == 0 ~ "neutral",
+                score == -1 ~ "sell",
+                score == -2 ~ "strong_sell",
+                TRUE ~ "neutral"
+            ),
+            color_category = factor(color_category,
+                levels = c("strong_sell", "sell", "neutral", "buy", "strong_buy")
+            )
         )
 
-    # Create heatmap with explicit labels for all values
-    p <- ggplot(signal_scores_long, aes(x = indicator, y = bond, fill = score)) +
+    # Create heatmap with discrete color scale for proper TOTAL column display
+    p <- ggplot(signal_scores_long, aes(x = indicator, y = bond, fill = color_category)) +
 
         geom_tile(color = "white", linewidth = 1) +
 
-        # Use score_label to ensure 0s are displayed
+        # Use score_label to ensure 0s are displayed (show original scores)
         geom_text(aes(label = score_label),
                   size = 3.5,
                   fontface = "bold",
                   color = case_when(
-                      abs(signal_scores_long$score) > 1.5 ~ "white",
-                      abs(signal_scores_long$score) > 0.5 ~ "gray20",
+                      signal_scores_long$color_category %in% c("strong_buy", "strong_sell") ~ "white",
+                      signal_scores_long$color_category %in% c("buy", "sell") ~ "gray20",
                       TRUE ~ "black"
                   )) +
 
-        scale_fill_gradient2(
-            low = "#C62828",       # Strong Sell - Dark Red
-            mid = "#9E9E9E",       # Neutral - Gray
-            high = "#1B5E20",      # Strong Buy - Dark Green
-            midpoint = 0,
-            limits = c(-2, 2),
+        # FIX: Use discrete color scale so TOTAL values (+5, -5) get proper colors
+        scale_fill_manual(
+            values = c(
+                "strong_sell" = "#B71C1C",  # Dark red
+                "sell" = "#E57373",          # Light red
+                "neutral" = "#9E9E9E",       # Grey
+                "buy" = "#81C784",           # Light green
+                "strong_buy" = "#1B5E20"     # Dark green
+            ),
             name = "Signal",
-            breaks = c(-2, -1, 0, 1, 2),
             labels = c("Strong Sell", "Sell", "Neutral", "Buy", "Strong Buy"),
-            guide = guide_colorbar(
-                barwidth = 15,
-                barheight = 0.5,
-                title.position = "top",
-                title.hjust = 0.5
-            )
+            drop = FALSE
         ) +
 
         scale_x_discrete(
