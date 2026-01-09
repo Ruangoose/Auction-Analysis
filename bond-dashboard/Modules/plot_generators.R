@@ -545,9 +545,26 @@ generate_enhanced_yield_curve <- function(data, params) {
 
 #' @export
 # 2. Relative Value Heatmap Generation
+#' @param data Bond data with date, bond, yield_to_maturity, modified_duration columns
+#' @param params List of parameters (optional: bond_order for custom ordering)
 generate_relative_value_heatmap <- function(data, params) {
     # CRITICAL FIX: Ensure date columns are Date objects
     data <- ensure_date_columns(data)
+
+    # ========================================================================
+    # FIX 4: ORDER BONDS BY DURATION (short bonds at bottom of heatmap)
+    # ========================================================================
+    # Get duration-based ordering from the data
+    bond_duration_order <- data %>%
+        group_by(bond) %>%
+        summarise(avg_duration = mean(modified_duration, na.rm = TRUE), .groups = "drop") %>%
+        arrange(desc(avg_duration)) %>%  # Descending so short bonds at bottom
+        pull(bond)
+
+    # Use custom order if provided in params
+    if (!is.null(params$bond_order)) {
+        bond_duration_order <- params$bond_order
+    }
 
     rv_matrix <- data %>%
         group_by(bond) %>%
@@ -580,10 +597,29 @@ generate_relative_value_heatmap <- function(data, params) {
             avg_z_score = mean(z_score, na.rm = TRUE),
             .groups = "drop"
         ) %>%
-        filter(week >= max(week) - weeks(12))
+        filter(week >= max(week) - weeks(12)) %>%
+        # Apply duration-based ordering
+        mutate(bond = factor(bond, levels = bond_duration_order))
+
+    # Get current date for "Today" indicator
+    current_date <- Sys.Date()
+    current_week <- floor_date(current_date, "week")
 
     p <- ggplot(rv_matrix, aes(x = week, y = bond, fill = avg_z_score)) +
         geom_tile(color = "white", linewidth = 0.5) +
+
+        # ========================================================================
+        # FIX 6: ADD "TODAY" INDICATOR
+        # ========================================================================
+        # "Today" vertical line
+        geom_vline(
+            xintercept = as.numeric(current_week),
+            linetype = "longdash",
+            color = insele_palette$primary,
+            linewidth = 1,
+            alpha = 0.8
+        ) +
+
         scale_fill_gradient2(
             low = insele_palette$danger,
             mid = "white",
@@ -604,15 +640,33 @@ generate_relative_value_heatmap <- function(data, params) {
                   size = 3,
                   color = "white",
                   fontface = 2) +
+
+        # "Today" label annotation
+        annotate(
+            "text",
+            x = current_week,
+            y = Inf,
+            label = "Today",
+            vjust = -0.5,
+            hjust = 0.5,
+            size = 3,
+            fontface = "bold",
+            color = insele_palette$primary
+        ) +
+
         scale_x_date(
             date_breaks = "2 weeks",
             date_labels = "%d\n%b",
-            expand = c(0, 0)
+            expand = c(0.02, 0)  # Small expand to show Today label
         ) +
         scale_y_discrete(expand = c(0, 0)) +
+
+        # Allow label outside plot area
+        coord_cartesian(clip = "off") +
+
         labs(
             title = "Relative Value Heatmap",
-            subtitle = "Weekly Z-scores showing rich/cheap dynamics across bonds",
+            subtitle = "Weekly Z-scores showing rich/cheap dynamics | Ordered by duration (long at top)",
             x = "",
             y = "",
             caption = "Red = Rich (Sell) | Green = Cheap (Buy) | Values > |2| shown"
@@ -621,8 +675,9 @@ generate_relative_value_heatmap <- function(data, params) {
         theme(
             axis.text.x = element_text(angle = 0, hjust = 0.5),
             axis.text.y = element_text(face = "bold"),
-            panel.border = element_rect(fill = NA, color = insele_palette$dark_gray, size = 1),
-            legend.position = "bottom"
+            panel.border = element_rect(fill = NA, color = insele_palette$dark_gray, linewidth = 1),
+            legend.position = "bottom",
+            plot.margin = margin(t = 20, r = 10, b = 10, l = 10)  # Extra top margin for Today label
         )
 
     return(p)
@@ -631,12 +686,37 @@ generate_relative_value_heatmap <- function(data, params) {
 
 #' @export
 # 3. Enhanced Z-Score Distribution Generation
+#' @description Z-Score lollipop chart with proper label positioning to avoid overlap
 generate_enhanced_zscore_plot <- function(data, params) {
-    data <- data %>%
+    # ========================================================================
+    # FIX 5: DYNAMIC LABEL POSITIONING to avoid overlap with circles
+    # ========================================================================
+    plot_data <- data %>%
         filter(!is.na(z_score)) %>%
-        arrange(desc(abs(z_score)))
+        arrange(desc(abs(z_score))) %>%
+        mutate(
+            bond_name = factor(bond, levels = rev(bond)),  # Preserve order
 
-    p <- ggplot(data, aes(x = reorder(bond, z_score), y = z_score)) +
+            # Dynamic label positioning based on Z-Score sign AND magnitude
+            # Nudge labels away from circles
+            label_nudge = case_when(
+                z_score >= 0 ~ 0.3,   # Positive: nudge right (after coord_flip, this is up)
+                TRUE ~ -0.3           # Negative: nudge left (after coord_flip, this is down)
+            ),
+            label_hjust = case_when(
+                z_score >= 0 ~ 0,     # Positive: left-align (text starts at point)
+                TRUE ~ 1              # Negative: right-align (text ends at point)
+            ),
+
+            # Significance category for coloring
+            significance = cut(abs(z_score),
+                               breaks = c(-Inf, 1, 2, Inf),
+                               labels = c("Normal", "Notable", "Extreme"))
+        )
+
+    p <- ggplot(plot_data, aes(x = reorder(bond, z_score), y = z_score)) +
+
+        # Background zones
         annotate("rect", xmin = -Inf, xmax = Inf,
                  ymin = -1, ymax = 1,
                  alpha = 0.1, fill = insele_palette$success) +
@@ -646,27 +726,34 @@ generate_enhanced_zscore_plot <- function(data, params) {
         annotate("rect", xmin = -Inf, xmax = Inf,
                  ymin = 1, ymax = 2,
                  alpha = 0.1, fill = insele_palette$warning) +
+
+        # Reference lines
         geom_hline(yintercept = c(-2, -1, 0, 1, 2),
                    linetype = c("dashed", "dotted", "solid", "dotted", "dashed"),
                    color = c(insele_palette$danger, insele_palette$warning,
                              "black", insele_palette$warning, insele_palette$danger),
                    alpha = c(0.7, 0.5, 1, 0.5, 0.7)) +
+
+        # Lollipop stems
         geom_segment(aes(x = bond, xend = bond, y = 0, yend = z_score,
-                         color = cut(abs(z_score),
-                                     breaks = c(-Inf, 1, 2, Inf),
-                                     labels = c("Normal", "Notable", "Extreme"))),
-                     size = 1.5) +
+                         color = significance),
+                     linewidth = 1.5) +
+
+        # Points (circles)
         geom_point(aes(size = abs(z_score),
-                       color = cut(abs(z_score),
-                                   breaks = c(-Inf, 1, 2, Inf),
-                                   labels = c("Normal", "Notable", "Extreme"))),
+                       color = significance),
                    shape = 21,
                    fill = "white",
                    stroke = 2) +
-        geom_text(aes(label = sprintf("%.2f", z_score),
-                      hjust = ifelse(z_score > 0, -0.3, 1.3)),
+
+        # Labels with NUDGE to avoid overlap with circles
+        geom_text(aes(label = sprintf("%+.2f", z_score),  # Show sign
+                      hjust = label_hjust,
+                      y = z_score + label_nudge),  # Nudge away from point
                   size = 3.5,
-                  fontface = 2) +
+                  fontface = "bold",
+                  color = insele_palette$dark_gray) +
+
         scale_color_manual(
             values = c("Normal" = insele_palette$secondary,
                        "Notable" = insele_palette$warning,
@@ -679,18 +766,20 @@ generate_enhanced_zscore_plot <- function(data, params) {
         ) +
         scale_y_continuous(
             breaks = seq(-4, 4, 1),
-            limits = c(min(data$z_score, -3), max(data$z_score, 3))
+            limits = c(min(-3, min(plot_data$z_score) - 0.5),
+                       max(3, max(plot_data$z_score) + 0.5)),  # Extra space for labels
+            expand = c(0.05, 0)
         ) +
         coord_flip() +
         labs(
-            title = "Statistical Significance Analysis",
-            subtitle = paste("Z-Score Distribution |",
-                             sum(abs(data$z_score) > 2), "bonds in extreme territory"),
+            title = "Z-Score Distribution",
+            subtitle = paste("Statistical Significance |",
+                             sum(abs(plot_data$z_score) > 2), "bonds in extreme territory"),
             x = "",
             y = "Z-Score (Standard Deviations)",
             caption = "Normal: |z| < 1 | Notable: 1 ≤ |z| < 2 | Extreme: |z| ≥ 2"
         ) +
-        create_insele_theme()+
+        create_insele_theme() +
         theme(
             panel.grid.major.y = element_blank(),
             legend.position = "top",

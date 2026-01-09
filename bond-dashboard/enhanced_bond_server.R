@@ -2845,10 +2845,38 @@ server <- function(input, output, session) {
 
 
 
-    # 24. Data Tables
     # ========================================================================
+    # 24. SPREAD WARNING - Model Fit Quality
+    # ========================================================================
+    output$spread_warning <- renderUI({
+        req(fitted_curve_data())
+
+        metrics <- fitted_curve_data()$metrics
+        avg_spread <- metrics$avg_spread
+        r_squared <- metrics$r_squared
+
+        # Show warning if average spread > 20 bps or R² < 0.95
+        if (avg_spread > 20 || r_squared < 0.95) {
+            tags$div(
+                class = "alert alert-warning",
+                style = "margin: 10px 0;",
+                tags$strong(icon("exclamation-triangle"), " Model Fit Warning: "),
+                sprintf(
+                    "Average spread (%.1f bps) is elevated. R² = %.3f. Consider checking data quality or adjusting curve model.",
+                    avg_spread, r_squared
+                )
+            )
+        } else {
+            NULL
+        }
+    })
+
+    # ========================================================================
+    # 25. RELATIVE VALUE OPPORTUNITIES TABLE
     # CRITICAL FIX: Table now reads from fitted_curve_data() - SAME source as chart
     # When x-axis or model changes, this table AUTOMATICALLY updates
+    # Shows ALL bonds by default with filter dropdown
+    # Uses normalized 0-10 conviction score
     # ========================================================================
     output$relative_value_opportunities <- DT::renderDataTable({
         req(fitted_curve_data())
@@ -2859,82 +2887,90 @@ server <- function(input, output, session) {
         x_var_label <- curve_data$x_label
         x_var <- curve_data$x_var
 
+        # Get filter choice (default to "all" if not set)
+        filter_choice <- input$rv_table_filter %||% "all"
+
         # Debug: Confirm we're using fitted_curve_data
         cat("\n=== Relative Value Debug (CONNECTED TO CURVE) ===\n")
-        cat(sprintf("X-Axis: %s, Model: %s\n", x_var, curve_data$model_type))
+        cat(sprintf("X-Axis: %s, Model: %s, Filter: %s\n", x_var, curve_data$model_type, filter_choice))
         cat("Total bonds:", nrow(bonds), "\n")
         cat("Spread range:", sprintf("%.1f to %.1f bps\n",
                                      min(bonds$spread_bps, na.rm = TRUE),
                                      max(bonds$spread_bps, na.rm = TRUE)))
-        cat("Z-score summary:\n")
-        print(summary(bonds$z_score))
 
-        # Filter opportunities with z-score > 1.0
+        # Calculate signals and scores for ALL bonds
         opportunities <- bonds %>%
-            filter(!is.na(z_score)) %>%
-            filter(abs(z_score) > 1.0) %>%
-            arrange(desc(abs(z_score))) %>%
+            filter(!is.na(spread_bps)) %>%
             mutate(
+                # Fill NA z_scores with 0
+                zscore = ifelse(is.na(z_score), 0, z_score),
+
                 # CORRECT signal logic based on spread (positive = cheap = buy)
                 signal = case_when(
-                    spread_bps > 10 & z_score > 2 ~ "Strong Buy",
+                    spread_bps > 10 & zscore > 1.5 ~ "Strong Buy",
                     spread_bps > 5 ~ "Buy",
-                    spread_bps < -10 & z_score < -2 ~ "Strong Sell",
+                    spread_bps < -10 & zscore < -1.5 ~ "Strong Sell",
                     spread_bps < -5 ~ "Sell",
                     TRUE ~ "Hold"
                 ),
-                opportunity_score = abs(z_score) * abs(spread_bps),
-                # Strength indicator
-                strength = case_when(
-                    abs(spread_bps) > 10 & abs(z_score) > 1.5 ~ "Strong",
-                    abs(spread_bps) > 5 | abs(z_score) > 1.0 ~ "Moderate",
-                    TRUE ~ "Weak"
+
+                # NEW: Calculate conviction score (0-10 scale)
+                # Get bid_to_cover if available
+                btc = if ("bid_to_cover" %in% names(.)) bid_to_cover else NA_real_
+            ) %>%
+            rowwise() %>%
+            mutate(
+                score = calculate_conviction_score(
+                    spread_bps = spread_bps,
+                    zscore = zscore,
+                    bid_to_cover = btc
+                )
+            ) %>%
+            ungroup() %>%
+            mutate(
+                # Signal category for filtering
+                signal_category = case_when(
+                    signal %in% c("Strong Buy", "Strong Sell") ~ "strong",
+                    signal %in% c("Buy", "Sell") ~ "actionable",
+                    TRUE ~ "hold"
                 )
             )
 
-        # If no opportunities with z-score filter, show all bonds sorted by absolute spread
-        if(nrow(opportunities) == 0) {
-            cat("No opportunities found with z-score filter, showing all bonds by spread\n")
-            opportunities <- bonds %>%
-                filter(!is.na(spread_bps)) %>%
-                arrange(desc(abs(spread_bps))) %>%
-                mutate(
-                    signal = case_when(
-                        spread_bps > 10 ~ "Buy",
-                        spread_bps < -10 ~ "Sell",
-                        spread_bps > 5 ~ "Buy",
-                        spread_bps < -5 ~ "Sell",
-                        TRUE ~ "Hold"
-                    ),
-                    opportunity_score = abs(spread_bps),
-                    z_score = ifelse(is.na(z_score), 0, z_score),
-                    strength = case_when(
-                        abs(spread_bps) > 10 ~ "Strong",
-                        abs(spread_bps) > 5 ~ "Moderate",
-                        TRUE ~ "Weak"
-                    )
-                )
+        # Apply filter based on user selection
+        if (filter_choice == "actionable") {
+            opportunities <- opportunities %>%
+                filter(signal_category %in% c("strong", "actionable"))
+        } else if (filter_choice == "strong") {
+            opportunities <- opportunities %>%
+                filter(signal_category == "strong")
         }
+        # "all" shows everything - no additional filter
+
+        # Sort by score descending
+        opportunities <- opportunities %>%
+            arrange(desc(score))
+
+        cat("Filtered bonds:", nrow(opportunities), "\n")
 
         # Select columns - use x_value which is the DYNAMIC x-axis value
-        opportunities <- opportunities %>%
+        display_data <- opportunities %>%
             select(
                 Bond = bond,
                 Yield = yield_to_maturity,
                 Duration = x_value,  # Uses whatever x-axis is currently selected
                 Spread = spread_bps,
-                ZScore = z_score,
+                ZScore = zscore,
                 Signal = signal,
-                Score = opportunity_score
+                Score = score
             )
 
         # Format the display
-        opportunities <- opportunities %>%
+        display_data <- display_data %>%
             mutate(
                 Yield = sprintf("%.3f%%", Yield),
                 Duration = sprintf("%.2f", Duration),
-                Spread = sprintf("%.1f bps", Spread),
-                ZScore = sprintf("%.2f", ZScore),
+                Spread = sprintf("%+.1f bps", Spread),  # Show sign
+                ZScore = sprintf("%+.2f", ZScore),      # Show sign
                 Score = sprintf("%.1f", Score)
             )
 
@@ -2947,9 +2983,9 @@ server <- function(input, output, session) {
         )
 
         datatable(
-            opportunities,
+            display_data,
             options = list(
-                pageLength = 10,
+                pageLength = 15,
                 dom = 'Bfrtip',
                 buttons = c('copy', 'csv', 'excel'),
                 columnDefs = list(
@@ -2964,13 +3000,13 @@ server <- function(input, output, session) {
                 "Signal",
                 backgroundColor = styleEqual(
                     c("Strong Buy", "Buy", "Hold", "Sell", "Strong Sell"),
-                    c(insele_palette$success, insele_palette$success_light,
-                      "#F0F0F0", insele_palette$danger_light, insele_palette$danger)
+                    c("#1B5E20", "#4CAF50", "#9E9E9E", "#EF5350", "#B71C1C")
                 ),
                 color = styleEqual(
-                    c("Strong Buy", "Strong Sell"),
-                    c("white", "white")
-                )
+                    c("Strong Buy", "Buy", "Hold", "Sell", "Strong Sell"),
+                    c("white", "white", "white", "white", "white")
+                ),
+                fontWeight = "bold"
             )
     })
 

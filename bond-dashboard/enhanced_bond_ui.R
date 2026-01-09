@@ -718,12 +718,45 @@ ui <- dashboardPage(
                                )
                            ),
 
+                           # Spread warning (conditionally rendered)
+                           fluidRow(
+                               column(12,
+                                      uiOutput("spread_warning")
+                               )
+                           ),
+
                            fluidRow(
                                box(
                                    title = "Relative Value Opportunities",
                                    status = "primary",
                                    solidHeader = TRUE,
                                    width = 12,
+
+                                   # Filter controls row
+                                   fluidRow(
+                                       column(4,
+                                              selectInput(
+                                                  inputId = "rv_table_filter",
+                                                  label = "Show Signals:",
+                                                  choices = c(
+                                                      "All Bonds" = "all",
+                                                      "Actionable Only (Buy/Sell)" = "actionable",
+                                                      "Strong Signals Only" = "strong"
+                                                  ),
+                                                  selected = "all"
+                                              )
+                                       ),
+                                       column(8,
+                                              tags$div(
+                                                  class = "pull-right small text-muted",
+                                                  style = "margin-top: 25px;",
+                                                  tags$strong("Score: "),
+                                                  "0-10 scale combining spread magnitude (0-4), Z-Score confirmation (0-4), and liquidity (0-2)."
+                                              )
+                                       )
+                                   ),
+
+                                   # Table
                                    DT::dataTableOutput("relative_value_opportunities")
                                )
                            )
