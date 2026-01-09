@@ -1053,9 +1053,14 @@ generate_var_ladder_plot <- function(var_data, params = list()) {
 
 #' @export
 # 6. DV01 Ladder Plot Generation
+#' @description Creates a horizontal bar chart showing DV01 for each bond
+#' @param data Bond data with modified_duration column
+#' @param params List of parameters including notional
+#' @return ggplot object
 generate_dv01_ladder_plot <- function(data, params = list()) {
     # Extract parameters with defaults
-    notional <- params$notional %||% 10e9  # Default R10 billion
+    # Default to R10 million (10e6) - a more realistic per-bond notional
+    notional <- params$notional %||% 10000000
     show_average <- params$show_average %||% TRUE
     show_labels <- params$show_labels %||% TRUE
     max_bonds <- params$max_bonds %||% 20
@@ -1066,22 +1071,15 @@ generate_dv01_ladder_plot <- function(data, params = list()) {
         stop("Missing required columns for DV01 calculation")
     }
 
-    # Calculate DV01 properly
+    # Calculate DV01 properly using correct formula
+    # DV01 = Notional × Modified Duration × 0.0001 (0.01% = 1 basis point)
     dv01_data <- data %>%
         group_by(bond) %>%
         filter(date == max(date)) %>%  # Use latest data point
         ungroup() %>%
         mutate(
-            # Since we don't have price columns, use basis_point_value if available
-            # Otherwise calculate from modified duration
-            dv01_absolute = if("basis_point_value" %in% names(data) &&
-                               !all(is.na(basis_point_value))) {
-                basis_point_value * notional / 10e9  # Scale to actual notional
-            } else {
-                # Assume par pricing if no price available
-                # DV01 = Notional × Modified Duration × 0.0001
-                notional * modified_duration * 0.0001
-            },
+            # DV01 = Notional × Modified Duration × 0.0001
+            dv01_absolute = notional * modified_duration * 0.0001,
 
             # Convert to millions for display
             dv01_millions = dv01_absolute / 1e6,
@@ -1093,139 +1091,121 @@ generate_dv01_ladder_plot <- function(data, params = list()) {
                 TRUE ~ "Low"
             )
         ) %>%
-        arrange(desc(dv01_millions))
+        arrange(dv01_millions)  # Sort ascending so highest at top after coord_flip
 
     # Limit to top bonds if too many
     if (nrow(dv01_data) > max_bonds) {
         dv01_data <- dv01_data %>%
+            arrange(desc(dv01_millions)) %>%
             slice_head(n = max_bonds) %>%
-            mutate(
-                bond = factor(bond, levels = bond)  # Preserve order
-            )
+            arrange(dv01_millions)
     }
+
+    # Lock in factor order for consistent display
+    dv01_data <- dv01_data %>%
+        mutate(bond = factor(bond, levels = bond))
 
     # Calculate statistics
     avg_dv01 <- mean(dv01_data$dv01_millions, na.rm = TRUE)
     total_dv01 <- sum(dv01_data$dv01_millions, na.rm = TRUE)
 
-    # Create the plot
-    p <- ggplot(dv01_data, aes(x = reorder(bond, dv01_millions), y = dv01_millions)) +
+    # Format notional for display
+    notional_display <- if(notional >= 1e9) {
+        sprintf("R%.0fbn", notional / 1e9)
+    } else {
+        sprintf("R%.0fm", notional / 1e6)
+    }
 
-        # Background risk zones
-        annotate("rect", xmin = -Inf, xmax = Inf,
-                 ymin = 0, ymax = quantile(dv01_data$dv01_millions, 0.25),
-                 alpha = 0.02, fill = insele_palette$success) +
-        annotate("rect", xmin = -Inf, xmax = Inf,
-                 ymin = quantile(dv01_data$dv01_millions, 0.25),
-                 ymax = quantile(dv01_data$dv01_millions, 0.75),
-                 alpha = 0.02, fill = insele_palette$warning) +
-        annotate("rect", xmin = -Inf, xmax = Inf,
-                 ymin = quantile(dv01_data$dv01_millions, 0.75),
-                 ymax = Inf,
-                 alpha = 0.02, fill = insele_palette$danger) +
+    # Create the plot
+    p <- ggplot(dv01_data, aes(x = bond, y = dv01_millions)) +
 
         # Main bars with gradient coloring by duration
-        geom_col(aes(fill = modified_duration),
-                 width = 0.7) +
+        geom_col(aes(fill = modified_duration), width = 0.7) +
 
         # Add border to bars for clarity
-        geom_col(color = "white", fill = NA, width = 0.7, size = 0.5) +
+        geom_col(color = "white", fill = NA, width = 0.7, linewidth = 0.5) +
 
         # Average reference line
         {if(show_average) {
             geom_hline(yintercept = avg_dv01,
                        linetype = "dashed",
-                       color = insele_palette$primary,
-                       alpha = 0.7,
-                       size = 0.8)
+                       color = "#E65100",
+                       linewidth = 1)
         }} +
 
-        # Value labels on bars
+        # Value labels on bars (DV01 in Rands)
         {if(show_labels) {
             geom_text(aes(label = sprintf("R%.2fm", dv01_millions)),
                       hjust = -0.1,
                       size = 3.5,
-                      fontface = 2)
+                      fontface = "bold")
         }} +
 
-        # Duration labels (secondary information)
+        # Duration labels inside bars
         {if(show_labels) {
-            geom_text(aes(label = sprintf("%.1fy", modified_duration)),
-                      hjust = 1.2,
+            geom_text(aes(x = bond, y = dv01_millions / 2,
+                          label = sprintf("%.1fy", modified_duration)),
                       size = 3,
-                      fontface = 3,
+                      fontface = "bold",
                       color = "white")
         }} +
 
         # Average line annotation
         {if(show_average) {
             annotate("text",
-                     x = 1,
+                     x = nrow(dv01_data) + 0.3,
                      y = avg_dv01,
-                     label = sprintf("Portfolio Avg: R%.2fm", avg_dv01),
-                     hjust = -0.1,
+                     label = sprintf("Avg: R%.2fm", avg_dv01),
+                     hjust = 0,
                      vjust = -0.5,
-                     color = insele_palette$primary,
+                     color = "#E65100",
                      size = 3,
-                     fontface = 3)
+                     fontface = "bold")
         }} +
 
-        scale_fill_gradient2(
-            low = insele_palette$secondary_light,
-            mid = insele_palette$primary,
-            high = insele_palette$primary_dark,
-            midpoint = median(dv01_data$modified_duration),
-            name = "Duration\n(years)",
-            guide = guide_colorbar(
-                barwidth = 10,
-                barheight = 0.5,
-                title.position = "top",
-                title.hjust = 0.5
-            )
+        scale_fill_gradient(
+            low = "#81D4FA",
+            high = "#1B3A6B",
+            name = "Duration (years)"
         ) +
 
         scale_y_continuous(
-            labels = function(x) paste0("R", x, "m"),
-            expand = c(0, 0, 0.15, 0),
+            labels = function(x) sprintf("R%.2fm", x),
+            expand = expansion(mult = c(0, 0.15)),
             breaks = pretty_breaks(n = 6)
         ) +
 
-        coord_flip() +
+        coord_flip(clip = "off") +
 
         labs(
-            title = "DV01 Risk Ladder: Rand Sensitivity Analysis",
+            title = "DV01 Risk Ladder: Interest Rate Sensitivity",
             subtitle = sprintf(
-                "Value change per basis point move | Notional: R%.0fbn | Total DV01: R%.2fm",
-                notional/1e9, total_dv01
+                "Value change per basis point move | Notional: %s | Total DV01: R%.2fm",
+                notional_display, total_dv01
             ),
-            x = "",
+            x = NULL,
             y = "DV01 (R millions)",
-            caption = paste(
-                sprintf("Average DV01: R%.2fm", avg_dv01),
-                sprintf("| Risk zones: Green (Low) < R%.1fm < Yellow (Medium) < R%.1fm < Red (High)",
-                        quantile(dv01_data$dv01_millions, 0.25),
-                        quantile(dv01_data$dv01_millions, 0.75)),
-                "\nDV01 = Notional × Modified Duration × 0.01%",
-                sep = " "
-            )
+            caption = "DV01 = Notional × Modified Duration × 0.01% | Duration shown inside bars"
         ) +
 
         create_insele_theme() +
         theme(
             panel.grid.major.y = element_blank(),
             panel.grid.minor.x = element_line(color = "#F5F5F5", linetype = "dotted"),
-            legend.position = "bottom",
-            legend.direction = "horizontal",
+            # Remove legend since duration is shown as labels inside bars
+            legend.position = "none",
             plot.caption = element_text(
                 hjust = 0,
                 size = 8,
                 lineheight = 1.2,
-                margin = ggplot2::margin(t = 10, r = 0, b = 0, l = 0, unit = "pt")  # FIX: Use ggplot2::margin
+                margin = ggplot2::margin(t = 10, r = 0, b = 0, l = 0, unit = "pt")
             ),
             plot.subtitle = element_text(
                 size = 10,
                 face = "italic"
-            )
+            ),
+            plot.margin = ggplot2::margin(10, 40, 10, 10),  # Extra right margin for labels
+            axis.text.y = element_text(face = "bold")
         )
 
     # Add summary table as an attribute (for reporting)
@@ -1239,7 +1219,8 @@ generate_dv01_ladder_plot <- function(data, params = list()) {
             min_dv01_millions = min(dv01_millions, na.rm = TRUE),
             portfolio_modified_duration = weighted.mean(modified_duration,
                                                         w = dv01_millions,
-                                                        na.rm = TRUE)
+                                                        na.rm = TRUE),
+            notional_used = notional
         )
 
     # Add data as attribute for further analysis

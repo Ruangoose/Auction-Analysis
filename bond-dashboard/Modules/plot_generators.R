@@ -792,73 +792,153 @@ generate_enhanced_zscore_plot <- function(data, params) {
 
 #' @export
 # 7. Enhanced Convexity Plot Generation
-generate_enhanced_convexity_plot <- function(data, params) {
-    conv_data <- data %>%
-        filter(!is.na(convexity))
+#' @description Creates a scatter plot showing convexity vs duration with quadratic fit
+#' @param data Bond data with modified_duration, convexity, yield_to_maturity columns
+#' @param params List of parameters including notional for DV01 calculation
+#' @return ggplot object
+generate_enhanced_convexity_plot <- function(data, params = list()) {
 
+    # Get notional for DV01 calculation (default R10 million)
+    notional <- params$notional %||% 10000000
+
+    # Prepare data with DV01 calculation
+    conv_data <- data %>%
+        group_by(bond) %>%
+        filter(date == max(date)) %>%
+        slice(1) %>%
+        ungroup() %>%
+        filter(!is.na(convexity), !is.na(modified_duration)) %>%
+        mutate(
+            # Calculate DV01 for point sizing
+            dv01 = notional * modified_duration * 0.0001,
+            # Scale DV01 to reasonable point size range (3 to 15)
+            dv01_scaled = scales::rescale(dv01, to = c(3, 15)),
+            # Calculate convexity-per-duration ratio (higher = better)
+            convexity_ratio = convexity / (modified_duration^2)
+        )
+
+    # Fit quadratic model for convexity ~ duration
+    quad_fit <- tryCatch({
+        lm(convexity ~ poly(modified_duration, 2), data = conv_data)
+    }, error = function(e) {
+        # Fallback to linear if quadratic fails
+        lm(convexity ~ modified_duration, data = conv_data)
+    })
+
+    # Generate smooth prediction line
+    pred_data <- data.frame(
+        modified_duration = seq(
+            min(conv_data$modified_duration),
+            max(conv_data$modified_duration),
+            length.out = 100
+        )
+    )
+    pred_data$convexity <- predict(quad_fit, newdata = pred_data)
+
+    # Calculate residuals for identifying outliers
+    conv_data <- conv_data %>%
+        mutate(
+            predicted_convexity = predict(quad_fit, newdata = .),
+            convexity_residual = convexity - predicted_convexity,
+            convexity_signal = case_when(
+                convexity_residual > 10 ~ "High (attractive)",
+                convexity_residual < -10 ~ "Low (unattractive)",
+                TRUE ~ "Normal"
+            )
+        )
+
+    # Calculate SE for confidence band
+    residuals <- conv_data$convexity - conv_data$predicted_convexity
+    se <- sd(residuals, na.rm = TRUE)
+    pred_data$convexity_lower <- pred_data$convexity - 1.96 * se
+    pred_data$convexity_upper <- pred_data$convexity + 1.96 * se
+
+    # Find best and worst convexity bonds
+    best_conv <- conv_data %>% arrange(desc(convexity_ratio)) %>% slice(1)
+    worst_conv <- conv_data %>% arrange(convexity_ratio) %>% slice(1)
+
+    # Create the plot
     p <- ggplot(conv_data, aes(x = modified_duration, y = convexity)) +
 
-        # Smooth trend with confidence band
-        geom_smooth(method = "lm",
-                    se = TRUE,
-                    color = insele_palette$primary,
-                    fill = insele_palette$primary,
-                    alpha = 0.2,
-                    size = 1.2) +
+        # Confidence band for fit
+        geom_ribbon(
+            data = pred_data,
+            aes(ymin = convexity_lower, ymax = convexity_upper),
+            fill = "#E3F2FD",
+            alpha = 0.5,
+            inherit.aes = FALSE
+        ) +
 
-        # Points with size based on yield
-        geom_point(aes(size = yield_to_maturity,
-                       fill = yield_to_maturity),
-                   shape = 21,
-                   stroke = 1.5,
-                   color = "white",
-                   alpha = 0.8) +
+        # Quadratic fit line
+        geom_line(
+            data = pred_data,
+            aes(x = modified_duration, y = convexity),
+            color = "#1B3A6B",
+            linewidth = 1,
+            linetype = "dashed"
+        ) +
 
-        # Labels with smart positioning
-        ggrepel::geom_label_repel(
-            data = smart_label(conv_data, "bond", "yield_to_maturity", max_labels = 10),
+        # Points: color = yield, size = DV01
+        geom_point(
+            aes(color = yield_to_maturity, size = dv01_scaled),
+            alpha = 0.8
+        ) +
+
+        # Bond labels
+        ggrepel::geom_text_repel(
             aes(label = bond),
             size = 3,
             max.overlaps = 15,
-            box.padding = 0.3,
-            label.padding = 0.2,
             segment.size = 0.3,
             segment.alpha = 0.6,
-            fill = "white",
             color = insele_palette$dark_gray,
             family = if(Sys.info()["sysname"] == "Windows") "sans" else "Helvetica"
         ) +
 
-        scale_size_continuous(
-            range = c(3, 12),
+        scale_color_gradient(
+            low = "#4CAF50",
+            high = "#F44336",
             name = "Yield (%)",
-            guide = guide_legend(
-                title.position = "top"
-            )
+            labels = scales::percent_format(scale = 1)
         ) +
 
-        scale_fill_viridis_c(
-            option = "D",
-            name = "Yield (%)",
-            guide = "none"
-        ) +
+        scale_size_identity() +  # Use pre-scaled sizes
 
         scale_x_continuous(breaks = pretty_breaks(n = 8)) +
         scale_y_continuous(breaks = pretty_breaks(n = 8)) +
 
         labs(
             title = "Convexity Profile Analysis",
-            subtitle = "Risk-return characteristics across the curve",
+            subtitle = sprintf(
+                "Quadratic fit shown | Best: %s (%.2f per dur\u00B2) | Worst: %s (%.2f per dur\u00B2)",
+                best_conv$bond, best_conv$convexity_ratio,
+                worst_conv$bond, worst_conv$convexity_ratio
+            ),
             x = "Modified Duration (years)",
             y = "Convexity",
-            caption = "Larger bubbles = higher yields | Higher convexity = better risk/return profile"
+            caption = "Point size = DV01 (larger = more rate sensitive) | Color = Yield (green = low, red = high)"
         ) +
 
         create_insele_theme() +
         theme(
             legend.position = "right",
-            panel.grid.major = element_line(color = "#F0F0F0", linetype = "solid")
+            panel.grid.major = element_line(color = "#F0F0F0", linetype = "solid"),
+            plot.caption = element_text(
+                hjust = 0,
+                size = 8,
+                lineheight = 1.2,
+                margin = ggplot2::margin(t = 10, r = 0, b = 0, l = 0, unit = "pt")
+            )
         )
+
+    # Add convexity insight as attribute
+    attr(p, "insight") <- list(
+        best_bond = best_conv$bond,
+        best_ratio = best_conv$convexity_ratio,
+        worst_bond = worst_conv$bond,
+        worst_ratio = worst_conv$convexity_ratio,
+        model_r2 = summary(quad_fit)$r.squared
+    )
 
     return(p)
 }
