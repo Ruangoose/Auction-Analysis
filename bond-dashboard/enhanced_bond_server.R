@@ -1887,6 +1887,137 @@ server <- function(input, output, session) {
         if(!is.null(p)) print(p)
     })
 
+    # 9b. Signal Summary Statistics Panel
+    output$signal_summary_stats <- renderUI({
+        req(filtered_data_with_technicals())
+
+        tech_data <- filtered_data_with_technicals()
+
+        # Ensure required columns exist
+        if(!"signal_strength" %in% names(tech_data)) {
+            return(tags$div(
+                style = "color: #666; padding: 10px;",
+                "Signal data not available"
+            ))
+        }
+
+        # Get latest values for each bond
+        latest_data <- tech_data %>%
+            group_by(bond) %>%
+            filter(date == max(date)) %>%
+            ungroup() %>%
+            distinct(bond, .keep_all = TRUE)
+
+        # Count signals by type
+        signal_counts <- latest_data %>%
+            count(signal_strength) %>%
+            arrange(factor(signal_strength,
+                           levels = c("Strong Buy", "Buy", "Neutral", "Sell", "Strong Sell")))
+
+        # Calculate curve-wide averages
+        avg_rsi <- mean(latest_data$rsi_14, na.rm = TRUE)
+        avg_roc <- if("roc_20" %in% names(latest_data)) {
+            mean(latest_data$roc_20, na.rm = TRUE)
+        } else NA
+
+        # Determine dominant signal
+        dominant_signal <- if(nrow(signal_counts) > 0) {
+            signal_counts %>%
+                slice_max(n, n = 1) %>%
+                pull(signal_strength) %>%
+                first()
+        } else "Unknown"
+
+        # Determine signal color
+        signal_color <- case_when(
+            dominant_signal == "Strong Buy" ~ "#1B5E20",
+            dominant_signal == "Buy" ~ "#4CAF50",
+            dominant_signal == "Sell" ~ "#FF7043",
+            dominant_signal == "Strong Sell" ~ "#C62828",
+            TRUE ~ "#666666"
+        )
+
+        # Build summary UI
+        tags$div(
+            class = "well well-sm",
+            style = "background: #F8F9FA; padding: 12px; margin-bottom: 15px; border-radius: 4px; border-left: 4px solid #1B3A6B;",
+
+            fluidRow(
+                column(3,
+                    tags$div(
+                        style = "text-align: center;",
+                        tags$strong("Signal Distribution", style = "color: #1B3A6B;"),
+                        tags$div(style = "margin-top: 8px;",
+                            lapply(1:nrow(signal_counts), function(i) {
+                                sig <- signal_counts$signal_strength[i]
+                                cnt <- signal_counts$n[i]
+                                col <- case_when(
+                                    sig == "Strong Buy" ~ "#1B5E20",
+                                    sig == "Buy" ~ "#4CAF50",
+                                    sig == "Neutral" ~ "#9E9E9E",
+                                    sig == "Sell" ~ "#FF7043",
+                                    sig == "Strong Sell" ~ "#C62828",
+                                    TRUE ~ "#666666"
+                                )
+                                tags$div(
+                                    style = sprintf("font-size: 12px; color: %s;", col),
+                                    sprintf("%s: %d", sig, cnt)
+                                )
+                            })
+                        )
+                    )
+                ),
+                column(3,
+                    tags$div(
+                        style = "text-align: center;",
+                        tags$strong("Curve Avg RSI", style = "color: #1B3A6B;"),
+                        tags$div(
+                            style = sprintf("font-size: 24px; font-weight: bold; color: %s; margin-top: 5px;",
+                                           if(!is.na(avg_rsi) && avg_rsi > 60) "#C62828"
+                                           else if(!is.na(avg_rsi) && avg_rsi < 40) "#1B5E20"
+                                           else "#666666"),
+                            sprintf("%.1f", if(!is.na(avg_rsi)) avg_rsi else 50)
+                        ),
+                        tags$div(style = "font-size: 10px; color: #999;",
+                                 if(!is.na(avg_rsi) && avg_rsi > 70) "Overbought"
+                                 else if(!is.na(avg_rsi) && avg_rsi < 30) "Oversold"
+                                 else "Neutral Zone")
+                    )
+                ),
+                column(3,
+                    tags$div(
+                        style = "text-align: center;",
+                        tags$strong("Avg 20d ROC", style = "color: #1B3A6B;"),
+                        tags$div(
+                            style = sprintf("font-size: 24px; font-weight: bold; color: %s; margin-top: 5px;",
+                                           if(!is.na(avg_roc) && avg_roc > 1) "#C62828"
+                                           else if(!is.na(avg_roc) && avg_roc < -1) "#1B5E20"
+                                           else "#666666"),
+                            sprintf("%+.2f%%", if(!is.na(avg_roc)) avg_roc else 0)
+                        ),
+                        tags$div(style = "font-size: 10px; color: #999;",
+                                 if(!is.na(avg_roc) && avg_roc > 2) "Yields Rising"
+                                 else if(!is.na(avg_roc) && avg_roc < -2) "Yields Falling"
+                                 else "Stable")
+                    )
+                ),
+                column(3,
+                    tags$div(
+                        style = "text-align: center;",
+                        tags$strong("Dominant Signal", style = "color: #1B3A6B;"),
+                        tags$div(
+                            style = sprintf("font-size: 20px; font-weight: bold; color: %s; margin-top: 5px;",
+                                           signal_color),
+                            dominant_signal
+                        ),
+                        tags$div(style = "font-size: 10px; color: #999;",
+                                 sprintf("%d bonds analyzed", nrow(latest_data)))
+                    )
+                )
+            )
+        )
+    })
+
     # 10. Enhanced Carry & Roll Heatmap
     output$enhanced_carry_roll_heatmap <- renderPlot({
         req(carry_roll_data())
@@ -3149,7 +3280,14 @@ server <- function(input, output, session) {
         req(processed_data())
 
         # Get latest technical indicators for all bonds
-        tech_summary <- filtered_data_with_technicals() %>%
+        tech_data <- filtered_data_with_technicals()
+
+        # Ensure total_signal_score column exists
+        if(!"total_signal_score" %in% names(tech_data)) {
+            tech_data$total_signal_score <- 0L
+        }
+
+        tech_summary <- tech_data %>%
             select(
                 bond,
                 date,
@@ -3162,7 +3300,8 @@ server <- function(input, output, session) {
                 sma_50,
                 sma_200,
                 signal_strength,
-                roc_20
+                roc_20,
+                total_signal_score
             ) %>%
             filter(!is.na(signal_strength))  %>%
             group_by(bond) %>%
@@ -3171,7 +3310,8 @@ server <- function(input, output, session) {
             ungroup() %>%
             # Select only one row per bond (in case of duplicates on same date)
             distinct(bond, .keep_all = TRUE) %>%
-            arrange(bond)
+            # SORT BY SIGNAL SCORE (strongest buy at top)
+            arrange(desc(total_signal_score))
 
         # Check if we have data
         if(nrow(tech_summary) == 0) {
@@ -3182,37 +3322,54 @@ server <- function(input, output, session) {
             return(datatable(empty_df, options = list(dom = 't'), rownames = FALSE))
         }
 
-        # Format for display
+        # Format for display with improved indicators
         display_table <- tech_summary %>%
             mutate(
                 `Current Yield` = sprintf("%.3f%%", yield_to_maturity),
                 RSI = sprintf("%.1f", rsi_14),
                 `RSI Signal` = case_when(
-                    rsi_14 < 30 ~ "Oversold",
+                    rsi_14 > 80 ~ "Extreme OB",
                     rsi_14 > 70 ~ "Overbought",
+                    rsi_14 < 20 ~ "Extreme OS",
+                    rsi_14 < 30 ~ "Oversold",
                     TRUE ~ "Neutral"
                 ),
-                `BB Position` = sprintf("%.2f", bb_position),
+                # BB Position as percentage with context label
+                bb_pct = bb_position * 100,
+                `BB %` = sprintf("%.0f%%", bb_pct),
                 `BB Signal` = case_when(
-                    bb_position < 0.2 ~ "Near Lower",
+                    bb_position > 1.0 ~ "Above Upper",
                     bb_position > 0.8 ~ "Near Upper",
+                    bb_position < 0 ~ "Below Lower",
+                    bb_position < 0.2 ~ "Near Lower",
                     TRUE ~ "Within Bands"
                 ),
-                MACD = sprintf("%.3f", macd),
+                MACD = sprintf("%.4f", macd_histogram),
                 `MACD Signal` = case_when(
-                    macd > macd_signal & macd_histogram > 0 ~ "Bullish",
-                    macd < macd_signal & macd_histogram < 0 ~ "Bearish",
+                    macd_histogram > 0.03 ~ "Strong Bullish",
+                    macd_histogram > 0 ~ "Bullish",
+                    macd_histogram < -0.03 ~ "Strong Bearish",
+                    macd_histogram < 0 ~ "Bearish",
                     TRUE ~ "Neutral"
                 ),
-                `SMA 50` = sprintf("%.3f%%", sma_50),
-                `SMA 200` = sprintf("%.3f%%", sma_200),
                 Trend = case_when(
-                    yield_to_maturity < sma_50 & sma_50 < sma_200 ~ "Downtrend",
-                    yield_to_maturity > sma_50 & sma_50 > sma_200 ~ "Uptrend",
+                    sma_50 > sma_200 * 1.02 ~ "Strong Uptrend",
+                    sma_50 > sma_200 ~ "Uptrend",
+                    sma_50 < sma_200 * 0.98 ~ "Strong Downtrend",
+                    sma_50 < sma_200 ~ "Downtrend",
                     TRUE ~ "Sideways"
                 ),
-                `ROC (20d)` = sprintf("%.2f%%", roc_20),
-                # `Z-Score` = sprintf("%.2f", z_score),
+                # ROC with sign indicator
+                `ROC (20d)` = sprintf("%+.2f%%", roc_20),
+                `ROC Signal` = case_when(
+                    roc_20 > 3 ~ "Strong Rise",
+                    roc_20 > 1 ~ "Rising",
+                    roc_20 > -1 ~ "Flat",
+                    roc_20 > -3 ~ "Falling",
+                    TRUE ~ "Strong Fall"
+                ),
+                # Score column for transparency
+                Score = ifelse(!is.na(total_signal_score), as.character(total_signal_score), "0"),
                 `Overall Signal` = signal_strength
             ) %>%
             select(
@@ -3220,13 +3377,14 @@ server <- function(input, output, session) {
                 `Current Yield`,
                 RSI,
                 `RSI Signal`,
-                `BB Position`,
+                `BB %`,
                 `BB Signal`,
                 MACD,
                 `MACD Signal`,
                 Trend,
                 `ROC (20d)`,
-                # `Z-Score`,
+                `ROC Signal`,
+                Score,
                 `Overall Signal`
             )
 
@@ -3238,9 +3396,10 @@ server <- function(input, output, session) {
                 dom = 'Bfrtip',
                 buttons = c('copy', 'csv', 'excel'),
                 scrollX = TRUE,
+                order = list(list(11, 'desc')),  # Sort by Score column (index 11) descending
                 columnDefs = list(
                     list(className = 'dt-center', targets = '_all'),
-                    list(width = '80px', targets = 0)
+                    list(width = '70px', targets = 0)
                 )
             ),
             rownames = FALSE,
@@ -3249,56 +3408,90 @@ server <- function(input, output, session) {
                 style = 'caption-side: top; text-align: left; padding: 10px;',
                 htmltools::tags$strong('Technical Analysis Summary'),
                 htmltools::tags$br(),
-                htmltools::tags$small('Latest technical indicators and trading signals for all selected bonds')
+                htmltools::tags$small('Sorted by Signal Score (strongest buy at top) | Score range: -8 to +8')
             )
         ) %>%
-            # Color code RSI Signal
+            # Color code RSI Signal (5 levels)
             formatStyle(
                 "RSI Signal",
                 backgroundColor = styleEqual(
-                    c("Oversold", "Neutral", "Overbought"),
-                    c("#E8F5E9", "#F5F5F5", "#FFEBEE")
+                    c("Extreme OS", "Oversold", "Neutral", "Overbought", "Extreme OB"),
+                    c("#1B5E20", "#4CAF50", "#F5F5F5", "#FF8A65", "#C62828")
+                ),
+                color = styleEqual(
+                    c("Extreme OS", "Extreme OB"),
+                    c("white", "white")
                 )
             ) %>%
-            # Color code BB Signal
+            # Color code BB Signal (5 levels)
             formatStyle(
                 "BB Signal",
                 backgroundColor = styleEqual(
-                    c("Near Lower", "Within Bands", "Near Upper"),
-                    c("#E8F5E9", "#F5F5F5", "#FFEBEE")
+                    c("Below Lower", "Near Lower", "Within Bands", "Near Upper", "Above Upper"),
+                    c("#1B5E20", "#4CAF50", "#F5F5F5", "#FF8A65", "#C62828")
+                ),
+                color = styleEqual(
+                    c("Below Lower", "Above Upper"),
+                    c("white", "white")
                 )
             ) %>%
-            # Color code MACD Signal
+            # Color code MACD Signal (5 levels)
             formatStyle(
                 "MACD Signal",
                 backgroundColor = styleEqual(
-                    c("Bullish", "Neutral", "Bearish"),
-                    c("#E8F5E9", "#F5F5F5", "#FFEBEE")
+                    c("Strong Bearish", "Bearish", "Neutral", "Bullish", "Strong Bullish"),
+                    c("#1B5E20", "#4CAF50", "#F5F5F5", "#FF8A65", "#C62828")
+                ),
+                color = styleEqual(
+                    c("Strong Bearish", "Strong Bullish"),
+                    c("white", "white")
                 )
             ) %>%
-            # Color code Trend
+            # Color code Trend (5 levels)
             formatStyle(
                 "Trend",
                 backgroundColor = styleEqual(
-                    c("Downtrend", "Sideways", "Uptrend"),
-                    c("#E8F5E9", "#FFF3E0", "#FFEBEE")
+                    c("Strong Downtrend", "Downtrend", "Sideways", "Uptrend", "Strong Uptrend"),
+                    c("#1B5E20", "#4CAF50", "#FFF3E0", "#FF8A65", "#C62828")
+                ),
+                color = styleEqual(
+                    c("Strong Downtrend", "Strong Uptrend"),
+                    c("white", "white")
                 )
             ) %>%
-            # Color code Overall Signal
+            # Color code ROC Signal (5 levels)
+            formatStyle(
+                "ROC Signal",
+                backgroundColor = styleEqual(
+                    c("Strong Fall", "Falling", "Flat", "Rising", "Strong Rise"),
+                    c("#1B5E20", "#4CAF50", "#F5F5F5", "#FF8A65", "#C62828")
+                ),
+                color = styleEqual(
+                    c("Strong Fall", "Strong Rise"),
+                    c("white", "white")
+                )
+            ) %>%
+            # Color code Score column with gradient
+            formatStyle(
+                "Score",
+                color = styleInterval(
+                    c(-3, -1, 1, 3),
+                    c("#C62828", "#FF8A65", "#666666", "#4CAF50", "#1B5E20")
+                ),
+                fontWeight = "bold"
+            ) %>%
+            # Color code Overall Signal (5 levels with proper colors)
             formatStyle(
                 "Overall Signal",
                 backgroundColor = styleEqual(
                     c("Strong Buy", "Buy", "Neutral", "Sell", "Strong Sell"),
-                    c("#4CAF50", "#81C784", "#F5F5F5", "#FF8A65", "#F44336")
+                    c("#1B5E20", "#4CAF50", "#E0E0E0", "#FF7043", "#C62828")
                 ),
                 color = styleEqual(
-                    c("Strong Buy", "Strong Sell"),
-                    c("white", "white")
+                    c("Strong Buy", "Buy", "Neutral", "Sell", "Strong Sell"),
+                    c("white", "white", "black", "white", "white")
                 ),
-                fontWeight = styleEqual(
-                    c("Strong Buy", "Strong Sell"),
-                    c("bold", "bold")
-                )
+                fontWeight = "bold"
             )
     })
 

@@ -675,14 +675,67 @@ calculate_advanced_technicals <- function(data) {
                 z_score_20 = (yield_to_maturity - bb_mean) / pmax(0.01, bb_sd),
 
                 # ═══════════════════════════════════════════════════════════
-                # Signal Strength (Trading Signal) - Using Dynamic Thresholds
+                # Signal Strength (Trading Signal) - COMPREHENSIVE SCORING
+                # Uses all 4 indicators: RSI, BB, MACD, Momentum (ROC)
+                # Each contributes -2 to +2 points, total range: -8 to +8
                 # ═══════════════════════════════════════════════════════════
+
+                # RSI Signal Score (-2 to +2)
+                # For YIELDS: overbought RSI = yields may fall = bullish for bond prices
+                rsi_signal_score = case_when(
+                    is.na(rsi_14) ~ 0L,
+                    rsi_14 > 80 ~ 2L,        # Extremely overbought - yields likely to fall
+                    rsi_14 > 70 ~ 1L,        # Overbought
+                    rsi_14 < 20 ~ -2L,       # Extremely oversold - yields likely to rise
+                    rsi_14 < 30 ~ -1L,       # Oversold
+                    TRUE ~ 0L                 # Neutral zone (30-70)
+                ),
+
+                # Bollinger Band Signal Score (-2 to +2)
+                # Position > 1 = above upper band = overbought = may fall
+                bb_signal_score = case_when(
+                    is.na(bb_position) ~ 0L,
+                    bb_position > 1.0 ~ 2L,   # Above upper band - overbought
+                    bb_position > 0.8 ~ 1L,   # Near upper band
+                    bb_position < 0 ~ -2L,    # Below lower band - oversold
+                    bb_position < 0.2 ~ -1L,  # Near lower band
+                    TRUE ~ 0L                  # Within bands
+                ),
+
+                # MACD Signal Score (-2 to +2)
+                # Positive histogram = bullish momentum for yields
+                macd_signal_score = case_when(
+                    is.na(macd_histogram) ~ 0L,
+                    macd_histogram > 0.05 ~ -2L,   # Strong bullish momentum (yields rising = bad for bonds)
+                    macd_histogram > 0 ~ -1L,      # Bullish
+                    macd_histogram < -0.05 ~ 2L,   # Strong bearish momentum (yields falling = good for bonds)
+                    macd_histogram < 0 ~ 1L,       # Bearish
+                    TRUE ~ 0L
+                ),
+
+                # Momentum/ROC Signal Score (-2 to +2)
+                momentum_signal_score = case_when(
+                    is.na(roc_20) ~ 0L,
+                    roc_20 > 5 ~ -2L,         # Strong positive momentum (yields rising fast = bad)
+                    roc_20 > 2 ~ -1L,         # Positive momentum
+                    roc_20 < -5 ~ 2L,         # Strong negative momentum (yields falling = good)
+                    roc_20 < -2 ~ 1L,         # Negative momentum
+                    TRUE ~ 0L
+                ),
+
+                # TOTAL Signal Score (-8 to +8)
+                # Positive = bullish for bond prices (yields falling)
+                # Negative = bearish for bond prices (yields rising)
+                total_signal_score = rsi_signal_score + bb_signal_score +
+                                     macd_signal_score + momentum_signal_score,
+
+                # Overall Signal Classification (5 levels with proper gradation)
                 signal_strength = case_when(
-                    rsi_14 > rsi_threshold_sell & bb_position > 1 ~ "Strong Sell",
-                    rsi_14 > rsi_threshold_sell | bb_position > 0.95 ~ "Sell",
-                    rsi_14 < rsi_threshold_buy & bb_position < 0 ~ "Strong Buy",
-                    rsi_14 < rsi_threshold_buy | bb_position < 0.05 ~ "Buy",
-                    TRUE ~ "Neutral"
+                    total_signal_score >= 3 ~ "Strong Buy",
+                    total_signal_score >= 1 ~ "Buy",
+                    total_signal_score >= -1 ~ "Neutral",
+                    total_signal_score >= -3 ~ "Sell",
+                    TRUE ~ "Strong Sell"
                 )
             ) %>%
             # Remove temporary columns

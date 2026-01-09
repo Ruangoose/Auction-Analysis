@@ -1127,6 +1127,13 @@ ui <- dashboardPage(
                                )
                            ),
 
+                           # Signal Summary Stats Panel
+                           fluidRow(
+                               column(12,
+                                   uiOutput("signal_summary_stats")
+                               )
+                           ),
+
                            fluidRow(
                                box(
                                    title = "Trading Signal Matrix",
