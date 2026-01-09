@@ -928,8 +928,15 @@ generate_var_ladder_plot <- function(var_data, params = list()) {
     }
 
     # Prepare data - ensure numeric and handle NAs
+    # CRITICAL: Filter out NA and invalid bond names to prevent "NA" appearing in chart
     var_ladder <- var_data %>%
         select(bond, VaR_95_bps, VaR_99_bps, CVaR_95) %>%
+        filter(
+            !is.na(bond),
+            bond != "",
+            bond != "NA",
+            as.character(bond) != "NA"
+        ) %>%
         mutate(
             VaR_95_bps = as.numeric(VaR_95_bps),
             VaR_99_bps = as.numeric(VaR_99_bps),
@@ -937,7 +944,25 @@ generate_var_ladder_plot <- function(var_data, params = list()) {
             # Convert CVaR to basis points (absolute value for display)
             CVaR_bps = abs(CVaR_95) * 100
         ) %>%
-        filter(!is.na(VaR_95_bps))
+        filter(
+            !is.na(VaR_95_bps),
+            is.finite(VaR_95_bps),
+            VaR_95_bps < 1000,  # Filter extreme values (>10% daily VaR)
+            VaR_99_bps < 1500   # Filter extreme 99% VaR values
+        )
+
+    # Check if we have valid data after filtering
+    if (nrow(var_ladder) == 0) {
+        warning("generate_var_ladder_plot: No valid VaR data after filtering")
+        return(
+            ggplot() +
+                annotate("text", x = 0.5, y = 0.5,
+                         label = "No valid VaR data available\nCheck data quality",
+                         size = 5, color = "#666666") +
+                theme_void() +
+                labs(title = "Risk Ladder: VaR & Expected Shortfall")
+        )
+    }
 
     # Sort by 95% VaR (ascending so highest ends up at top after coord_flip)
     var_ladder <- var_ladder %>%

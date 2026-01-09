@@ -998,6 +998,58 @@ ui <- dashboardPage(
                                    status = "primary",
                                    solidHeader = TRUE,
                                    width = 12,
+
+                                   # VaR Units Explanation Panel
+                                   tags$div(
+                                       class = "panel panel-default",
+                                       style = "margin-bottom: 15px;",
+                                       tags$div(
+                                           class = "panel-body",
+                                           style = "background-color: #F5F5F5; padding: 12px; border-radius: 5px;",
+
+                                           tags$h5(
+                                               icon("info-circle"),
+                                               " Understanding the Risk Metrics",
+                                               style = "margin-top: 0; color: #1B3A6B; font-weight: bold;"
+                                           ),
+
+                                           tags$table(
+                                               class = "table table-condensed",
+                                               style = "margin-bottom: 0; font-size: 12px;",
+                                               tags$tbody(
+                                                   tags$tr(
+                                                       tags$td(tags$strong("DV01 (R mn)")),
+                                                       tags$td("Rand value change per 1 basis point (0.01%) move in yields. Based on selected notional.")
+                                                   ),
+                                                   tags$tr(
+                                                       tags$td(tags$strong("95% VaR (bps)")),
+                                                       tags$td("Potential daily price loss in basis points (100 bps = 1%). Exceeded ~1 day/month.")
+                                                   ),
+                                                   tags$tr(
+                                                       tags$td(tags$strong("99% VaR (bps)")),
+                                                       tags$td("Extreme daily price loss in basis points. Exceeded ~2-3 days/year.")
+                                                   ),
+                                                   tags$tr(
+                                                       tags$td(tags$strong("CVaR (bps)")),
+                                                       tags$td("Expected Shortfall - average loss when VaR IS breached. Measures tail risk severity.")
+                                                   ),
+                                                   tags$tr(
+                                                       tags$td(tags$strong("Volatility (%)")),
+                                                       tags$td("Daily standard deviation of price returns (not annualized).")
+                                                   )
+                                               )
+                                           ),
+
+                                           tags$p(
+                                               class = "text-muted small",
+                                               style = "margin-bottom: 0; margin-top: 8px;",
+                                               tags$strong("Example: "),
+                                               "A bond with 95% VaR of 271 bps means on 95% of days, the price loss will be less than 2.71%. ",
+                                               "On the worst 5% of days (about 1 per month), losses may exceed this threshold."
+                                           )
+                                       )
+                                   ),
+
                                    DT::dataTableOutput("risk_metrics_table")
                                )
                            )

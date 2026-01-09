@@ -826,6 +826,17 @@ add_default_technicals <- function(data) {
 #'          CVaR must always be more extreme (more negative) than VaR
 calculate_var <- memoise(function(data, confidence_levels = c(0.95, 0.99), horizon = 1) {
     safe_execute({
+        # CRITICAL: Filter out invalid bond names BEFORE calculations
+        # This prevents NA rows from appearing in Risk Ladder
+        data <- data %>%
+            filter(
+                !is.na(bond),
+                bond != "",
+                bond != "NA",
+                !is.na(yield_to_maturity),
+                is.finite(yield_to_maturity)
+            )
+
         # First calculate returns for each bond
         returns_data <- data %>%
             group_by(bond) %>%
@@ -898,6 +909,24 @@ calculate_var <- memoise(function(data, confidence_levels = c(0.95, 0.99), horiz
 
                 .groups = "drop"
             )
+
+        # CRITICAL: Final validation - remove any remaining invalid rows
+        # Filter out NA bonds and extreme VaR values (>1000 bps indicates data error)
+        var_results <- var_results %>%
+            filter(
+                !is.na(bond),
+                bond != "",
+                bond != "NA",
+                !is.na(VaR_95_bps),
+                is.finite(VaR_95_bps),
+                VaR_95_bps < 1000,  # Cap at 10% daily VaR (extremely rare for govt bonds)
+                VaR_99_bps < 1500   # Cap at 15% for 99% VaR
+            )
+
+        # Log warning if rows were filtered due to extreme values
+        if (nrow(var_results) == 0) {
+            warning("calculate_var: All VaR results filtered - check data quality")
+        }
 
         return(var_results)
     }, default = data.frame())
