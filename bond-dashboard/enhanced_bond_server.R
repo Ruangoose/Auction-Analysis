@@ -2300,7 +2300,7 @@ server <- function(input, output, session) {
             )
     })
 
-    # Add Technical Indicators Summary
+    # Add Technical Indicators Summary - ENHANCED with Overall Signal Synthesis
     output$technical_indicators_summary <- renderUI({
         req(filtered_data(), input$tech_bond_select)
 
@@ -2323,7 +2323,7 @@ server <- function(input, output, session) {
             return(tags$p("No technical data available", style = "color: #666;"))
         }
 
-        # Generate signals
+        # Generate individual signals
         rsi_signal <- case_when(
             is.na(latest$rsi_14) ~ "Neutral",
             latest$rsi_14 < 30 ~ "Oversold",
@@ -2332,111 +2332,262 @@ server <- function(input, output, session) {
         )
 
         bb_signal <- case_when(
-            is.na(latest$bb_position) ~ "Neutral",
+            is.na(latest$bb_position) ~ "Middle",
+            latest$bb_position < 0 ~ "Below Lower Band",
             latest$bb_position < 0.2 ~ "Near Lower Band",
+            latest$bb_position > 1 ~ "Above Upper Band",
             latest$bb_position > 0.8 ~ "Near Upper Band",
-            TRUE ~ "Within Bands"
+            TRUE ~ "Middle"
         )
 
-        macd_signal <- case_when(
+        macd_signal_text <- case_when(
             is.na(latest$macd) | is.na(latest$macd_signal) ~ "Neutral",
+            !is.na(latest$macd_histogram) & latest$macd > latest$macd_signal & latest$macd_histogram > 0 ~ "Strong Bullish",
             latest$macd > latest$macd_signal ~ "Bullish",
+            !is.na(latest$macd_histogram) & latest$macd < latest$macd_signal & latest$macd_histogram < 0 ~ "Strong Bearish",
             TRUE ~ "Bearish"
         )
 
-        trend_signal <- case_when(
-            is.na(latest$sma_50) | is.na(latest$sma_200) ~ "Unknown",
-            latest$yield_to_maturity < latest$sma_50 & latest$sma_50 < latest$sma_200 ~ "Strong Downtrend",
-            latest$yield_to_maturity < latest$sma_50 ~ "Downtrend",
-            latest$yield_to_maturity > latest$sma_50 & latest$sma_50 > latest$sma_200 ~ "Strong Uptrend",
-            latest$yield_to_maturity > latest$sma_50 ~ "Uptrend",
-            TRUE ~ "Sideways"
+        # Bond-specific trend label
+        trend_info <- get_trend_label_bonds(
+            sma_50 = if_else(is.na(latest$sma_50), latest$yield_to_maturity, latest$sma_50),
+            sma_200 = if_else(is.na(latest$sma_200), latest$yield_to_maturity, latest$sma_200),
+            current_yield = latest$yield_to_maturity
         )
 
-        # Return formatted UI
+        # Calculate OVERALL SIGNAL SYNTHESIS
+        overall_signal <- calculate_technical_signal(
+            rsi = if_else(is.na(latest$rsi_14), 50, latest$rsi_14),
+            macd_signal = macd_signal_text,
+            trend_status = trend_info$label,
+            bb_position = if_else(is.na(latest$bb_position), 0.5, latest$bb_position)
+        )
+
+        # Determine signal color based on yield direction
+        signal_color <- case_when(
+            overall_signal$score > 15 ~ "#D32F2F",   # Red - yields rising (bad for bonds)
+            overall_signal$score < -15 ~ "#388E3C", # Green - yields falling (good for bonds)
+            TRUE ~ "#FF9800"                         # Orange - neutral
+        )
+
+        # Calculate S/R levels with detailed methodology
+        sr_levels <- calculate_support_resistance_detailed(
+            yield_series = tech_data$yield_to_maturity,
+            lookback = 60
+        )
+
+        # S/R position color
+        sr_position_color <- case_when(
+            sr_levels$position_pct > 80 ~ "#D32F2F",   # Near resistance
+            sr_levels$position_pct < 20 ~ "#388E3C",   # Near support
+            TRUE ~ "#FF9800"
+        )
+
+        # Confidence percentage
+        confidence_pct <- round(overall_signal$confidence * 100)
+
+        # Calculate comparative context (vs all bonds average)
+        all_bonds_latest <- filtered_data() %>%
+            group_by(bond) %>%
+            filter(date == max(date)) %>%
+            ungroup()
+
+        # Ensure RSI calculated for comparison
+        if (!"rsi_14" %in% names(all_bonds_latest)) {
+            all_bonds_latest <- calculate_advanced_technicals(all_bonds_latest)
+        }
+
+        avg_rsi <- mean(all_bonds_latest$rsi_14, na.rm = TRUE)
+        rsi_vs_avg <- if_else(is.na(latest$rsi_14), 0, latest$rsi_14) - avg_rsi
+
+        # Return formatted UI with OVERALL SIGNAL prominently displayed
         tagList(
             tags$div(
                 style = "padding: 10px;",
                 tags$h5(paste("Technical Summary:", input$tech_bond_select),
                         style = "color: #1B3A6B; margin-top: 0; font-weight: bold;"),
 
+                # ═══════════════════════════════════════════════════════════════
+                # OVERALL SIGNAL SYNTHESIS - Prominent Display
+                # ═══════════════════════════════════════════════════════════════
+                tags$div(
+                    style = sprintf("border-left: 4px solid %s; padding: 10px; background: #FAFAFA; margin: 10px 0; border-radius: 4px;",
+                                    signal_color),
+
+                    tags$div(
+                        style = "display: flex; justify-content: space-between; align-items: center;",
+                        tags$div(
+                            tags$span(
+                                style = sprintf("font-size: 14px; font-weight: bold; color: %s;", signal_color),
+                                overall_signal$signal
+                            ),
+                            tags$div(
+                                style = "margin-top: 3px;",
+                                tags$span(style = "font-size: 11px; color: #666;", "Score: "),
+                                tags$span(
+                                    style = sprintf("font-weight: bold; color: %s;", signal_color),
+                                    sprintf("%+d", overall_signal$score)
+                                ),
+                                tags$span(style = "font-size: 10px; color: #999;", " / 100")
+                            )
+                        ),
+                        tags$div(
+                            style = "text-align: right;",
+                            tags$small(
+                                style = "color: #888;",
+                                sprintf("%d%% conf.", confidence_pct)
+                            )
+                        )
+                    ),
+                    tags$div(
+                        style = "background: white; padding: 6px 8px; border-radius: 3px; margin-top: 8px; font-size: 11px;",
+                        tags$strong(overall_signal$recommendation)
+                    ),
+                    # Component breakdown (compact)
+                    tags$details(
+                        style = "margin-top: 6px; font-size: 10px;",
+                        tags$summary(style = "color: #666; cursor: pointer;", "Component scores"),
+                        tags$div(
+                            style = "padding: 5px; color: #666;",
+                            sprintf("RSI: %+d | MACD: %+d | Trend: %+d | BB: %+d",
+                                    overall_signal$components$rsi,
+                                    overall_signal$components$macd,
+                                    overall_signal$components$trend,
+                                    overall_signal$components$bb)
+                        )
+                    )
+                ),
+
                 # Current Level
-                tags$div(style = "background: #f8f9fa; padding: 10px; border-radius: 5px; margin: 10px 0;",
+                tags$div(style = "background: #f8f9fa; padding: 8px; border-radius: 5px; margin: 8px 0;",
                          tags$p(style = "margin: 0; font-size: 18px; font-weight: bold;",
                                 sprintf("%.3f%%", latest$yield_to_maturity)),
                          tags$small("Current Yield")
                 ),
 
-                # Momentum Indicators
-                tags$h6("Momentum", style = "color: #666; margin-top: 15px;"),
-                tags$div(style = "margin: 10px 0;",
+                # ═══════════════════════════════════════════════════════════════
+                # YIELD TREND - Bond-Specific Terminology
+                # ═══════════════════════════════════════════════════════════════
+                tags$h6("Yield Trend", style = "color: #666; margin-top: 12px;"),
+                tags$div(style = "margin: 8px 0;",
                          tags$p(style = "margin: 5px 0;",
+                                tags$span(
+                                    style = sprintf("color: %s; font-weight: bold;", trend_info$color),
+                                    trend_info$label
+                                )
+                         ),
+                         tags$p(
+                             style = "margin: 3px 0; font-size: 11px; color: #666;",
+                             trend_info$price_implication
+                         )
+                ),
+
+                # Momentum Indicators
+                tags$h6("Momentum", style = "color: #666; margin-top: 12px;"),
+                tags$div(style = "margin: 8px 0;",
+                         tags$p(style = "margin: 4px 0;",
                                 tags$strong("RSI (14): "),
                                 sprintf("%.1f", if_else(is.na(latest$rsi_14), 50, latest$rsi_14)),
                                 tags$span(paste0(" - ", rsi_signal),
                                           style = paste0("color: ", case_when(
-                                              rsi_signal == "Oversold" ~ "#28a745",
-                                              rsi_signal == "Overbought" ~ "#dc3545",
+                                              # For bonds: oversold RSI = yields may rise = bad
+                                              rsi_signal == "Oversold" ~ "#D32F2F",
+                                              rsi_signal == "Overbought" ~ "#388E3C",
                                               TRUE ~ "#666"
                                           )))),
-                         tags$p(style = "margin: 5px 0;",
+                         tags$p(style = "margin: 4px 0;",
                                 tags$strong("MACD: "),
-                                macd_signal,
-                                style = paste0("color: ", if_else(macd_signal == "Bullish", "#28a745", "#dc3545")))
+                                tags$span(
+                                    macd_signal_text,
+                                    style = paste0("color: ", case_when(
+                                        # For yields: bullish MACD = yields rising = bad for bonds
+                                        grepl("Bullish", macd_signal_text) ~ "#D32F2F",
+                                        grepl("Bearish", macd_signal_text) ~ "#388E3C",
+                                        TRUE ~ "#666"
+                                    ))
+                                ))
                 ),
 
                 # Volatility
-                tags$h6("Volatility", style = "color: #666; margin-top: 15px;"),
-                tags$div(style = "margin: 10px 0;",
-                         tags$p(style = "margin: 5px 0;",
+                tags$h6("Volatility", style = "color: #666; margin-top: 12px;"),
+                tags$div(style = "margin: 8px 0;",
+                         tags$p(style = "margin: 4px 0;",
                                 tags$strong("BB Position: "),
                                 bb_signal),
-                         tags$p(style = "margin: 5px 0;",
+                         tags$p(style = "margin: 4px 0;",
                                 tags$strong("BB Width: "),
-                                sprintf("%.3f%%", if_else(is.na(latest$bb_width), 0, latest$bb_width * 100)))
+                                sprintf("%.1f%%", if_else(is.na(latest$bb_width_pct),
+                                                          if_else(is.na(latest$bb_width) | is.na(latest$bb_mean) | latest$bb_mean == 0,
+                                                                  0,
+                                                                  (latest$bb_width / latest$bb_mean) * 100),
+                                                          latest$bb_width_pct)),
+                                tags$span(
+                                    style = "font-size: 10px; color: #888; margin-left: 4px;",
+                                    "(5-15% typical)"
+                                ))
                 ),
 
-                # Trend
-                tags$h6("Trend", style = "color: #666; margin-top: 15px;"),
-                tags$div(style = "margin: 10px 0;",
-                         tags$p(style = "margin: 5px 0;",
-                                tags$strong("Status: "),
-                                trend_signal,
-                                style = paste0("color: ", case_when(
-                                    grepl("Uptrend", trend_signal) ~ "#dc3545",
-                                    grepl("Downtrend", trend_signal) ~ "#28a745",
-                                    TRUE ~ "#666"
-                                ))),
-                         if(!is.na(latest$sma_50)) {
-                             tags$p(style = "margin: 5px 0;",
-                                    tags$strong("SMA 50: "),
-                                    sprintf("%.3f%%", latest$sma_50))
-                         },
-                         if(!is.na(latest$sma_200)) {
-                             tags$p(style = "margin: 5px 0;",
-                                    tags$strong("SMA 200: "),
-                                    sprintf("%.3f%%", latest$sma_200))
-                         }
-                ),
-
-                # Support/Resistance
-                if(!is.na(latest$support_3m) || !is.na(latest$resistance_3m)) {
+                # ═══════════════════════════════════════════════════════════════
+                # SUPPORT/RESISTANCE - With Methodology
+                # ═══════════════════════════════════════════════════════════════
+                if(!is.na(sr_levels$support) && !is.na(sr_levels$resistance)) {
                     tagList(
-                        tags$h6("S/R Levels", style = "color: #666; margin-top: 15px;"),
-                        tags$div(style = "margin: 10px 0;",
-                                 if(!is.na(latest$support_3m)) {
-                                     tags$p(style = "margin: 5px 0;",
-                                            tags$strong("Support: "),
-                                            sprintf("%.3f%%", latest$support_3m))
-                                 },
-                                 if(!is.na(latest$resistance_3m)) {
-                                     tags$p(style = "margin: 5px 0;",
-                                            tags$strong("Resistance: "),
-                                            sprintf("%.3f%%", latest$resistance_3m))
-                                 }
+                        tags$h6("Support & Resistance", style = "color: #666; margin-top: 12px;"),
+                        tags$small(style = "color: #999;", sr_levels$methodology),
+                        tags$div(style = "margin: 8px 0;",
+                                 tags$p(style = "margin: 4px 0;",
+                                        tags$strong("Resistance: "),
+                                        sprintf("%.3f%%", sr_levels$resistance),
+                                        tags$span(
+                                            style = "font-size: 10px; color: #888; margin-left: 4px;",
+                                            sprintf("(%.0f bps away)", sr_levels$distance_to_resistance * 100)
+                                        )),
+                                 tags$p(style = "margin: 4px 0;",
+                                        tags$strong("Support: "),
+                                        sprintf("%.3f%%", sr_levels$support),
+                                        tags$span(
+                                            style = "font-size: 10px; color: #888; margin-left: 4px;",
+                                            sprintf("(%.0f bps away)", sr_levels$distance_to_support * 100)
+                                        )),
+                                 # Position bar
+                                 tags$div(
+                                     style = "background: #E0E0E0; height: 6px; border-radius: 3px; margin: 8px 0;",
+                                     tags$div(
+                                         style = sprintf(
+                                             "background: %s; width: %.0f%%; height: 100%%; border-radius: 3px;",
+                                             sr_position_color, sr_levels$position_pct
+                                         )
+                                     )
+                                 ),
+                                 tags$small(
+                                     style = "color: #888;",
+                                     sprintf("Position: %.0f%% (0%%=Support, 100%%=Resistance)",
+                                             sr_levels$position_pct)
+                                 )
                         )
                     )
-                }
+                },
+
+                # ═══════════════════════════════════════════════════════════════
+                # COMPARATIVE CONTEXT - vs Curve Average
+                # ═══════════════════════════════════════════════════════════════
+                tags$h6("vs. Curve Average", style = "color: #666; margin-top: 12px;"),
+                tags$div(style = "margin: 8px 0;",
+                         tags$p(style = "margin: 4px 0;",
+                                tags$strong("RSI vs Avg: "),
+                                sprintf("%+.1f", rsi_vs_avg),
+                                if (rsi_vs_avg > 5) {
+                                    tags$span(style = "color: #388E3C; font-size: 11px; margin-left: 4px;",
+                                              "(Relatively overbought - may fall)")
+                                } else if (rsi_vs_avg < -5) {
+                                    tags$span(style = "color: #D32F2F; font-size: 11px; margin-left: 4px;",
+                                              "(Relatively oversold - may rise)")
+                                } else {
+                                    tags$span(style = "color: #666; font-size: 11px; margin-left: 4px;",
+                                              "(In line with curve)")
+                                }
+                         )
+                )
             )
         )
     })
