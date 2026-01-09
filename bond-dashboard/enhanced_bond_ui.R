@@ -815,14 +815,14 @@ ui <- dashboardPage(
 
                                           tags$p(tags$strong("Distribution Statistics:")),
                                           tags$ul(
-                                              tags$li(tags$strong("Skewness < -0.5:"), " Left tail risk - larger losses more likely than gains"),
-                                              tags$li(tags$strong("Kurtosis > 1:"), " Fat tails - extreme moves more likely than normal"),
+                                              tags$li(tags$strong("Skewness < -0.3:"), " Left tail risk - larger losses more likely than gains"),
+                                              tags$li(tags$strong("Excess Kurtosis > 1:"), " Fat tails - extreme moves more likely than normal (Normal distribution = 0)"),
                                               tags$li(tags$strong("Tail Ratio (99%/95% > 1.5):"), " Significant tail risk present")
                                           ),
 
                                           tags$p(
                                               style = "margin-top: 10px; font-style: italic;",
-                                              HTML("&#9888; Higher values = higher risk. Watch for bonds with high kurtosis AND negative skew.")
+                                              HTML("&#9888; Values shown as positive losses for clarity. Watch for bonds with high kurtosis AND negative skew.")
                                           )
                                       )
                                )

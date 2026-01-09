@@ -903,132 +903,143 @@ generate_var_distribution_plot <- function(data, params = list()) {
 }
 
 #' @export
-# 5. VAR Ladder Plot Generation - IMPROVED VERSION
+# 5. VAR Ladder Plot Generation - REBUILT VERSION
+#' @description Creates a horizontal bar chart showing VaR and CVaR for each bond
+#' @param var_data Data frame with VaR metrics (VaR_95_bps, VaR_99_bps, CVaR_95)
+#' @param params List of optional parameters including bond_order
+#' @return ggplot object
 generate_var_ladder_plot <- function(var_data, params = list()) {
 
     # Extract parameters with defaults
     bond_order <- params$bond_order  # Optional: pre-specified bond order for consistency
 
-    # Prepare data
+    # Validate input
+    if (is.null(var_data) || nrow(var_data) == 0) {
+        warning("generate_var_ladder_plot: No data provided")
+        return(NULL)
+    }
+
+    # Ensure required columns exist
+    required_cols <- c("bond", "VaR_95_bps", "VaR_99_bps", "CVaR_95")
+    missing_cols <- setdiff(required_cols, names(var_data))
+    if (length(missing_cols) > 0) {
+        warning(paste("Missing columns:", paste(missing_cols, collapse = ", ")))
+        return(NULL)
+    }
+
+    # Prepare data - ensure numeric and handle NAs
     var_ladder <- var_data %>%
         select(bond, VaR_95_bps, VaR_99_bps, CVaR_95) %>%
-        arrange(desc(VaR_95_bps))
+        mutate(
+            VaR_95_bps = as.numeric(VaR_95_bps),
+            VaR_99_bps = as.numeric(VaR_99_bps),
+            CVaR_95 = as.numeric(CVaR_95),
+            # Convert CVaR to basis points (absolute value for display)
+            CVaR_bps = abs(CVaR_95) * 100
+        ) %>%
+        filter(!is.na(VaR_95_bps))
 
-    # Apply pre-specified order if provided, otherwise use 95% VaR ordering
+    # Sort by 95% VaR (ascending so highest ends up at top after coord_flip)
+    var_ladder <- var_ladder %>%
+        arrange(VaR_95_bps)
+
+    # Apply bond ordering - create factor with levels locked in order
     if (!is.null(bond_order)) {
+        # Use provided order (reversed for coord_flip so highest at top)
         var_ladder <- var_ladder %>%
-            mutate(bond = factor(bond, levels = rev(bond_order)))  # Reverse for coord_flip
+            mutate(bond = factor(bond, levels = rev(bond_order)))
     } else {
-        # Order bonds by 95% VaR (highest risk at top)
+        # Lock in current order (sorted by VaR_95_bps ascending)
         var_ladder <- var_ladder %>%
-            mutate(bond = factor(bond, levels = rev(bond[order(VaR_95_bps)])))
+            mutate(bond = factor(bond, levels = bond))
     }
 
     # Calculate portfolio average
     avg_var_95 <- mean(var_ladder$VaR_95_bps, na.rm = TRUE)
-    avg_var_99 <- mean(var_ladder$VaR_99_bps, na.rm = TRUE)
 
-    # IMPROVED Risk Ladder plot
-    p <- ggplot(var_ladder, aes(y = bond)) +
+    # Build plot using x = bond with coord_flip() for horizontal bars
+    p <- ggplot(var_ladder, aes(x = bond)) +
 
-        # Background risk zones
-        annotate("rect", xmin = -Inf, xmax = Inf,
-                 ymin = 0, ymax = 200,
-                 alpha = 0.02, fill = insele_palette$success) +
-        annotate("rect", xmin = -Inf, xmax = Inf,
-                 ymin = 200, ymax = 300,
-                 alpha = 0.02, fill = insele_palette$warning) +
-        annotate("rect", xmin = -Inf, xmax = Inf,
-                 ymin = 300, ymax = Inf,
-                 alpha = 0.02, fill = insele_palette$danger) +
-
-        # 95% VaR bar (outer, lighter orange)
+        # 95% VaR bar (wide, orange)
         geom_col(
-            aes(x = VaR_95_bps),
+            aes(y = VaR_95_bps),
             fill = "#FFB74D",
-            width = 0.7,
-            alpha = 0.9
+            width = 0.7
         ) +
 
-        # 99% VaR bar (inner, darker red)
+        # 99% VaR bar (narrow, red) - overlaid on top
         geom_col(
-            aes(x = VaR_99_bps),
+            aes(y = VaR_99_bps),
             fill = "#E57373",
-            width = 0.5,
-            alpha = 0.9
+            width = 0.4
         ) +
 
-        # CVaR point (larger, with white outline for visibility)
+        # CVaR diamond
         geom_point(
-            aes(x = abs(CVaR_95) * 100),
-            shape = 23,  # Diamond
+            aes(y = CVaR_bps),
+            shape = 23,
             size = 4,
             fill = "#1565C0",
             color = "white",
             stroke = 1.5
         ) +
 
-        # Portfolio average line (dashed)
-        geom_vline(
-            xintercept = avg_var_95,
-            linetype = "dashed",
-            color = insele_palette$primary,
-            linewidth = 1
-        ) +
-
-        # Portfolio average annotation
-        annotate(
-            "text",
-            x = avg_var_95,
-            y = Inf,
-            label = sprintf("Portfolio Avg\n%.0f bps", avg_var_95),
-            vjust = 1.5,
-            hjust = 0.5,
-            size = 3,
-            fontface = "bold",
-            color = insele_palette$primary
-        ) +
-
-        # Value labels at end of 95% bar
+        # Value labels for 95% VaR
         geom_text(
-            aes(x = VaR_95_bps, label = sprintf("%.0f", VaR_95_bps)),
+            aes(y = VaR_95_bps, label = sprintf("%.0f", VaR_95_bps)),
             hjust = -0.2,
             size = 3,
             fontface = "bold"
         ) +
 
-        # CVaR label (blue, near diamond)
-        geom_text(
-            aes(x = abs(CVaR_95) * 100, label = sprintf("%.0f", abs(CVaR_95) * 100)),
-            hjust = -0.3,
-            vjust = -1,
-            size = 2.5,
-            color = "#1565C0"
+        # Portfolio average line
+        geom_hline(
+            yintercept = avg_var_95,
+            linetype = "dashed",
+            color = "#1B3A6B",
+            linewidth = 1
         ) +
 
-        # Scales
-        scale_x_continuous(
+        # Portfolio average label
+        annotate(
+            "text",
+            x = nrow(var_ladder) + 0.5,
+            y = avg_var_95,
+            label = sprintf("Portfolio Avg\n%.0f bps", avg_var_95),
+            hjust = 0,
+            vjust = 0.5,
+            size = 3,
+            fontface = "bold",
+            color = "#1B3A6B"
+        ) +
+
+        # CRITICAL: Flip coordinates to make horizontal bar chart
+        coord_flip(clip = "off") +
+
+        # Expand to make room for labels
+        scale_y_continuous(
             expand = expansion(mult = c(0, 0.15)),
             breaks = seq(0, 600, 100),
             labels = function(x) paste0(x, " bps")
         ) +
 
-        # Labels
         labs(
             title = "Risk Ladder: VaR & Expected Shortfall",
             subtitle = "Sorted by 95% VaR (highest risk at top) | Daily horizon",
-            x = "Risk (basis points of price)",
-            y = NULL,
-            caption = "Wide bar = 95% VaR | Narrow bar = 99% VaR | ◆ = CVaR (Expected Shortfall)"
+            x = NULL,
+            y = "Risk (basis points of price)",
+            caption = "Wide bar = 95% VaR | Narrow bar = 99% VaR | \u25C6 = CVaR (Expected Shortfall)"
         ) +
 
-        create_insele_theme() +
+        theme_minimal(base_size = 11) +
         theme(
-            plot.title = element_text(face = "bold", color = insele_palette$primary, size = 14),
+            plot.title = element_text(face = "bold", color = "#1B3A6B", size = 14),
             plot.subtitle = element_text(color = "#666666", size = 10),
+            axis.text.y = element_text(face = "bold", size = 10),
+            panel.grid.major.x = element_line(color = "#E0E0E0"),
             panel.grid.major.y = element_blank(),
             panel.grid.minor = element_blank(),
-            axis.text.y = element_text(face = "bold"),
+            plot.margin = ggplot2::margin(10, 60, 10, 10),  # Extra right margin for labels
             plot.caption = element_text(
                 hjust = 0,
                 size = 8,

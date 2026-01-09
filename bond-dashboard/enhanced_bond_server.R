@@ -1629,7 +1629,7 @@ server <- function(input, output, session) {
         if(!is.null(p)) print(p)
     })
 
-    # 6. VaR Statistics Table - NEW
+    # 6. VaR Statistics Table - FIXED VERSION
     output$var_statistics_table <- DT::renderDataTable({
         req(var_distribution_results())
 
@@ -1641,36 +1641,48 @@ server <- function(input, output, session) {
         }
 
         # Create table with interpretations
+        # Convert to absolute loss values for more intuitive display
         table_data <- var_summary %>%
             mutate(
-                # Interpret skewness
+                # Convert VaR to positive loss values (more intuitive)
+                var_95_loss = abs(VaR_95),
+                var_99_loss = abs(VaR_99),
+                cvar_loss = abs(CVaR_95),
+
+                # Interpret skewness - LOWERED THRESHOLDS for better sensitivity
                 skew_signal = case_when(
-                    skewness < -0.5 ~ "Left tail risk",
-                    skewness > 0.5 ~ "Right skewed",
-                    TRUE ~ "Symmetric"
+                    skewness < -0.3 ~ "Left tail risk \u26A0",
+                    skewness < -0.1 ~ "Slight left skew",
+                    skewness > 0.3 ~ "Right skewed",
+                    skewness > 0.1 ~ "Slight right skew",
+                    TRUE ~ "Symmetric \u2713"
                 ),
-                # Interpret kurtosis (excess kurtosis, normal = 3)
+
+                # Interpret kurtosis - NOW USING EXCESS KURTOSIS (normal = 0)
+                # Values > 1 indicate fat tails, < -0.5 indicate thin tails
                 kurt_signal = case_when(
-                    kurtosis > 4 ~ "Fat tails",
-                    kurtosis < 2 ~ "Thin tails",
-                    TRUE ~ "Normal tails"
+                    kurtosis > 1.0 ~ "Fat tails \u26A0",
+                    kurtosis > 0.5 ~ "Slightly fat",
+                    kurtosis < -0.5 ~ "Thin tails",
+                    TRUE ~ "Normal \u2713"
                 ),
-                # Tail risk indicator
+
+                # Tail risk indicator - combines kurtosis and tail ratio
                 tail_ratio = abs(VaR_99) / abs(VaR_95),
                 tail_risk = case_when(
-                    tail_ratio > 1.6 ~ "High",
-                    tail_ratio > 1.4 ~ "Moderate",
-                    TRUE ~ "Low"
+                    tail_ratio > 1.6 | kurtosis > 1.0 ~ "High \u26A0",
+                    tail_ratio > 1.4 | kurtosis > 0.5 ~ "Moderate",
+                    TRUE ~ "Low \u2713"
                 )
             ) %>%
             select(
                 Bond = bond,
-                `95% VaR` = VaR_95,
-                `99% VaR` = VaR_99,
-                `CVaR` = CVaR_95,
+                `95% VaR Loss (%)` = var_95_loss,
+                `99% VaR Loss (%)` = var_99_loss,
+                `CVaR Loss (%)` = cvar_loss,
                 Skew = skewness,
                 `Skew Signal` = skew_signal,
-                Kurtosis = kurtosis,
+                `Excess Kurtosis` = kurtosis,
                 `Tail Risk` = tail_risk,
                 Obs = n_observations
             )
@@ -1684,20 +1696,20 @@ server <- function(input, output, session) {
             ),
             rownames = FALSE
         ) %>%
-            DT::formatRound(c('95% VaR', '99% VaR', 'CVaR'), digits = 2) %>%
-            DT::formatRound(c('Skew', 'Kurtosis'), digits = 2) %>%
+            DT::formatRound(c('95% VaR Loss (%)', '99% VaR Loss (%)', 'CVaR Loss (%)'), digits = 2) %>%
+            DT::formatRound(c('Skew', 'Excess Kurtosis'), digits = 2) %>%
             DT::formatStyle(
                 'Tail Risk',
                 backgroundColor = DT::styleEqual(
-                    c('High', 'Moderate', 'Low'),
+                    c('High \u26A0', 'Moderate', 'Low \u2713'),
                     c('#FFCDD2', '#FFF9C4', '#C8E6C9')
                 )
             ) %>%
             DT::formatStyle(
                 'Skew Signal',
                 backgroundColor = DT::styleEqual(
-                    c('Left tail risk', 'Right skewed', 'Symmetric'),
-                    c('#FFCDD2', '#FFF9C4', '#C8E6C9')
+                    c('Left tail risk \u26A0', 'Slight left skew', 'Right skewed', 'Slight right skew', 'Symmetric \u2713'),
+                    c('#FFCDD2', '#FFE0B2', '#FFF9C4', '#E3F2FD', '#C8E6C9')
                 )
             )
     })
