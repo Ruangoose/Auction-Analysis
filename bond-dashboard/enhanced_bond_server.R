@@ -3435,40 +3435,43 @@ server <- function(input, output, session) {
                     c("white", "white")
                 )
             ) %>%
-            # Color code MACD Signal (5 levels)
+            # Color code MACD Signal (5 levels) - INVERTED for bond prices
+            # Bullish yields = Red (bad for bond prices), Bearish yields = Green (good for bond prices)
             formatStyle(
                 "MACD Signal",
                 backgroundColor = styleEqual(
                     c("Strong Bearish", "Bearish", "Neutral", "Bullish", "Strong Bullish"),
-                    c("#1B5E20", "#4CAF50", "#F5F5F5", "#FF8A65", "#C62828")
+                    c("#1B5E20", "#4CAF50", "#E0E0E0", "#FF7043", "#C62828")
                 ),
                 color = styleEqual(
-                    c("Strong Bearish", "Strong Bullish"),
-                    c("white", "white")
+                    c("Strong Bearish", "Bearish", "Neutral", "Bullish", "Strong Bullish"),
+                    c("white", "white", "black", "white", "white")
                 )
             ) %>%
-            # Color code Trend (5 levels)
+            # Color code Trend (5 levels) - INVERTED for bond prices
+            # Uptrend yields = Red (prices falling), Downtrend yields = Green (prices rising)
             formatStyle(
                 "Trend",
                 backgroundColor = styleEqual(
                     c("Strong Downtrend", "Downtrend", "Sideways", "Uptrend", "Strong Uptrend"),
-                    c("#1B5E20", "#4CAF50", "#FFF3E0", "#FF8A65", "#C62828")
+                    c("#1B5E20", "#4CAF50", "#E0E0E0", "#FF7043", "#C62828")
                 ),
                 color = styleEqual(
-                    c("Strong Downtrend", "Strong Uptrend"),
-                    c("white", "white")
+                    c("Strong Downtrend", "Downtrend", "Sideways", "Uptrend", "Strong Uptrend"),
+                    c("white", "white", "black", "white", "white")
                 )
             ) %>%
-            # Color code ROC Signal (5 levels)
+            # Color code ROC Signal (5 levels) - INVERTED for bond prices
+            # Rising yields = Red, Falling yields = Green
             formatStyle(
                 "ROC Signal",
                 backgroundColor = styleEqual(
                     c("Strong Fall", "Falling", "Flat", "Rising", "Strong Rise"),
-                    c("#1B5E20", "#4CAF50", "#F5F5F5", "#FF8A65", "#C62828")
+                    c("#1B5E20", "#4CAF50", "#E0E0E0", "#FF7043", "#C62828")
                 ),
                 color = styleEqual(
-                    c("Strong Fall", "Strong Rise"),
-                    c("white", "white")
+                    c("Strong Fall", "Falling", "Flat", "Rising", "Strong Rise"),
+                    c("white", "white", "black", "white", "white")
                 )
             ) %>%
             # Color code Score column with gradient
