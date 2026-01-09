@@ -239,14 +239,40 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
                 ) +
                 create_insele_theme()
 
+            # FIX: Use bb_width_pct (correctly calculated as % of mean) instead of bb_width * 100
+            # bb_width_pct should typically be 5-15% for bond yields, up to 25% during volatility
+            tech_data <- tech_data %>%
+                mutate(
+                    bb_width_pct_safe = if_else(
+                        !is.na(bb_width_pct),
+                        bb_width_pct,
+                        if_else(
+                            !is.na(bb_width) & !is.na(bb_mean) & bb_mean != 0,
+                            (bb_width / bb_mean) * 100,
+                            NA_real_
+                        )
+                    )
+                )
+
+            avg_bb_width <- mean(tech_data$bb_width_pct_safe, na.rm = TRUE)
+
             p2 <- ggplot(tech_data, aes(x = date)) +
+                # Add typical range shading (5-15%)
+                annotate(
+                    "rect",
+                    xmin = min(tech_data$date, na.rm = TRUE),
+                    xmax = max(tech_data$date, na.rm = TRUE),
+                    ymin = 5, ymax = 15,
+                    fill = insele_palette$secondary,
+                    alpha = 0.1
+                ) +
                 geom_line(
-                    aes(y = bb_width * 100),
+                    aes(y = bb_width_pct_safe),
                     color = insele_palette$danger,
                     linewidth = 1.2
                 ) +
                 geom_hline(
-                    yintercept = mean(tech_data$bb_width * 100, na.rm = TRUE),
+                    yintercept = avg_bb_width,
                     linetype = "dashed",
                     color = insele_palette$primary,
                     alpha = 0.7
@@ -254,22 +280,35 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
                 annotate(
                     "text",
                     x = min(tech_data$date, na.rm = TRUE),
-                    y = mean(tech_data$bb_width * 100, na.rm = TRUE),
-                    label = sprintf("Avg: %.2f%%", mean(tech_data$bb_width * 100, na.rm = TRUE)),
+                    y = avg_bb_width,
+                    label = sprintf("Avg: %.1f%%", avg_bb_width),
                     hjust = 0,
                     vjust = -0.5,
                     color = insele_palette$primary,
                     size = 3
+                ) +
+                # Add typical range annotation
+                annotate(
+                    "text",
+                    x = max(tech_data$date, na.rm = TRUE),
+                    y = 10,
+                    label = "Typical: 5-15%",
+                    hjust = 1,
+                    color = insele_palette$secondary,
+                    size = 2.5,
+                    fontface = "italic"
                 ) +
                 scale_x_date(
                     date_breaks = date_breaks,
                     date_labels = "%b"
                 ) +
                 scale_y_continuous(
-                    labels = function(x) paste0(x, "%")
+                    labels = function(x) paste0(x, "%"),
+                    limits = c(0, max(30, max(tech_data$bb_width_pct_safe, na.rm = TRUE) * 1.1))
                 ) +
                 labs(
-                    title = "Bollinger Band Width",
+                    title = "Bollinger Band Width (% of Mean)",
+                    subtitle = "Higher = more volatility | Typical range: 5-15%",
                     y = "Width (%)",
                     x = "Date"
                 ) +
@@ -399,121 +438,241 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
         } else if(tolower(indicator_type) == "momentum") {
 
             # ──────────────────────────────────────────────────────────────
-            # MOMENTUM-SPECIFIC PLOTS
+            # ENHANCED MOMENTUM-SPECIFIC PLOTS
             # ──────────────────────────────────────────────────────────────
 
+            # Get latest RSI value for label
+            latest_rsi <- tail(tech_data$rsi_14[!is.na(tech_data$rsi_14)], 1)
+            latest_stoch <- tail(tech_data$stoch_rsi[!is.na(tech_data$stoch_rsi)], 1) * 100
+            latest_date <- tail(tech_data$date[!is.na(tech_data$rsi_14)], 1)
+
             p2 <- ggplot(tech_data, aes(x = date)) +
-                # Neutral zone shading
-                geom_ribbon(
-                    aes(ymin = 30, ymax = 70),
-                    alpha = 0.1,
-                    fill = insele_palette$secondary
+
+                # SHADED OVERBOUGHT ZONE (70-100) - Bond context: yields overbought = may fall = good
+                annotate(
+                    "rect",
+                    xmin = min(tech_data$date, na.rm = TRUE),
+                    xmax = max(tech_data$date, na.rm = TRUE),
+                    ymin = 70, ymax = 100,
+                    fill = "#C8E6C9",  # Light green - good for bonds
+                    alpha = 0.3
                 ) +
-                # RSI line
+
+                # SHADED OVERSOLD ZONE (0-30) - Bond context: yields oversold = may rise = bad
+                annotate(
+                    "rect",
+                    xmin = min(tech_data$date, na.rm = TRUE),
+                    xmax = max(tech_data$date, na.rm = TRUE),
+                    ymin = 0, ymax = 30,
+                    fill = "#FFCDD2",  # Light red - bad for bonds
+                    alpha = 0.3
+                ) +
+
+                # Neutral zone label
+                annotate(
+                    "text",
+                    x = min(tech_data$date, na.rm = TRUE) + 5,
+                    y = 50,
+                    label = "NEUTRAL",
+                    color = "#9E9E9E",
+                    size = 2.5,
+                    hjust = 0,
+                    fontface = "italic"
+                ) +
+
+                # Reference lines with dashed style
+                geom_hline(
+                    yintercept = 30,
+                    linetype = "dashed",
+                    color = insele_palette$danger,
+                    alpha = 0.7
+                ) +
+                geom_hline(
+                    yintercept = 50,
+                    linetype = "dotted",
+                    color = "#9E9E9E",
+                    alpha = 0.7
+                ) +
+                geom_hline(
+                    yintercept = 70,
+                    linetype = "dashed",
+                    color = insele_palette$success,
+                    alpha = 0.7
+                ) +
+
+                # RSI line (main)
                 geom_line(
                     aes(y = rsi_14),
                     color = insele_palette$primary,
-                    linewidth = 1,
+                    linewidth = 1.2,
                     na.rm = TRUE
                 ) +
-                # Reference lines
-                geom_hline(
-                    yintercept = c(30, 50, 70),
-                    linetype = c("dashed", "solid", "dashed"),
-                    color = c(insele_palette$success, "black", insele_palette$danger),
-                    alpha = 0.7
-                ) +
-                # Stochastic RSI
+
+                # Stochastic RSI (secondary, thinner)
                 geom_line(
                     aes(y = stoch_rsi * 100),
                     color = insele_palette$accent,
-                    linewidth = 0.8,
-                    alpha = 0.7,
+                    linewidth = 0.6,
+                    alpha = 0.6,
                     na.rm = TRUE
                 ) +
-                # Annotations
-                annotate(
-                    "text",
-                    x = max(tech_data$date, na.rm = TRUE),
-                    y = 70,
-                    label = "Overbought",
-                    hjust = 1,
-                    vjust = -0.5,
-                    color = insele_palette$danger,
+
+                # Current value point
+                geom_point(
+                    data = tail(tech_data[!is.na(tech_data$rsi_14), ], 1),
+                    aes(y = rsi_14),
+                    color = insele_palette$primary,
                     size = 3
                 ) +
+
+                # Current value label
+                geom_text(
+                    data = tail(tech_data[!is.na(tech_data$rsi_14), ], 1),
+                    aes(y = rsi_14, label = sprintf("%.1f", rsi_14)),
+                    hjust = -0.3,
+                    size = 3.5,
+                    fontface = "bold",
+                    color = insele_palette$primary
+                ) +
+
+                # Bond-specific zone labels
                 annotate(
                     "text",
                     x = max(tech_data$date, na.rm = TRUE),
-                    y = 30,
-                    label = "Oversold",
+                    y = 85,
+                    label = "Overbought\n(Yields may fall)",
                     hjust = 1,
-                    vjust = 1.5,
                     color = insele_palette$success,
-                    size = 3
+                    size = 2.5,
+                    lineheight = 0.9
                 ) +
+                annotate(
+                    "text",
+                    x = max(tech_data$date, na.rm = TRUE),
+                    y = 15,
+                    label = "Oversold\n(Yields may rise)",
+                    hjust = 1,
+                    color = insele_palette$danger,
+                    size = 2.5,
+                    lineheight = 0.9
+                ) +
+
                 scale_x_date(
                     date_breaks = date_breaks,
                     date_labels = "%b"
                 ) +
                 scale_y_continuous(
                     limits = c(0, 100),
-                    breaks = c(0, 30, 50, 70, 100)
+                    breaks = c(0, 30, 50, 70, 100),
+                    labels = c("0", "30\nOversold", "50", "70\nOverbought", "100")
                 ) +
                 labs(
-                    title = paste(bond_select, "- Momentum Indicators"),
-                    subtitle = "RSI (solid) & Stochastic RSI (faded)",
+                    title = "RSI (14) & Stochastic RSI",
+                    subtitle = sprintf("%s | Current RSI: %.1f | For YIELDS: overbought = may fall (bullish for prices)",
+                                       bond_select, if(length(latest_rsi) > 0) latest_rsi else NA),
                     y = "RSI",
                     x = ""
                 ) +
-                create_insele_theme()
+                create_insele_theme() +
+                theme(
+                    plot.subtitle = element_text(size = 9, color = "#666")
+                )
+
+            # Get latest MACD values for labels
+            latest_macd <- tail(tech_data$macd[!is.na(tech_data$macd)], 1)
+            latest_macd_signal <- tail(tech_data$macd_signal[!is.na(tech_data$macd_signal)], 1)
+            latest_macd_hist <- tail(tech_data$macd_histogram[!is.na(tech_data$macd_histogram)], 1)
+
+            # Calculate crossover points
+            tech_data_macd <- tech_data %>%
+                filter(!is.na(macd) & !is.na(macd_signal)) %>%
+                mutate(
+                    macd_diff = macd - macd_signal,
+                    macd_diff_lag = lag(macd_diff),
+                    cross = !is.na(macd_diff_lag) & sign(macd_diff) != sign(macd_diff_lag)
+                )
 
             p3 <- ggplot(tech_data, aes(x = date)) +
-                # MACD histogram
+
+                # Zero line (prominent)
+                geom_hline(
+                    yintercept = 0,
+                    color = "#9E9E9E",
+                    linewidth = 0.8
+                ) +
+
+                # MACD histogram as proper bars (not tiny columns)
                 geom_col(
                     aes(y = macd_histogram,
-                        fill = macd_histogram > 0),
-                    alpha = 0.7
+                        fill = macd_histogram >= 0),
+                    width = 1,
+                    alpha = 0.6,
+                    na.rm = TRUE
                 ) +
+
                 # MACD line
                 geom_line(
                     aes(y = macd),
                     color = insele_palette$primary,
-                    linewidth = 1,
+                    linewidth = 1.2,
                     na.rm = TRUE
                 ) +
-                # Signal line
+
+                # Signal line (dashed)
                 geom_line(
                     aes(y = macd_signal),
                     color = insele_palette$accent,
-                    linewidth = 0.8,
+                    linewidth = 0.9,
                     linetype = "dashed",
                     na.rm = TRUE
                 ) +
-                # Zero line
-                geom_hline(
-                    yintercept = 0,
-                    color = "black",
-                    linewidth = 0.5
-                ) +
+
+                # Crossover points (highlight)
+                {
+                    crossover_data <- tech_data_macd %>% filter(cross == TRUE)
+                    if(nrow(crossover_data) > 0) {
+                        geom_point(
+                            data = crossover_data,
+                            aes(y = macd),
+                            color = "#9C27B0",
+                            size = 2.5,
+                            shape = 18
+                        )
+                    }
+                } +
+
                 scale_fill_manual(
                     values = c(
-                        "FALSE" = insele_palette$danger,
-                        "TRUE" = insele_palette$success
+                        "FALSE" = insele_palette$danger,  # Negative = red
+                        "TRUE" = insele_palette$success   # Positive = green
                     ),
                     guide = "none"
                 ) +
+
                 scale_x_date(
                     date_breaks = date_breaks,
                     date_labels = "%b"
                 ) +
+
                 labs(
-                    title = "MACD (Moving Average Convergence Divergence)",
-                    subtitle = "Histogram + MACD line (solid) + Signal line (dashed)",
+                    title = "MACD (12, 26, 9)",
+                    subtitle = sprintf(
+                        "%s | MACD: %.4f | Signal: %.4f | Histogram: %s%.4f",
+                        bond_select,
+                        if(length(latest_macd) > 0) latest_macd else 0,
+                        if(length(latest_macd_signal) > 0) latest_macd_signal else 0,
+                        if(length(latest_macd_hist) > 0 && latest_macd_hist >= 0) "+" else "",
+                        if(length(latest_macd_hist) > 0) latest_macd_hist else 0
+                    ),
                     y = "MACD",
-                    x = "Date"
+                    x = "Date",
+                    caption = "Purple diamonds = crossover signals"
                 ) +
-                create_insele_theme()
+                create_insele_theme() +
+                theme(
+                    plot.subtitle = element_text(size = 9, color = "#666"),
+                    plot.caption = element_text(size = 8, color = "#999", hjust = 0)
+                )
 
             # Combine plots
             p <- gridExtra::arrangeGrob(p2, p3, ncol = 1, heights = c(1, 1))
@@ -595,12 +754,34 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
                 create_insele_theme() +
                 theme(legend.position = "top")
 
-            # RSI panel (same as momentum)
+            # RSI panel - ENHANCED with shaded zones and bond terminology
+            # Get latest RSI for label
+            latest_rsi_all <- tail(tech_data$rsi_14[!is.na(tech_data$rsi_14)], 1)
+
             p2 <- ggplot(tech_data, aes(x = date)) +
-                geom_ribbon(
-                    aes(ymin = 30, ymax = 70),
-                    alpha = 0.1,
-                    fill = insele_palette$secondary
+                # Shaded overbought zone (70-100) - green for bonds
+                annotate(
+                    "rect",
+                    xmin = min(tech_data$date, na.rm = TRUE),
+                    xmax = max(tech_data$date, na.rm = TRUE),
+                    ymin = 70, ymax = 100,
+                    fill = "#C8E6C9",
+                    alpha = 0.3
+                ) +
+                # Shaded oversold zone (0-30) - red for bonds
+                annotate(
+                    "rect",
+                    xmin = min(tech_data$date, na.rm = TRUE),
+                    xmax = max(tech_data$date, na.rm = TRUE),
+                    ymin = 0, ymax = 30,
+                    fill = "#FFCDD2",
+                    alpha = 0.3
+                ) +
+                geom_hline(
+                    yintercept = c(30, 50, 70),
+                    linetype = c("dashed", "dotted", "dashed"),
+                    color = c(insele_palette$danger, "#9E9E9E", insele_palette$success),
+                    alpha = 0.7
                 ) +
                 geom_line(
                     aes(y = rsi_14),
@@ -608,18 +789,26 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
                     linewidth = 1,
                     na.rm = TRUE
                 ) +
-                geom_hline(
-                    yintercept = c(30, 50, 70),
-                    linetype = c("dashed", "solid", "dashed"),
-                    color = c(insele_palette$success, "black", insele_palette$danger),
-                    alpha = 0.7
-                ) +
                 geom_line(
                     aes(y = stoch_rsi * 100),
                     color = insele_palette$accent,
-                    linewidth = 0.8,
-                    alpha = 0.7,
+                    linewidth = 0.6,
+                    alpha = 0.6,
                     na.rm = TRUE
+                ) +
+                # Current value point and label
+                geom_point(
+                    data = tail(tech_data[!is.na(tech_data$rsi_14), ], 1),
+                    aes(y = rsi_14),
+                    color = insele_palette$primary,
+                    size = 2.5
+                ) +
+                geom_text(
+                    data = tail(tech_data[!is.na(tech_data$rsi_14), ], 1),
+                    aes(y = rsi_14, label = sprintf("%.0f", rsi_14)),
+                    hjust = -0.3,
+                    size = 3,
+                    fontface = "bold"
                 ) +
                 scale_x_date(
                     date_breaks = date_breaks,
@@ -630,18 +819,39 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
                     breaks = c(0, 30, 50, 70, 100)
                 ) +
                 labs(
-                    title = "Momentum: RSI & Stochastic RSI",
+                    title = sprintf("RSI & Stochastic RSI (Current: %.0f)",
+                                    if(length(latest_rsi_all) > 0) latest_rsi_all else NA),
                     y = "RSI",
                     x = ""
                 ) +
                 create_insele_theme()
 
-            # MACD panel (same as momentum)
+            # MACD panel - ENHANCED with proper bars and crossover points
+            # Get latest values
+            latest_macd_all <- tail(tech_data$macd[!is.na(tech_data$macd)], 1)
+            latest_hist_all <- tail(tech_data$macd_histogram[!is.na(tech_data$macd_histogram)], 1)
+
+            # Calculate crossovers
+            tech_data_macd_all <- tech_data %>%
+                filter(!is.na(macd) & !is.na(macd_signal)) %>%
+                mutate(
+                    macd_diff = macd - macd_signal,
+                    macd_diff_lag = lag(macd_diff),
+                    cross = !is.na(macd_diff_lag) & sign(macd_diff) != sign(macd_diff_lag)
+                )
+
             p3 <- ggplot(tech_data, aes(x = date)) +
+                geom_hline(
+                    yintercept = 0,
+                    color = "#9E9E9E",
+                    linewidth = 0.7
+                ) +
                 geom_col(
                     aes(y = macd_histogram,
-                        fill = macd_histogram > 0),
-                    alpha = 0.7
+                        fill = macd_histogram >= 0),
+                    width = 1,
+                    alpha = 0.6,
+                    na.rm = TRUE
                 ) +
                 geom_line(
                     aes(y = macd),
@@ -656,11 +866,19 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
                     linetype = "dashed",
                     na.rm = TRUE
                 ) +
-                geom_hline(
-                    yintercept = 0,
-                    color = "black",
-                    linewidth = 0.5
-                ) +
+                # Crossover points
+                {
+                    crossover_data_all <- tech_data_macd_all %>% filter(cross == TRUE)
+                    if(nrow(crossover_data_all) > 0) {
+                        geom_point(
+                            data = crossover_data_all,
+                            aes(y = macd),
+                            color = "#9C27B0",
+                            size = 2,
+                            shape = 18
+                        )
+                    }
+                } +
                 scale_fill_manual(
                     values = c(
                         "FALSE" = insele_palette$danger,
@@ -673,7 +891,9 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
                     date_labels = "%b"
                 ) +
                 labs(
-                    title = "MACD",
+                    title = sprintf("MACD (Histogram: %s%.4f)",
+                                    if(length(latest_hist_all) > 0 && latest_hist_all >= 0) "+" else "",
+                                    if(length(latest_hist_all) > 0) latest_hist_all else 0),
                     y = "MACD",
                     x = "Date"
                 ) +

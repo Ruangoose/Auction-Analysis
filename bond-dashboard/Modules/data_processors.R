@@ -819,6 +819,252 @@ add_default_technicals <- function(data) {
     return(sanitize_pipeline_data(data, "add_default_technicals"))
 }
 
+# ════════════════════════════════════════════════════════════════════════
+# OVERALL SIGNAL SYNTHESIS - Composite Technical Score
+# ════════════════════════════════════════════════════════════════════════
+
+#' @title Calculate Overall Technical Signal
+#' @description Synthesizes multiple technical indicators into a composite score with
+#'   bond-specific interpretation (yields up = bearish for bonds)
+#' @param rsi Current RSI value
+#' @param macd_signal MACD signal ("Bullish", "Bearish", etc.)
+#' @param trend_status Trend status ("Strong Uptrend", "Downtrend", etc.)
+#' @param bb_position Position within Bollinger Bands (0-1 scale)
+#' @return List with score, signal, recommendation, confidence, and component breakdown
+#' @export
+calculate_technical_signal <- function(rsi, macd_signal, trend_status, bb_position) {
+
+    # Initialize score (range: -100 to +100)
+    # Positive = yields likely to rise (bearish for bonds)
+    # Negative = yields likely to fall (bullish for bonds)
+
+    # RSI Component (-25 to +25)
+    # For YIELDS: overbought RSI suggests yields rose too fast and may reverse DOWN
+    # This is BULLISH for bond prices, so we invert
+    rsi_raw <- case_when(
+        is.na(rsi) ~ 0,
+        rsi > 70 ~ 25,          # Overbought - yields may fall (good for bonds)
+        rsi > 60 ~ 10,          # Elevated
+        rsi > 40 ~ 0,           # Neutral
+        rsi > 30 ~ -10,         # Depressed
+        TRUE ~ -25              # Oversold - yields may rise (bad for bonds)
+    )
+    rsi_score <- -rsi_raw  # Invert for bond context (overbought yields = bullish for prices)
+
+    # MACD Component (-30 to +30)
+    # For YIELDS: bullish MACD means yields rising = bearish for bonds
+    macd_score <- case_when(
+        is.na(macd_signal) ~ 0,
+        macd_signal == "Strong Bullish" ~ 30,   # Yields rising strongly
+        macd_signal == "Bullish" ~ 15,
+        macd_signal == "Neutral" ~ 0,
+        macd_signal == "Bearish" ~ -15,
+        macd_signal == "Strong Bearish" ~ -30,  # Yields falling strongly
+        TRUE ~ 0
+    )
+
+    # Trend Component (-30 to +30)
+    trend_score <- case_when(
+        is.na(trend_status) ~ 0,
+        grepl("Strong.*Up|Strongly Rising", trend_status, ignore.case = TRUE) ~ 30,
+        grepl("Uptrend|Rising", trend_status, ignore.case = TRUE) ~ 15,
+        grepl("Sideways|Stable|Neutral", trend_status, ignore.case = TRUE) ~ 0,
+        grepl("Downtrend|Falling", trend_status, ignore.case = TRUE) ~ -15,
+        grepl("Strong.*Down|Strongly Falling", trend_status, ignore.case = TRUE) ~ -30,
+        TRUE ~ 0
+    )
+
+    # BB Position Component (-15 to +15)
+    # Mean reversion: extreme positions suggest reversal
+    bb_raw <- case_when(
+        is.na(bb_position) ~ 0,
+        bb_position > 1 ~ 15,       # Above upper band - extended, may reverse
+        bb_position > 0.8 ~ 8,      # Near upper band
+        bb_position > 0.2 ~ 0,      # Middle
+        bb_position > 0 ~ -8,       # Near lower band
+        TRUE ~ -15                   # Below lower band - extended, may reverse
+    )
+    bb_score <- -bb_raw  # Invert for mean reversion expectation
+
+    # Composite Score
+    total_score <- rsi_score + macd_score + trend_score + bb_score
+
+    # Confidence based on agreement
+    signals <- c(sign(rsi_score), sign(macd_score), sign(trend_score))
+    signals <- signals[signals != 0]
+    agreement <- if(length(signals) > 0) abs(sum(signals)) / length(signals) else 0
+
+    # Overall signal (bond-specific terminology)
+    signal <- case_when(
+        total_score > 40 ~ "Strong Yield Rise Expected",
+        total_score > 15 ~ "Yield Rise Expected",
+        total_score > -15 ~ "Neutral / Range-bound",
+        total_score > -40 ~ "Yield Fall Expected",
+        TRUE ~ "Strong Yield Fall Expected"
+    )
+
+    # Bond-specific recommendation
+    recommendation <- case_when(
+        total_score > 40 ~ "REDUCE DURATION - Yields likely to rise",
+        total_score > 15 ~ "CAUTION - Upward yield pressure",
+        total_score > -15 ~ "HOLD - No clear direction",
+        total_score > -40 ~ "OPPORTUNITY - Yields may fall",
+        TRUE ~ "ADD DURATION - Strong rally expected"
+    )
+
+    list(
+        score = total_score,
+        signal = signal,
+        recommendation = recommendation,
+        confidence = agreement,
+        components = list(
+            rsi = rsi_score,
+            macd = macd_score,
+            trend = trend_score,
+            bb = bb_score
+        )
+    )
+}
+
+#' @title Get Bond-Specific Trend Label
+#' @description Generates trend labels using bond-specific terminology
+#'   (yield direction and price implication)
+#' @param sma_50 50-day simple moving average
+#' @param sma_200 200-day simple moving average
+#' @param current_yield Current yield value
+#' @return List with label, direction, strength, price_implication, and color
+#' @export
+get_trend_label_bonds <- function(sma_50, sma_200, current_yield) {
+
+    # Handle missing values
+    if (is.na(sma_50) || is.na(sma_200) || is.na(current_yield)) {
+        return(list(
+            label = "Unknown",
+            direction = "Unknown",
+            strength = "Unknown",
+            price_implication = "",
+            color = "#9E9E9E"
+        ))
+    }
+
+    # Determine trend direction
+    if (sma_50 > sma_200 * 1.02) {
+        trend_direction <- "Rising"
+        trend_strength <- "Strongly"
+    } else if (sma_50 > sma_200) {
+        trend_direction <- "Rising"
+        trend_strength <- "Moderately"
+    } else if (sma_50 < sma_200 * 0.98) {
+        trend_direction <- "Falling"
+        trend_strength <- "Strongly"
+    } else if (sma_50 < sma_200) {
+        trend_direction <- "Falling"
+        trend_strength <- "Moderately"
+    } else {
+        trend_direction <- "Stable"
+        trend_strength <- ""
+    }
+
+    # Create bond-specific label
+    label <- if (trend_direction == "Stable") {
+        "Stable Yields"
+    } else {
+        paste(trend_strength, trend_direction, "Yields")
+    }
+
+    # Add price implication (inverse relationship: yield up = price down)
+    price_implication <- case_when(
+        trend_direction == "Rising" ~ "(Bearish for Prices)",
+        trend_direction == "Falling" ~ "(Bullish for Prices)",
+        TRUE ~ ""
+    )
+
+    # Color coding: Red = bad for bondholders (rising yields), Green = good (falling yields)
+    color <- case_when(
+        trend_direction == "Rising" ~ "#D32F2F",   # Red - bad for bondholders
+        trend_direction == "Falling" ~ "#388E3C", # Green - good for bondholders
+        TRUE ~ "#FF9800"                           # Orange - neutral
+    )
+
+    list(
+        label = label,
+        direction = trend_direction,
+        strength = trend_strength,
+        price_implication = price_implication,
+        color = color
+    )
+}
+
+#' @title Calculate Support and Resistance Levels
+#' @description Calculates S/R levels with methodology explanation
+#' @param yield_series Vector of yield values
+#' @param lookback Number of periods to look back (default 60)
+#' @return List with support, resistance, pivot, distances, and methodology
+#' @export
+calculate_support_resistance_detailed <- function(yield_series, lookback = 60) {
+
+    # Get recent data
+    if (length(yield_series) < lookback) {
+        lookback <- max(20, length(yield_series))
+    }
+    recent_data <- tail(yield_series, lookback)
+    recent_data <- recent_data[!is.na(recent_data)]
+
+    if (length(recent_data) < 5) {
+        return(list(
+            resistance = NA,
+            support = NA,
+            pivot = NA,
+            r1 = NA,
+            s1 = NA,
+            current = NA,
+            distance_to_resistance = NA,
+            distance_to_support = NA,
+            position_pct = 50,
+            methodology = "Insufficient data"
+        ))
+    }
+
+    # Method: Recent high/low
+    resistance_high <- max(recent_data, na.rm = TRUE)
+    support_low <- min(recent_data, na.rm = TRUE)
+
+    # Pivot points
+    high <- max(recent_data, na.rm = TRUE)
+    low <- min(recent_data, na.rm = TRUE)
+    close <- tail(recent_data, 1)
+
+    pivot <- (high + low + close) / 3
+    r1 <- 2 * pivot - low
+    s1 <- 2 * pivot - high
+
+    # Current position relative to levels
+    current <- tail(yield_series[!is.na(yield_series)], 1)
+    distance_to_resistance <- resistance_high - current
+    distance_to_support <- current - support_low
+
+    # Position (0 = at support, 100 = at resistance)
+    range_size <- resistance_high - support_low
+    position_pct <- if (range_size > 0) {
+        ((current - support_low) / range_size) * 100
+    } else {
+        50
+    }
+
+    list(
+        resistance = resistance_high,
+        support = support_low,
+        pivot = pivot,
+        r1 = r1,
+        s1 = s1,
+        current = current,
+        distance_to_resistance = distance_to_resistance,
+        distance_to_support = distance_to_support,
+        position_pct = min(100, max(0, position_pct)),
+        methodology = sprintf("%d-day rolling high/low", lookback)
+    )
+}
+
 #' @export
 # Value-at-Risk Calculation - CORRECTED VERSION
 #' @description Calculates VaR, CVaR, and distribution statistics using DURATION-BASED price returns
