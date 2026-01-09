@@ -802,12 +802,23 @@ generate_enhanced_convexity_plot <- function(data, params = list()) {
     notional <- params$notional %||% 10000000
 
     # Prepare data with DV01 calculation
+    # CRITICAL: Filter out NA bond names and invalid data
     conv_data <- data %>%
+        filter(
+            !is.na(bond),
+            bond != "",
+            bond != "NA",
+            !is.na(convexity),
+            !is.na(modified_duration),
+            !is.na(yield_to_maturity),
+            is.finite(convexity),
+            is.finite(modified_duration),
+            modified_duration > 0  # Duration must be positive
+        ) %>%
         group_by(bond) %>%
         filter(date == max(date)) %>%
         slice(1) %>%
         ungroup() %>%
-        filter(!is.na(convexity), !is.na(modified_duration)) %>%
         mutate(
             # Calculate DV01 for point sizing
             dv01 = notional * modified_duration * 0.0001,
@@ -816,6 +827,19 @@ generate_enhanced_convexity_plot <- function(data, params = list()) {
             # Calculate convexity-per-duration ratio (higher = better)
             convexity_ratio = convexity / (modified_duration^2)
         )
+
+    # Validate we have enough data for analysis
+    if (nrow(conv_data) < 3) {
+        warning("generate_enhanced_convexity_plot: Insufficient data (need at least 3 bonds)")
+        return(
+            ggplot() +
+                annotate("text", x = 0.5, y = 0.5,
+                         label = "Insufficient data for convexity analysis\n(need at least 3 bonds)",
+                         size = 5, color = "#666666") +
+                theme_void() +
+                labs(title = "Convexity Profile Analysis")
+        )
+    }
 
     # Fit quadratic model for convexity ~ duration
     quad_fit <- tryCatch({
@@ -848,8 +872,17 @@ generate_enhanced_convexity_plot <- function(data, params = list()) {
         )
 
     # Calculate SE for confidence band
+    # CRITICAL: Handle edge cases where SE might be NA, 0, or infinite
     residuals <- conv_data$convexity - conv_data$predicted_convexity
     se <- sd(residuals, na.rm = TRUE)
+
+    # Default SE to 10% of convexity range if invalid
+    if (is.na(se) || !is.finite(se) || se <= 0) {
+        convexity_range <- diff(range(conv_data$convexity, na.rm = TRUE))
+        se <- max(convexity_range * 0.1, 1)  # At least 1 unit
+        warning("generate_enhanced_convexity_plot: Using default SE for confidence band")
+    }
+
     pred_data$convexity_lower <- pred_data$convexity - 1.96 * se
     pred_data$convexity_upper <- pred_data$convexity + 1.96 * se
 
@@ -861,9 +894,10 @@ generate_enhanced_convexity_plot <- function(data, params = list()) {
     p <- ggplot(conv_data, aes(x = modified_duration, y = convexity)) +
 
         # Confidence band for fit
+        # CRITICAL FIX: When inherit.aes = FALSE, x aesthetic must be explicitly specified
         geom_ribbon(
             data = pred_data,
-            aes(ymin = convexity_lower, ymax = convexity_upper),
+            aes(x = modified_duration, ymin = convexity_lower, ymax = convexity_upper),
             fill = "#E3F2FD",
             alpha = 0.5,
             inherit.aes = FALSE

@@ -2167,7 +2167,14 @@ server <- function(input, output, session) {
         notional <- as.numeric(input$dv01_notional) %||% 10000000
 
         # Get latest data per bond from processed_data
+        # CRITICAL: Filter out NA and invalid bond names
         bond_latest <- processed_data() %>%
+            filter(
+                !is.na(bond),
+                bond != "",
+                bond != "NA",
+                as.character(bond) != "NA"
+            ) %>%
             group_by(bond) %>%
             filter(date == max(date)) %>%
             slice(1) %>%
@@ -2183,14 +2190,23 @@ server <- function(input, output, session) {
                 dv01_absolute = notional * modified_duration * 0.0001,
                 dv01_millions = dv01_absolute / 1e6
             ) %>%
-            filter(!is.na(bond)) %>%
+            # CRITICAL: Filter out NA bonds and extreme VaR values
+            filter(
+                !is.na(bond),
+                bond != "",
+                bond != "NA",
+                as.character(bond) != "NA",
+                !is.na(VaR_95_bps),
+                is.finite(VaR_95_bps),
+                VaR_95_bps < 1000  # Filter extreme values
+            ) %>%
             # Sort by 95% VaR descending (highest risk first)
             arrange(desc(abs(VaR_95_bps)))
 
         # Verify bond count
         message(sprintf("Risk Metrics Table: %d bonds", nrow(risk_summary)))
 
-        # Format for display
+        # Format for display with explicit units in column headers
         display_table <- risk_summary %>%
             mutate(
                 Yield = sprintf("%.3f%%", yield_to_maturity),
@@ -2198,22 +2214,23 @@ server <- function(input, output, session) {
                 Duration = sprintf("%.2f", duration),
                 Convexity = sprintf("%.2f", convexity),
                 `DV01 (R mn)` = sprintf("%.3f", dv01_millions),
-                `95% VaR` = sprintf("%.0f bps", abs(VaR_95_bps)),
-                `99% VaR` = sprintf("%.0f bps", abs(VaR_99_bps)),
-                `CVaR (95%)` = sprintf("%.0f bps", abs(CVaR_95) * 100),
-                Volatility = sprintf("%.2f%%", vol)
+                # VaR values with explicit bps notation in data
+                `95% VaR (bps)` = sprintf("%.0f", abs(VaR_95_bps)),
+                `99% VaR (bps)` = sprintf("%.0f", abs(VaR_99_bps)),
+                `CVaR (bps)` = sprintf("%.0f", abs(CVaR_95) * 100),
+                `Volatility (%)` = sprintf("%.2f", vol)
             ) %>%
             select(
                 Bond = bond,
-                Yield,
-                `Mod Duration`,
-                Duration,
+                `Yield (%)` = Yield,
+                `Mod Dur (yrs)` = `Mod Duration`,
+                `Dur (yrs)` = Duration,
                 Convexity,
                 `DV01 (R mn)`,
-                `95% VaR`,
-                `99% VaR`,
-                `CVaR (95%)`,
-                Volatility
+                `95% VaR (bps)`,
+                `99% VaR (bps)`,
+                `CVaR (bps)`,
+                `Volatility (%)`
             )
 
         # Get notional display for caption
@@ -2248,19 +2265,26 @@ server <- function(input, output, session) {
             )
         ) %>%
             formatStyle(
-                "95% VaR",
+                "95% VaR (bps)",
                 backgroundColor = styleInterval(
                     c(100, 200),
-                    c("#E8F5E9", "#FFF3E0", "#FFEBEE")
+                    c("#E8F5E9", "#FFF3E0", "#FFEBEE")  # Green, Orange, Red
                 )
             ) %>%
             formatStyle(
-                "99% VaR",
+                "99% VaR (bps)",
                 backgroundColor = styleInterval(
                     c(150, 300),
-                    c("#E8F5E9", "#FFF3E0", "#FFEBEE")
+                    c("#E8F5E9", "#FFF3E0", "#FFEBEE")  # Green, Orange, Red
                 ),
                 fontWeight = styleInterval(200, c("normal", "bold"))
+            ) %>%
+            formatStyle(
+                "CVaR (bps)",
+                backgroundColor = styleInterval(
+                    c(150, 300),
+                    c("#E8F5E9", "#FFF3E0", "#FFEBEE")  # Green, Orange, Red
+                )
             ) %>%
             formatStyle(
                 "DV01 (R mn)",
