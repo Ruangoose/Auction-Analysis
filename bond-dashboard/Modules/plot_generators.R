@@ -1,5 +1,17 @@
-# Add this helper function at the top of the file (outside the plot function)
-get_spread_color_scale <- function(data, palette, scale_name = "Spread (bps)") {
+# ================================================================================
+# SPREAD COLOR SCALE HELPER FUNCTION
+# ================================================================================
+#' Get spread color scale for yield curve plots
+#'
+#' COLOR LOGIC (Institutional Bond Trading Convention):
+#'   - POSITIVE spread (actual > fitted) = CHEAP = GREEN = BUY signal
+#'   - NEGATIVE spread (actual < fitted) = RICH = RED = SELL/AVOID signal
+#'
+#' @param data Data frame with spread_to_curve column
+#' @param palette Color palette with success/danger colors
+#' @param scale_name Name for the legend
+#' @return ggplot2 scale_fill_gradient2 object
+get_spread_color_scale <- function(data, palette, scale_name = "Spread to Fair Value (bps)\nGreen = Cheap | Red = Rich") {
     # Calculate dynamic limits
     if ("spread_to_curve" %in% names(data) && sum(!is.na(data$spread_to_curve)) > 0) {
         spread_range <- range(data$spread_to_curve, na.rm = TRUE)
@@ -33,11 +45,13 @@ get_spread_color_scale <- function(data, palette, scale_name = "Spread (bps)") {
         spread_limit <- ceiling(spread_limit / 25) * 25
     }
 
-    # Return the scale
+    # Return the scale with CORRECT color encoding:
+    # LOW (negative) = RED (rich/expensive) = SELL signal
+    # HIGH (positive) = GREEN (cheap) = BUY signal
     scale_fill_gradient2(
-        low = palette$success,
-        mid = "white",
-        high = palette$danger,
+        low = "#D32F2F",      # Red for rich (negative spread - below curve)
+        mid = "#FFFFFF",       # White for fair value
+        high = "#388E3C",      # Green for cheap (positive spread - above curve)
         midpoint = 0,
         limits = c(-spread_limit, spread_limit),
         oob = scales::squish,
@@ -127,22 +141,68 @@ generate_enhanced_yield_curve <- function(data, params) {
     n_unique <- length(unique(x_data))
     adaptive_span <- max(0.75, min(1, 10/n_unique))
 
-    # Fit model based on selection
+    # ================================================================================
+    # FIT MODEL BASED ON SELECTION - Using SELECTED X-Axis Variable
+    # ================================================================================
+    # CRITICAL: Model must REFIT when x-axis changes (modified_duration, duration, time_to_maturity)
+    # All derived metrics (spreads, z-scores) are recalculated based on the new x-axis
+
     if (params$curve_model == "nss") {
-        # Nelson-Siegel-Svensson is a parametric model - use dedicated function
+        # Nelson-Siegel-Svensson model - fit using SELECTED x-axis variable
         tryCatch({
-            # Call the NSS implementation from data_processors
-            nss_result <- fit_nss_model(data)
+            # Use the selected x-axis variable for fitting (NOT hardcoded modified_duration)
+            x_values <- x_data  # This is data[[x_var]] - the selected x-axis variable
+            yields <- data$yield_to_maturity / 100  # Convert to decimal
 
-            if (!is.null(nss_result$params) && nss_result$convergence == 0) {
-                # Use NSS fitted values
-                data$fitted_yield <- nss_result$data$nss_fitted
+            # Filter valid data points
+            valid_idx <- !is.na(x_values) & !is.na(yields) & is.finite(x_values) & is.finite(yields)
+            x_values <- x_values[valid_idx]
+            yields <- yields[valid_idx]
 
-                # Predict on the smooth curve range
-                maturities <- curve_data$x_var
-                params_nss <- nss_result$params
+            req(length(x_values) >= 4)  # Need minimum bonds for NSS fitting
 
-                # NSS formula for prediction
+            # Initial parameter estimates
+            beta0 <- mean(yields, na.rm = TRUE)
+            beta1 <- yields[which.min(x_values)] - beta0
+            beta2 <- 0
+            beta3 <- 0
+            lambda1 <- 0.0609
+            lambda2 <- 0.0609
+
+            # NSS objective function using selected x variable
+            nss_objective <- function(params) {
+                b0 <- params[1]
+                b1 <- params[2]
+                b2 <- params[3]
+                b3 <- params[4]
+                l1 <- exp(params[5])
+                l2 <- exp(params[6])
+
+                # Handle edge cases for small x values
+                x_safe <- pmax(x_values, 0.01)
+
+                fitted <- b0 +
+                    b1 * (1 - exp(-x_safe/l1)) / (x_safe/l1) +
+                    b2 * ((1 - exp(-x_safe/l1)) / (x_safe/l1) - exp(-x_safe/l1)) +
+                    b3 * ((1 - exp(-x_safe/l2)) / (x_safe/l2) - exp(-x_safe/l2))
+
+                sum((yields - fitted)^2, na.rm = TRUE)
+            }
+
+            # Optimize
+            opt_result <- optim(
+                c(beta0, beta1, beta2, beta3, log(lambda1), log(lambda2)),
+                nss_objective,
+                method = "BFGS",
+                control = list(maxit = 500)
+            )
+
+            if (opt_result$convergence == 0) {
+                params_nss <- opt_result$par
+
+                # Predict on the smooth curve range using selected x-axis
+                maturities <- pmax(curve_data$x_var, 0.01)
+
                 curve_data$yield <- params_nss[1] +
                     params_nss[2] * (1 - exp(-maturities/exp(params_nss[5]))) / (maturities/exp(params_nss[5])) +
                     params_nss[3] * ((1 - exp(-maturities/exp(params_nss[5]))) / (maturities/exp(params_nss[5])) -
@@ -152,10 +212,23 @@ generate_enhanced_yield_curve <- function(data, params) {
 
                 curve_data$yield <- curve_data$yield * 100  # Convert back to percentage
 
+                # Calculate fitted values for actual bonds (for residuals/spreads)
+                x_bonds <- pmax(x_data, 0.01)
+                data$fitted_yield <- params_nss[1] +
+                    params_nss[2] * (1 - exp(-x_bonds/exp(params_nss[5]))) / (x_bonds/exp(params_nss[5])) +
+                    params_nss[3] * ((1 - exp(-x_bonds/exp(params_nss[5]))) / (x_bonds/exp(params_nss[5])) -
+                                         exp(-x_bonds/exp(params_nss[5]))) +
+                    params_nss[4] * ((1 - exp(-x_bonds/exp(params_nss[6]))) / (x_bonds/exp(params_nss[6])) -
+                                         exp(-x_bonds/exp(params_nss[6])))
+                data$fitted_yield <- data$fitted_yield * 100
+
+                # Recalculate spread_to_curve based on new fit
+                data$spread_to_curve <- data$yield_to_maturity - data$fitted_yield
+
                 # Calculate confidence bands based on residuals
                 residuals <- data$yield_to_maturity - data$fitted_yield
                 n <- length(residuals[!is.na(residuals)])
-                df <- n - 6  # NSS has 6 parameters
+                df <- max(n - 6, 1)  # NSS has 6 parameters
                 se <- sqrt(sum(residuals^2, na.rm = TRUE) / df)
 
                 curve_data$yield_lower <- curve_data$yield - 1.96 * se
@@ -173,6 +246,10 @@ generate_enhanced_yield_curve <- function(data, params) {
                 curve_data$yield <- curve_predictions$fit
                 curve_data$yield_lower <- curve_predictions$fit - 1.96 * curve_predictions$se.fit
                 curve_data$yield_upper <- curve_predictions$fit + 1.96 * curve_predictions$se.fit
+
+                # Calculate spread for fallback
+                data$fitted_yield <- predict(lm_model, newdata = data.frame(x_var = x_data))
+                data$spread_to_curve <- data$yield_to_maturity - data$fitted_yield
             }
         }, error = function(e) {
             # NSS failed - fallback to polynomial
@@ -186,6 +263,10 @@ generate_enhanced_yield_curve <- function(data, params) {
             curve_data$yield <- curve_predictions$fit
             curve_data$yield_lower <- curve_predictions$fit - 1.96 * curve_predictions$se.fit
             curve_data$yield_upper <- curve_predictions$fit + 1.96 * curve_predictions$se.fit
+
+            # Calculate spread for fallback
+            data$fitted_yield <- predict(lm_model, newdata = data.frame(x_var = x_data))
+            data$spread_to_curve <- data$yield_to_maturity - data$fitted_yield
         })
 
     } else if (params$curve_model == "loess") {
@@ -200,10 +281,13 @@ generate_enhanced_yield_curve <- function(data, params) {
                                          se = TRUE)
             curve_data$yield <- curve_predictions$fit
 
+            # Calculate fitted values for bonds and recalculate spread
+            data$fitted_yield <- predict(model_fit, newdata = data.frame(x_var = x_data))
+            data$spread_to_curve <- data$yield_to_maturity - data$fitted_yield
+
             if(any(is.na(curve_predictions$se.fit))) {
                 # Fallback SE calculation
-                residuals <- data$yield_to_maturity - predict(model_fit,
-                                                              data.frame(x_var = x_data))
+                residuals <- data$yield_to_maturity - data$fitted_yield
                 n <- length(residuals[!is.na(residuals)])
                 # Approximate df for loess
                 df <- n * (1 - adaptive_span)
@@ -225,6 +309,10 @@ generate_enhanced_yield_curve <- function(data, params) {
             se <- summary(lm_model)$sigma
             curve_data$yield_lower <- curve_data$yield - 1.96 * se
             curve_data$yield_upper <- curve_data$yield + 1.96 * se
+
+            # Calculate spread for fallback
+            data$fitted_yield <- predict(lm_model, newdata = data.frame(x_var = x_data))
+            data$spread_to_curve <- data$yield_to_maturity - data$fitted_yield
         })
 
     } else if (params$curve_model == "spline") {
@@ -235,8 +323,12 @@ generate_enhanced_yield_curve <- function(data, params) {
                                        spar = 0.6)
             curve_data$yield <- predict(model_fit, curve_data$x_var)$y
 
+            # Calculate fitted values for bonds and recalculate spread
+            data$fitted_yield <- predict(model_fit, x_data)$y
+            data$spread_to_curve <- data$yield_to_maturity - data$fitted_yield
+
             # Calculate proper SE with degrees of freedom
-            residuals <- data$yield_to_maturity - predict(model_fit, x_data)$y
+            residuals <- data$yield_to_maturity - data$fitted_yield
             n <- length(residuals[!is.na(residuals)])
             df <- model_fit$df  # smooth.spline provides df
             se <- sqrt(sum(residuals^2, na.rm = TRUE) / df)
@@ -267,6 +359,10 @@ generate_enhanced_yield_curve <- function(data, params) {
             curve_data$yield <- curve_predictions$fit
             curve_data$yield_lower <- curve_predictions$fit - 1.96 * curve_predictions$se.fit
             curve_data$yield_upper <- curve_predictions$fit + 1.96 * curve_predictions$se.fit
+
+            # Calculate fitted values for bonds and recalculate spread
+            data$fitted_yield <- predict(lm_model, newdata = data.frame(x_var = x_data))
+            data$spread_to_curve <- data$yield_to_maturity - data$fitted_yield
         }, error = function(e) {
             # Final fallback - simple linear
             lm_model <- lm(yield_to_maturity ~ x_var,
@@ -277,6 +373,10 @@ generate_enhanced_yield_curve <- function(data, params) {
             se <- summary(lm_model)$sigma
             curve_data$yield_lower <- curve_data$yield - 1.96 * se
             curve_data$yield_upper <- curve_data$yield + 1.96 * se
+
+            # Calculate spread for fallback
+            data$fitted_yield <- predict(lm_model, newdata = data.frame(x_var = x_data))
+            data$spread_to_curve <- data$yield_to_maturity - data$fitted_yield
         })
     } else {
         # Unknown model - use polynomial as default
@@ -293,50 +393,115 @@ generate_enhanced_yield_curve <- function(data, params) {
     spread_range <- range(data$spread_to_curve, na.rm = TRUE)
     spread_limit <- max(abs(spread_range)) * 1.1  # Add 10% buffer
 
+    # ================================================================================
+    # READ ADVANCED SETTINGS WITH DEFAULTS
+    # ================================================================================
+    show_labels <- params$show_labels %||% TRUE
+    show_confidence_band <- params$show_confidence_band %||% TRUE
+    point_size_metric <- params$point_size_metric %||% "zscore"
+    confidence_level <- params$confidence_level %||% 0.95
 
-    # Create the plot
-    p <- ggplot(data, aes(x = x_var_plot)) +
-        geom_ribbon(data = curve_data,
-                    aes(y = yield, ymin = yield_lower, ymax = yield_upper),
-                    alpha = 0.15,
-                    fill = insele_palette$primary) +
+    # Determine point size variable based on setting
+    if (point_size_metric == "zscore") {
+        data$point_size_var <- abs(data$z_score)
+        size_name <- "|Z-Score|\nSignal Strength"
+        size_breaks <- c(0.5, 1.5, 2.5)
+        size_labels <- c("Weak", "Moderate", "Strong")
+        size_limits <- c(0, 3)
+    } else if (point_size_metric == "spread") {
+        data$point_size_var <- abs(data$spread_to_curve)
+        size_name <- "|Spread|\n(bps)"
+        spread_max <- max(abs(data$spread_to_curve), na.rm = TRUE)
+        size_breaks <- pretty(c(0, spread_max), n = 3)
+        size_labels <- as.character(round(size_breaks))
+        size_limits <- c(0, spread_max * 1.1)
+    } else {
+        # Uniform size
+        data$point_size_var <- 5  # Fixed size
+        size_name <- NULL
+        size_breaks <- NULL
+        size_labels <- NULL
+        size_limits <- c(4, 6)
+    }
+
+    # ================================================================================
+    # BUILD PLOT LAYERS
+    # ================================================================================
+
+    # Start with base plot
+    p <- ggplot(data, aes(x = x_var_plot))
+
+    # Add confidence band (if enabled)
+    if (show_confidence_band) {
+        p <- p +
+            geom_ribbon(data = curve_data,
+                        aes(y = yield, ymin = yield_lower, ymax = yield_upper),
+                        alpha = 0.15,
+                        fill = insele_palette$primary)
+    }
+
+    # Add fitted curve line
+    p <- p +
         geom_line(data = curve_data,
                   aes(y = yield),
                   color = insele_palette$primary,
-                  linewidth = 1.5,  # Changed from size to linewidth (ggplot2 update)
-                  alpha = 0.9) +
+                  linewidth = 1.5,
+                  alpha = 0.9)
+
+    # Add bond points
+    p <- p +
         geom_point(aes(y = yield_to_maturity,
                        fill = spread_to_curve,
-                       size = abs(z_score)),
+                       size = point_size_var),
                    shape = 21,
                    stroke = 1.5,
                    color = "white",
-                   alpha = 0.9) +
-        ggrepel::geom_text_repel(
-            data = smart_label(data, "bond", "z_score", max_labels = 10),
-            aes(y = yield_to_maturity, label = bond),
-            size = 3.5,
-            max.overlaps = 20,
-            segment.size = 0.3,
-            segment.alpha = 0.6,
-            box.padding = 0.4,
-            point.padding = 0.3,
-            force = 2,
-            color = insele_palette$dark_gray,
-            family = if(Sys.info()["sysname"] == "Windows") "sans" else "Helvetica"
-        ) +
-        # USE THE DYNAMIC SCALE FUNCTION HERE
-        get_spread_color_scale(data, insele_palette, "Spread (bps)") +
-        scale_size_continuous(
-            range = c(3, 10),
-            name = "|Z-Score|",
-            breaks = c(0, 1, 2, 3, 4, 5),  # Added explicit breaks for clarity
-            labels = function(x) sprintf("%.0f", x),
-            guide = guide_legend(
-                title.position = "top",
-                title.hjust = 0.5
+                   alpha = 0.9)
+
+    # Add labels (if enabled)
+    if (show_labels) {
+        p <- p +
+            ggrepel::geom_text_repel(
+                data = smart_label(data, "bond", "z_score", max_labels = 10),
+                aes(y = yield_to_maturity, label = bond),
+                size = 3.5,
+                max.overlaps = 20,
+                segment.size = 0.3,
+                segment.alpha = 0.6,
+                box.padding = 0.4,
+                point.padding = 0.3,
+                force = 2,
+                color = insele_palette$dark_gray,
+                family = if(Sys.info()["sysname"] == "Windows") "sans" else "Helvetica"
             )
-        ) +
+    }
+
+    # Add scales
+    p <- p +
+        # USE THE DYNAMIC SCALE FUNCTION HERE - with correct color encoding
+        get_spread_color_scale(data, insele_palette)
+
+    # Add size scale (if not uniform)
+    if (point_size_metric != "uniform") {
+        p <- p +
+            scale_size_continuous(
+                range = c(3, 12),
+                limits = size_limits,
+                name = size_name,
+                breaks = size_breaks,
+                labels = size_labels,
+                oob = scales::squish,
+                guide = guide_legend(
+                    title.position = "top",
+                    title.hjust = 0.5,
+                    override.aes = list(fill = insele_palette$primary)
+                )
+            )
+    } else {
+        p <- p + scale_size_identity()
+    }
+
+    p <- p +
         scale_x_continuous(
             breaks = pretty_breaks(n = 10),
             expand = c(0.02, 0)
@@ -368,7 +533,11 @@ generate_enhanced_yield_curve <- function(data, params) {
             },
             x = x_label,
             y = "Yield to Maturity",
-            caption = "Point size = |Z-Score| | Color = Spread to curve | 95% confidence band shown"
+            caption = paste0(
+                "Z-Score = Signal Strength (|Z| > 2 = Strong, |Z| > 1.5 = Moderate) | ",
+                "Color = Spread to Fair Value (Green = Cheap/BUY, Red = Rich/SELL) | ",
+                "95% confidence band shown"
+            )
         ) +
         create_insele_theme()
 

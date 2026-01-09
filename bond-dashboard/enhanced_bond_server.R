@@ -1193,13 +1193,45 @@ server <- function(input, output, session) {
     # ================================================================================
 
     # 1. Enhanced Yield Curve Plot
+    # ========================================================================
+    # CRITICAL: Plot REFITS when x-axis changes
+    # All settings from Advanced Settings modal are passed to the generator
+    # ========================================================================
     output$enhanced_yield_curve <- renderPlot({
         req(processed_data())
+
+        # Read advanced settings with fallback defaults
+        show_labels <- if(exists("curve_advanced_settings")) {
+            curve_advanced_settings$show_labels
+        } else {
+            TRUE
+        }
+
+        show_conf_band <- if(exists("curve_advanced_settings")) {
+            curve_advanced_settings$show_confidence_band
+        } else {
+            TRUE
+        }
+
+        point_size_metric <- if(exists("curve_advanced_settings")) {
+            curve_advanced_settings$point_size_metric
+        } else {
+            "zscore"
+        }
+
+        confidence_level <- input$confidence_level %||% 95
+
+        # Generate plot with all settings
         p <- generate_enhanced_yield_curve(
             processed_data(),
             list(
                 xaxis_choice = input$xaxis_choice,
-                curve_model = input$curve_model
+                curve_model = input$curve_model,
+                lookback = input$lookback_days %||% 60,
+                show_labels = show_labels,
+                show_confidence_band = show_conf_band,
+                point_size_metric = point_size_metric,
+                confidence_level = confidence_level / 100
             )
         )
         if(!is.null(p)) print(p)
@@ -2870,18 +2902,128 @@ server <- function(input, output, session) {
         curve_level <- mean(data$yield_to_maturity, na.rm = TRUE)
         curve_curvature <- 2 * medium_yield - short_yield - long_yield
 
+        # Calculate model fit quality
+        avg_spread <- mean(abs(data$spread_to_curve), na.rm = TRUE)
+        r_squared <- tryCatch({
+            summary(lm(yield_to_maturity ~ modified_duration, data = data))$r.squared
+        }, error = function(e) NA_real_)
+
+        # ================================================================================
+        # TRADING SIGNALS - Actionable Intelligence
+        # ================================================================================
+
+        # Ensure z_score and spread_to_curve exist
+        if (!"z_score" %in% names(data)) data$z_score <- 0
+        if (!"spread_to_curve" %in% names(data)) data$spread_to_curve <- 0
+
+        # Get latest observation per bond for signals
+        latest_data <- data %>%
+            group_by(bond) %>%
+            filter(date == max(date)) %>%
+            ungroup() %>%
+            mutate(zscore_abs = abs(z_score))
+
+        # Find cheapest bond (highest positive spread = above curve = buy signal)
+        cheapest <- latest_data %>%
+            filter(!is.na(spread_to_curve)) %>%
+            filter(spread_to_curve == max(spread_to_curve, na.rm = TRUE)) %>%
+            slice(1)
+
+        # Find richest bond (lowest/most negative spread = below curve = sell signal)
+        richest <- latest_data %>%
+            filter(!is.na(spread_to_curve)) %>%
+            filter(spread_to_curve == min(spread_to_curve, na.rm = TRUE)) %>%
+            slice(1)
+
+        # Find highest conviction trade (highest |z-score|)
+        highest_conviction <- latest_data %>%
+            filter(!is.na(z_score)) %>%
+            filter(zscore_abs == max(zscore_abs, na.rm = TRUE)) %>%
+            slice(1)
+
+        # Count actionable signals (|z-score| > 1.5)
+        actionable_count <- sum(latest_data$zscore_abs > 1.5, na.rm = TRUE)
+
         tagList(
+            # ═══════════════════════════════════════════════════════════
+            # CURVE METRICS SECTION
+            # ═══════════════════════════════════════════════════════════
+            h5("Curve Metrics", style = "color: #1B3A6B; font-weight: bold; margin-top: 0;"),
             tags$div(
                 tags$p(tags$b("Level:"), sprintf(" %.2f%%", curve_level)),
                 tags$p(tags$b("Slope (2s10s):"), sprintf(" %.0f bps", curve_slope)),
-                tags$p(tags$b("Curvature:"), sprintf(" %.2f%%", curve_curvature)),
-                hr(),
+                tags$p(tags$b("Curvature:"), sprintf(" %.2f%%", curve_curvature))
+            ),
+            hr(style = "margin: 10px 0;"),
+
+            # ═══════════════════════════════════════════════════════════
+            # SECTOR YIELDS SECTION
+            # ═══════════════════════════════════════════════════════════
+            tags$div(
                 tags$p(tags$b("Short (<5y):"), sprintf(" %.2f%%", short_yield)),
                 tags$p(tags$b("Medium (5-10y):"), sprintf(" %.2f%%", medium_yield)),
-                tags$p(tags$b("Long (>10y):"), sprintf(" %.2f%%", long_yield)),
-                hr(),
-                tags$p(tags$b("Avg Spread:"), sprintf(" %.1f bps", mean(abs(data$spread_to_curve), na.rm = TRUE))),
-                tags$p(tags$b("Model R²:"), sprintf(" %.3f", summary(lm(yield_to_maturity ~ modified_duration, data = data))$r.squared))
+                tags$p(tags$b("Long (>10y):"), sprintf(" %.2f%%", long_yield))
+            ),
+            hr(style = "margin: 10px 0;"),
+
+            # ═══════════════════════════════════════════════════════════
+            # MODEL QUALITY SECTION
+            # ═══════════════════════════════════════════════════════════
+            tags$div(
+                tags$p(tags$b("Avg |Spread|:"), sprintf(" %.1f bps", avg_spread)),
+                tags$p(tags$b("Model R²:"), sprintf(" %.3f", ifelse(is.na(r_squared), 0, r_squared)))
+            ),
+            hr(style = "margin: 10px 0;"),
+
+            # ═══════════════════════════════════════════════════════════
+            # TRADING SIGNALS SECTION (NEW!)
+            # ═══════════════════════════════════════════════════════════
+            h5("Trading Signals", style = "color: #1B3A6B; font-weight: bold;"),
+
+            # Cheapest bond (BUY signal)
+            if (nrow(cheapest) > 0 && !is.na(cheapest$spread_to_curve[1])) {
+                tags$p(
+                    tags$b("Cheapest: "),
+                    tags$span(cheapest$bond[1], style = "color: #388E3C; font-weight: bold;"),
+                    sprintf(" (+%.1f bps)", cheapest$spread_to_curve[1])
+                )
+            } else {
+                tags$p(tags$b("Cheapest: "), "N/A")
+            },
+
+            # Richest bond (SELL signal)
+            if (nrow(richest) > 0 && !is.na(richest$spread_to_curve[1])) {
+                tags$p(
+                    tags$b("Richest: "),
+                    tags$span(richest$bond[1], style = "color: #D32F2F; font-weight: bold;"),
+                    sprintf(" (%.1f bps)", richest$spread_to_curve[1])
+                )
+            } else {
+                tags$p(tags$b("Richest: "), "N/A")
+            },
+
+            # Highest conviction trade
+            if (nrow(highest_conviction) > 0 && !is.na(highest_conviction$z_score[1])) {
+                tags$p(
+                    tags$b("Highest Conviction: "),
+                    highest_conviction$bond[1],
+                    sprintf(" (Z=%.2f)", highest_conviction$z_score[1])
+                )
+            } else {
+                tags$p(tags$b("Highest Conviction: "), "N/A")
+            },
+
+            # Actionable signals count
+            tags$p(
+                tags$b("Actionable Signals: "),
+                sprintf("%d bonds with |Z| > 1.5", actionable_count)
+            ),
+
+            # Z-Score explanation
+            tags$p(
+                class = "text-muted small",
+                style = "margin-top: 10px; font-size: 11px;",
+                "Z-Score measures statistical significance: |Z| > 2 = strong signal, |Z| > 1.5 = moderate signal"
             )
         )
     })
@@ -4711,39 +4853,170 @@ $$Net Return = Carry + Roll - Funding Cost$$
     })
 
 
-    # Add this observeEvent to server
+    # ================================================================================
+    # ADVANCED CURVE SETTINGS MODAL
+    # ================================================================================
+    # Settings for yield curve analysis:
+    # - Curve model type (NSS, Spline, LOESS, Polynomial)
+    # - Confidence band width
+    # - Show/hide bond labels
+    # - Point size metric (Z-Score vs Spread magnitude)
+    # - Historical lookback period for Z-Score calculation
+
+    # Store advanced settings in reactive values
+    curve_advanced_settings <- reactiveValues(
+        model_type = "nss",
+        confidence_level = 0.95,
+        show_labels = TRUE,
+        show_confidence_band = TRUE,
+        point_size_metric = "zscore",
+        lookback_period = 60
+    )
+
     observeEvent(input$show_curve_settings, {
         showModal(modalDialog(
-            title = "Advanced Curve Settings",
+            title = tags$div(
+                icon("cog"),
+                " Advanced Curve Settings",
+                style = "color: #1B3A6B;"
+            ),
             size = "m",
 
-            selectInput("curve_interpolation", "Interpolation Method:",
-                        choices = list(
-                            "Smooth Spline" = "spline",
-                            "Nelson-Siegel-Svensson" = "nss",
-                            "LOESS" = "loess",
-                            "Cubic Spline" = "cubic"
-                        ),
-                        selected = isolate(input$curve_model)
-            ),
+            tags$div(
+                style = "padding: 10px;",
 
-            sliderInput("confidence_band", "Confidence Band:",
-                        min = 90, max = 99, value = 95, step = 1, post = "%"
-            ),
+                # ─────────────────────────────────────────────────────────────
+                # CURVE MODEL SECTION
+                # ─────────────────────────────────────────────────────────────
+                h5("Curve Model", style = "color: #1B3A6B; font-weight: bold; margin-top: 0;"),
 
-            checkboxInput("show_confidence_band", "Show Confidence Band", value = TRUE),
-            checkboxInput("show_bond_labels", "Show Bond Labels", value = TRUE),
+                selectInput("adv_model_type", "Curve Fitting Method:",
+                            choices = list(
+                                "Nelson-Siegel-Svensson" = "nss",
+                                "Smooth Spline" = "spline",
+                                "LOESS (Local Regression)" = "loess",
+                                "Polynomial" = "polynomial"
+                            ),
+                            selected = isolate(curve_advanced_settings$model_type)
+                ),
+                tags$p(class = "text-muted small", style = "margin-top: -10px;",
+                       "NSS is the industry standard for yield curve fitting"),
+
+                hr(),
+
+                # ─────────────────────────────────────────────────────────────
+                # CONFIDENCE & DISPLAY SECTION
+                # ─────────────────────────────────────────────────────────────
+                h5("Display Options", style = "color: #1B3A6B; font-weight: bold;"),
+
+                sliderInput("adv_confidence", "Confidence Band:",
+                            min = 80, max = 99, value = isolate(curve_advanced_settings$confidence_level * 100),
+                            step = 1, post = "%"
+                ),
+
+                fluidRow(
+                    column(6,
+                           checkboxInput("adv_show_confidence_band", "Show Confidence Band",
+                                         value = isolate(curve_advanced_settings$show_confidence_band))
+                    ),
+                    column(6,
+                           checkboxInput("adv_show_labels", "Show Bond Labels",
+                                         value = isolate(curve_advanced_settings$show_labels))
+                    )
+                ),
+
+                hr(),
+
+                # ─────────────────────────────────────────────────────────────
+                # POINT SIZE & Z-SCORE SECTION
+                # ─────────────────────────────────────────────────────────────
+                h5("Point Sizing", style = "color: #1B3A6B; font-weight: bold;"),
+
+                selectInput("adv_point_size_metric", "Point Size Represents:",
+                            choices = list(
+                                "Z-Score Magnitude (Signal Strength)" = "zscore",
+                                "Spread Magnitude" = "spread",
+                                "Uniform Size" = "uniform"
+                            ),
+                            selected = isolate(curve_advanced_settings$point_size_metric)
+                ),
+                tags$p(class = "text-muted small", style = "margin-top: -10px;",
+                       "Z-Score shows how unusual the current spread is historically"),
+
+                sliderInput("adv_lookback_period", "Z-Score Lookback Period:",
+                            min = 20, max = 120, value = isolate(curve_advanced_settings$lookback_period),
+                            step = 10, post = " days"
+                ),
+                tags$p(class = "text-muted small", style = "margin-top: -10px;",
+                       "Days of history used for rolling mean/std calculation"),
+
+                hr(),
+
+                # ─────────────────────────────────────────────────────────────
+                # Z-SCORE EXPLANATION
+                # ─────────────────────────────────────────────────────────────
+                tags$div(
+                    style = "background: #e8f4f8; padding: 10px; border-radius: 5px; border-left: 3px solid #1B3A6B;",
+                    tags$strong("Z-Score Interpretation:", style = "color: #1B3A6B;"),
+                    tags$ul(style = "margin-bottom: 0; padding-left: 20px;",
+                            tags$li("|Z| > 2.0 = Strong signal (statistically significant)"),
+                            tags$li("|Z| > 1.5 = Moderate signal"),
+                            tags$li("|Z| < 1.0 = Weak signal (normal variation)")
+                    )
+                )
+            ),
 
             footer = tagList(
+                actionButton("reset_curve_settings", "Reset to Defaults",
+                             class = "btn-default", icon = icon("undo")),
                 modalButton("Cancel"),
                 actionButton("apply_curve_settings", "Apply", class = "btn-primary")
             )
         ))
     })
 
+    # Apply advanced settings
     observeEvent(input$apply_curve_settings, {
-        updateSelectInput(session, "curve_model", selected = input$curve_interpolation)
+        # Update the main curve model selector
+        updateSelectInput(session, "curve_model", selected = input$adv_model_type)
+
+        # Update the lookback days slider
+        updateSliderInput(session, "lookback_days", value = input$adv_lookback_period)
+
+        # Update the confidence level slider
+        updateSliderInput(session, "confidence_level", value = input$adv_confidence)
+
+        # Store settings in reactive values for plot use
+        curve_advanced_settings$model_type <- input$adv_model_type
+        curve_advanced_settings$confidence_level <- input$adv_confidence / 100
+        curve_advanced_settings$show_labels <- input$adv_show_labels
+        curve_advanced_settings$show_confidence_band <- input$adv_show_confidence_band
+        curve_advanced_settings$point_size_metric <- input$adv_point_size_metric
+        curve_advanced_settings$lookback_period <- input$adv_lookback_period
+
+        showNotification(
+            "Curve settings applied successfully",
+            type = "message",
+            duration = 3
+        )
+
         removeModal()
+    })
+
+    # Reset to defaults
+    observeEvent(input$reset_curve_settings, {
+        updateSelectInput(session, "adv_model_type", selected = "nss")
+        updateSliderInput(session, "adv_confidence", value = 95)
+        updateCheckboxInput(session, "adv_show_confidence_band", value = TRUE)
+        updateCheckboxInput(session, "adv_show_labels", value = TRUE)
+        updateSelectInput(session, "adv_point_size_metric", selected = "zscore")
+        updateSliderInput(session, "adv_lookback_period", value = 60)
+
+        showNotification(
+            "Settings reset to defaults",
+            type = "message",
+            duration = 2
+        )
     })
 
     # Add modal for methodology
