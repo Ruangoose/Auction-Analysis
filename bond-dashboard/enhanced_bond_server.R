@@ -2182,8 +2182,13 @@ server <- function(input, output, session) {
             select(bond, yield_to_maturity, modified_duration, duration, convexity)
 
         # Combine with VaR metrics - use full join to ensure all bonds appear
+        # IMPORTANT: Remove modified_duration from var_data to avoid duplicate columns
+        # (bond_latest already has modified_duration, and full_join creates .x/.y suffixes for duplicates)
+        var_metrics <- var_data() %>%
+            select(-modified_duration)
+
         risk_summary <- bond_latest %>%
-            full_join(var_data(), by = "bond") %>%
+            full_join(var_metrics, by = "bond") %>%
             mutate(
                 # Calculate DV01 using same formula as DV01 ladder
                 # DV01 = Notional × Modified Duration × 0.0001
