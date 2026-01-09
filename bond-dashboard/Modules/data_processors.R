@@ -820,47 +820,142 @@ add_default_technicals <- function(data) {
 }
 
 #' @export
-# Value-at-Risk Calculation - FIXED VERSION
-#' @description Calculates VaR, CVaR, and distribution statistics
-#' @details CVaR (Expected Shortfall) is the average of all losses beyond VaR threshold
-#'          CVaR must always be more extreme (more negative) than VaR
+# Value-at-Risk Calculation - CORRECTED VERSION
+#' @description Calculates VaR, CVaR, and distribution statistics using DURATION-BASED price returns
+#' @details
+#'   CRITICAL FIX: Now uses proper bond pricing formula instead of yield percentage change.
+#'   Price Return = -Modified Duration × Δ Yield + ½ × Convexity × (Δ Yield)²
+#'
+#'   This ensures VaR correctly scales with duration:
+#'   - Longer duration bonds have HIGHER VaR (more price sensitivity)
+#'   - Expected VaR per year of duration: ~10-25 bps for SA govt bonds
+#'
+#'   CVaR (Expected Shortfall) is the average of all losses beyond VaR threshold
+#'   CVaR must always be more extreme (more negative) than VaR
 calculate_var <- memoise(function(data, confidence_levels = c(0.95, 0.99), horizon = 1) {
     safe_execute({
-        # CRITICAL: Filter out invalid bond names BEFORE calculations
-        # This prevents NA rows from appearing in Risk Ladder
+        # ════════════════════════════════════════════════════════════════════════
+        # STEP 1: CRITICAL DATA FILTERING - Remove NA bonds at SOURCE
+        # ════════════════════════════════════════════════════════════════════════
+        # This must happen BEFORE any grouping to prevent NA groups from forming
+
         data <- data %>%
             filter(
+                # Bond name validation - comprehensive check
                 !is.na(bond),
                 bond != "",
                 bond != "NA",
+                as.character(bond) != "NA",
+                nchar(trimws(as.character(bond))) > 0,
+
+                # Data quality checks
                 !is.na(yield_to_maturity),
-                is.finite(yield_to_maturity)
+                is.finite(yield_to_maturity),
+                yield_to_maturity > 0,
+                yield_to_maturity < 30,  # SA govt bonds typically 5-15%
+
+                # Duration and convexity required for proper calculation
+                !is.na(modified_duration),
+                is.finite(modified_duration),
+                modified_duration > 0,
+                modified_duration < 50,  # Sanity check for govt bonds
+
+                !is.na(convexity),
+                is.finite(convexity),
+                convexity > 0
             )
 
-        # First calculate returns for each bond
+        # Log data quality after filtering
+        n_bonds <- n_distinct(data$bond)
+        message(sprintf("[calculate_var] Processing %d bonds after filtering", n_bonds))
+
+        if (n_bonds == 0) {
+            warning("calculate_var: No valid bonds after filtering - check data quality")
+            return(data.frame())
+        }
+
+        # ════════════════════════════════════════════════════════════════════════
+        # STEP 2: CALCULATE DURATION-BASED PRICE RETURNS (CORRECTED FORMULA)
+        # ════════════════════════════════════════════════════════════════════════
+        #
+        # CRITICAL FIX: Previous code used yield PERCENTAGE change which is WRONG!
+        #
+        # OLD (WRONG): daily_return = (yield_t - yield_t1) / yield_t1 × 100
+        #   This produces INVERSE relationship: short duration bonds show HIGHER VaR
+        #   because yield changes are proportionally larger for lower-yielding bonds
+        #
+        # NEW (CORRECT): Price Return = -Duration × Δ Yield + ½ × Convexity × (Δ Yield)²
+        #   This produces CORRECT relationship: longer duration = higher VaR
+        #   Because longer duration bonds are more sensitive to yield changes
+        #
+        # Example: If yield rises 10 bps (0.001 in decimal):
+        #   R186 (4.69y duration): Price change ≈ -4.69 × 0.001 × 100 = -0.47%
+        #   R2053 (23.82y duration): Price change ≈ -23.82 × 0.001 × 100 = -2.38%
+        #   → R2053 correctly shows ~5x higher price sensitivity
+
         returns_data <- data %>%
             group_by(bond) %>%
             arrange(date) %>%
             mutate(
-                daily_return = (yield_to_maturity - lag(yield_to_maturity)) / lag(yield_to_maturity) * 100
+                # ABSOLUTE yield change in decimal form (NOT percentage change!)
+                # yield_to_maturity is in percentage (e.g., 8.5), divide by 100 to get decimal
+                # Δ yield in decimal: e.g., 0.001 = 10 basis points
+                yield_change = (yield_to_maturity - lag(yield_to_maturity)) / 100,
+
+                # CORRECT price return using bond pricing formula
+                # Price Return = -Modified Duration × Δy + 0.5 × Convexity × (Δy)²
+                # Multiply by 100 to express as percentage
+                price_return = (-modified_duration * yield_change +
+                               0.5 * convexity * (yield_change^2)) * 100
             ) %>%
-            filter(!is.na(daily_return)) %>%
+            # Remove first row per bond (no lag available) and any invalid returns
+            filter(
+                !is.na(price_return),
+                is.finite(price_return),
+                abs(price_return) < 15  # Cap at 15% daily move (very extreme for govt bonds)
+            ) %>%
             ungroup()
 
-        # Calculate VaR metrics with proper CVaR calculation
+        # Verify we have enough data
+        obs_per_bond <- returns_data %>%
+            group_by(bond) %>%
+            summarise(n_obs = n(), .groups = "drop")
+
+        # Require at least 20 observations for meaningful VaR calculation
+        valid_bonds <- obs_per_bond %>%
+            filter(n_obs >= 20) %>%
+            pull(bond)
+
+        returns_data <- returns_data %>%
+            filter(bond %in% valid_bonds)
+
+        if (nrow(returns_data) == 0) {
+            warning("calculate_var: No bonds with sufficient observations (min 20)")
+            return(data.frame())
+        }
+
+        # ════════════════════════════════════════════════════════════════════════
+        # STEP 3: CALCULATE VAR METRICS WITH PROPER PRICE RETURNS
+        # ════════════════════════════════════════════════════════════════════════
+
         var_results <- returns_data %>%
             group_by(bond) %>%
             summarise(
+                # Get duration for validation
+                modified_duration = first(modified_duration),
+
+                # Sample statistics using PRICE returns (not yield returns)
                 n_observations = n(),
-                mean_return = mean(daily_return),
-                vol = sd(daily_return),
-                skewness = moments::skewness(daily_return),
+                mean_return = mean(price_return),
+                vol = sd(price_return),
+                skewness = moments::skewness(price_return),
                 # Use EXCESS kurtosis (normal = 0) for easier interpretation
-                kurtosis = moments::kurtosis(daily_return) - 3,
+                kurtosis = moments::kurtosis(price_return) - 3,
 
                 # Historical VaR (left tail quantiles - losses)
-                VaR_95_hist = quantile(daily_return, 0.05),
-                VaR_99_hist = quantile(daily_return, 0.01),
+                # These are PRICE returns, so left tail = price losses
+                VaR_95_hist = quantile(price_return, 0.05),
+                VaR_99_hist = quantile(price_return, 0.01),
 
                 # Parametric VaR (assuming normal distribution)
                 VaR_95_param = mean_return - 1.645 * vol * sqrt(horizon),
@@ -868,29 +963,25 @@ calculate_var <- memoise(function(data, confidence_levels = c(0.95, 0.99), horiz
 
                 # CORRECTED CVaR (Expected Shortfall) Calculation
                 # CVaR_95 = Average of all returns in the WORST 5% of observations
-                # This uses < instead of <= to get returns WORSE than VaR threshold
                 CVaR_95 = {
-                    threshold <- quantile(daily_return, 0.05)
-                    tail_returns <- daily_return[daily_return < threshold]
+                    threshold <- quantile(price_return, 0.05)
+                    tail_returns <- price_return[price_return < threshold]
                     if (length(tail_returns) > 0) {
                         cvar_val <- mean(tail_returns)
                         # VALIDATION: CVaR must be more extreme (more negative) than VaR
-                        # If not, use fallback calculation
                         if (cvar_val > threshold) {
-                            # Fallback: estimate CVaR as VaR * 1.2 (20% more extreme)
                             threshold * 1.2
                         } else {
                             cvar_val
                         }
                     } else {
-                        # If no returns below threshold, estimate CVaR
                         threshold * 1.2
                     }
                 },
 
                 CVaR_99 = {
-                    threshold <- quantile(daily_return, 0.01)
-                    tail_returns <- daily_return[daily_return < threshold]
+                    threshold <- quantile(price_return, 0.01)
+                    tail_returns <- price_return[price_return < threshold]
                     if (length(tail_returns) > 0) {
                         cvar_val <- mean(tail_returns)
                         if (cvar_val > threshold) {
@@ -904,26 +995,60 @@ calculate_var <- memoise(function(data, confidence_levels = c(0.95, 0.99), horiz
                 },
 
                 # VaR in basis points (absolute value for display)
+                # price_return is already in % (e.g., -1.5 = -1.5% price change)
+                # Multiply by 100 to convert to basis points (e.g., -1.5% = 150 bps)
                 VaR_95_bps = abs(VaR_95_hist) * 100,
                 VaR_99_bps = abs(VaR_99_hist) * 100,
 
                 .groups = "drop"
             )
 
-        # CRITICAL: Final validation - remove any remaining invalid rows
-        # Filter out NA bonds and extreme VaR values (>1000 bps indicates data error)
+        # ════════════════════════════════════════════════════════════════════════
+        # STEP 4: VALIDATION - Verify Duration-VaR Relationship
+        # ════════════════════════════════════════════════════════════════════════
+        # VaR should be approximately proportional to duration
+        # Expected: ~10-25 bps VaR per year of modified duration
+
+        var_results <- var_results %>%
+            mutate(
+                var_per_duration = VaR_95_bps / modified_duration,
+                # Flag if VaR/duration ratio is outside expected range
+                is_reasonable = var_per_duration > 5 & var_per_duration < 50
+            )
+
+        # Log validation results
+        problematic <- var_results %>% filter(!is_reasonable)
+        if (nrow(problematic) > 0) {
+            message(sprintf("[calculate_var] WARNING: %d bonds have unexpected VaR/duration ratio",
+                           nrow(problematic)))
+            message("Expected: ~10-25 bps VaR per year of modified duration")
+        }
+
+        # ════════════════════════════════════════════════════════════════════════
+        # STEP 5: FINAL FILTERING - Remove extreme/invalid values
+        # ════════════════════════════════════════════════════════════════════════
+
         var_results <- var_results %>%
             filter(
+                # Bond name validation (final check)
                 !is.na(bond),
                 bond != "",
                 bond != "NA",
+                as.character(bond) != "NA",
+
+                # VaR value validation
                 !is.na(VaR_95_bps),
                 is.finite(VaR_95_bps),
-                VaR_95_bps < 1000,  # Cap at 10% daily VaR (extremely rare for govt bonds)
-                VaR_99_bps < 1500   # Cap at 15% for 99% VaR
-            )
+                VaR_95_bps > 0,       # Must have positive risk
+                VaR_95_bps < 500,     # Cap at 5% daily VaR (extreme but possible)
+                VaR_99_bps < 750      # Cap at 7.5% for 99% VaR
+            ) %>%
+            # Remove validation columns (not needed downstream)
+            select(-var_per_duration, -is_reasonable)
 
-        # Log warning if rows were filtered due to extreme values
+        # Log final results
+        message(sprintf("[calculate_var] Final output: %d bonds", nrow(var_results)))
+
         if (nrow(var_results) == 0) {
             warning("calculate_var: All VaR results filtered - check data quality")
         }

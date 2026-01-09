@@ -30,10 +30,10 @@ ensure_date_columns <- function(data, date_cols = c("date", "offer_date", "annou
 
 #' @export
 #' @title Sanitize Pipeline Data
-#' @description Nuclear option: Strip ALL attributes and force plain data.frame
+#' @description Nuclear option: Strip ALL attributes, force plain data.frame, and filter NA bonds
 #' @param data Data to sanitize
 #' @param context String for logging where sanitization occurs
-#' @return Guaranteed plain data.frame with zero hidden attributes
+#' @return Guaranteed plain data.frame with zero hidden attributes and no NA bond rows
 sanitize_pipeline_data <- function(data, context = "unknown") {
     if(is.null(data)) {
         message(sprintf("[%s] Data is NULL - returning NULL", context))
@@ -43,6 +43,32 @@ sanitize_pipeline_data <- function(data, context = "unknown") {
     if(nrow(data) == 0) {
         message(sprintf("[%s] Data has 0 rows - returning empty data.frame", context))
         return(data.frame())
+    }
+
+    # ════════════════════════════════════════════════════════════════════════
+    # CRITICAL FIX: Filter out NA bond names at EARLIEST possible point
+    # ════════════════════════════════════════════════════════════════════════
+    # This prevents NA bonds from appearing anywhere in the pipeline
+    # Must happen BEFORE any grouping operations to prevent NA groups
+
+    if("bond" %in% names(data)) {
+        n_before <- nrow(data)
+        data <- data[!is.na(data$bond) &
+                    data$bond != "" &
+                    data$bond != "NA" &
+                    as.character(data$bond) != "NA" &
+                    nchar(trimws(as.character(data$bond))) > 0, ]
+        n_after <- nrow(data)
+
+        if(n_before != n_after) {
+            message(sprintf("[%s] Filtered %d NA/invalid bond rows (%d → %d)",
+                           context, n_before - n_after, n_before, n_after))
+        }
+
+        if(nrow(data) == 0) {
+            message(sprintf("[%s] All rows filtered - no valid bond data", context))
+            return(data.frame())
+        }
     }
 
     # STEP 0: Detect Date columns BEFORE conversion (CRITICAL FIX)
