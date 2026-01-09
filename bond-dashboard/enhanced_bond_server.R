@@ -1659,19 +1659,47 @@ server <- function(input, output, session) {
                 ),
 
                 # Interpret kurtosis - NOW USING EXCESS KURTOSIS (normal = 0)
-                # Values > 1 indicate fat tails, < -0.5 indicate thin tails
+                # For SA gov bonds, typical range is 2.5-3.5 (all have fat tails)
                 kurt_signal = case_when(
-                    kurtosis > 1.0 ~ "Fat tails \u26A0",
-                    kurtosis > 0.5 ~ "Slightly fat",
-                    kurtosis < -0.5 ~ "Thin tails",
-                    TRUE ~ "Normal \u2713"
+                    kurtosis > 3.2 ~ "Very fat tails \u26A0",
+                    kurtosis > 3.0 ~ "Fat tails",
+                    kurtosis > 2.8 ~ "Moderately fat",
+                    TRUE ~ "Near normal"
                 ),
 
-                # Tail risk indicator - combines kurtosis and tail ratio
+                # Tail risk indicator - HYBRID APPROACH
+                # Combines absolute risk factors with relative percentile ranking
                 tail_ratio = abs(VaR_99) / abs(VaR_95),
+
+                # Absolute risk factor flags (calibrated for SA gov bond market)
+                has_fat_tails = kurtosis > 3.1,           # Top ~40% of typical data
+                has_extreme_ratio = tail_ratio > 1.45,    # Above normal (1.41) + buffer
+                has_left_skew = skewness < -0.15          # Meaningful left skew
+            ) %>%
+            mutate(
+                # Relative ranking within current dataset
+                kurtosis_rank = percent_rank(kurtosis),
+                ratio_rank = percent_rank(tail_ratio),
+                # Composite percentile (weights kurtosis and ratio, with skew penalty)
+                risk_percentile = (kurtosis_rank + ratio_rank +
+                                   ifelse(skewness < 0, percent_rank(-skewness), 0)) / 3,
+
+                # Final classification - Hybrid of absolute triggers and relative ranking
                 tail_risk = case_when(
-                    tail_ratio > 1.6 | kurtosis > 1.0 ~ "High \u26A0",
-                    tail_ratio > 1.4 | kurtosis > 0.5 ~ "Moderate",
+                    # Absolute triggers: Multiple risk factors = definite high risk
+                    has_fat_tails & has_left_skew ~ "High \u26A0",
+                    has_extreme_ratio & has_fat_tails ~ "High \u26A0",
+
+                    # High percentile (top 25%) with at least one risk factor
+                    risk_percentile >= 0.75 & (has_fat_tails | has_extreme_ratio | has_left_skew) ~ "Elevated",
+
+                    # Top 25% by composite score even without flags
+                    risk_percentile >= 0.75 ~ "Elevated",
+
+                    # Middle range (40-75th percentile)
+                    risk_percentile >= 0.40 ~ "Moderate",
+
+                    # Lower risk (bottom 40%)
                     TRUE ~ "Low \u2713"
                 )
             ) %>%
@@ -1701,9 +1729,14 @@ server <- function(input, output, session) {
             DT::formatStyle(
                 'Tail Risk',
                 backgroundColor = DT::styleEqual(
-                    c('High \u26A0', 'Moderate', 'Low \u2713'),
-                    c('#FFCDD2', '#FFF9C4', '#C8E6C9')
-                )
+                    c('High \u26A0', 'Elevated', 'Moderate', 'Low \u2713'),
+                    c('#FFCDD2', '#FFE0B2', '#FFF9C4', '#C8E6C9')  # Red, Orange, Yellow, Green
+                ),
+                color = DT::styleEqual(
+                    c('High \u26A0', 'Elevated', 'Moderate', 'Low \u2713'),
+                    c('#B71C1C', '#E65100', '#F57F17', '#1B5E20')  # Dark red, orange, yellow, green
+                ),
+                fontWeight = 'bold'
             ) %>%
             DT::formatStyle(
                 'Skew Signal',
