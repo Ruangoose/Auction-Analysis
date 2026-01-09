@@ -1312,6 +1312,13 @@ generate_signal_matrix_heatmap <- function(data) {
         message("✓ Good signal diversity - bonds showing differentiated signals")
     }
 
+    # ════════════════════════════════════════════════════════════════════════
+    # SORT BONDS BY TOTAL SIGNAL SCORE (strongest buy at top)
+    # ════════════════════════════════════════════════════════════════════════
+    bond_order <- signal_scores %>%
+        arrange(desc(total_signal)) %>%
+        pull(bond)
+
     # Pivot for heatmap (only signal columns, not metadata)
     signal_scores_long <- signal_scores %>%
         select(bond, rsi_signal, bb_signal, macd_signal_score, momentum_signal, total_signal) %>%
@@ -1321,7 +1328,11 @@ generate_signal_matrix_heatmap <- function(data) {
             score = as.numeric(score),
             score = ifelse(is.na(score), 0, score),
             # Create label that shows 0 explicitly
-            score_label = as.character(score)
+            score_label = as.character(score),
+            # Apply sorted bond order (reverse for ggplot y-axis)
+            bond = factor(bond, levels = rev(bond_order)),
+            # Order indicators logically
+            indicator = factor(indicator, levels = c("rsi_signal", "bb_signal", "macd_signal_score", "momentum_signal", "total_signal"))
         )
 
     # Create heatmap with explicit labels for all values
@@ -1331,7 +1342,7 @@ generate_signal_matrix_heatmap <- function(data) {
 
         # Use score_label to ensure 0s are displayed
         geom_text(aes(label = score_label),
-                  size = 4,
+                  size = 3.5,
                   fontface = "bold",
                   color = case_when(
                       abs(signal_scores_long$score) > 1.5 ~ "white",
@@ -1340,16 +1351,16 @@ generate_signal_matrix_heatmap <- function(data) {
                   )) +
 
         scale_fill_gradient2(
-            low = insele_palette$danger,
-            mid = "#F5F5F5",  # Light gray for neutral
-            high = insele_palette$success,
+            low = "#C62828",       # Strong Sell - Dark Red
+            mid = "#9E9E9E",       # Neutral - Gray
+            high = "#1B5E20",      # Strong Buy - Dark Green
             midpoint = 0,
             limits = c(-2, 2),
             name = "Signal",
             breaks = c(-2, -1, 0, 1, 2),
             labels = c("Strong Sell", "Sell", "Neutral", "Buy", "Strong Buy"),
             guide = guide_colorbar(
-                barwidth = 20,
+                barwidth = 15,
                 barheight = 0.5,
                 title.position = "top",
                 title.hjust = 0.5
@@ -1359,9 +1370,9 @@ generate_signal_matrix_heatmap <- function(data) {
         scale_x_discrete(
             labels = c(
                 "rsi_signal" = "RSI",
-                "bb_signal" = "Bollinger",
+                "bb_signal" = "BB",
                 "macd_signal_score" = "MACD",
-                "momentum_signal" = "Momentum",
+                "momentum_signal" = "MOM",
                 "total_signal" = "TOTAL"
             ),
             expand = c(0, 0)
@@ -1371,7 +1382,7 @@ generate_signal_matrix_heatmap <- function(data) {
 
         labs(
             title = "Trading Signal Matrix",
-            subtitle = "Composite technical indicators across all bonds",
+            subtitle = "Sorted by total score (strongest buy at top)",
             x = "",
             y = "",
             caption = "+2 = Strong Buy | -2 = Strong Sell | 0 = Neutral"
@@ -1379,9 +1390,12 @@ generate_signal_matrix_heatmap <- function(data) {
 
         create_insele_theme() +
         theme(
-            axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"),
-            axis.text.y = element_text(face = "bold"),
-            panel.border = element_rect(fill = NA, color = insele_palette$dark_gray, size = 1.5),
+            plot.title = element_text(face = "bold", color = "#1B3A6B", size = 14),
+            plot.subtitle = element_text(color = "#666666", size = 10),
+            axis.text.x = element_text(angle = 0, hjust = 0.5, face = "bold", size = 10),
+            axis.text.y = element_text(face = "bold", size = 9),
+            panel.grid = element_blank(),
+            panel.border = element_rect(fill = NA, color = insele_palette$dark_gray, linewidth = 1),
             legend.position = "bottom"
         )
 
