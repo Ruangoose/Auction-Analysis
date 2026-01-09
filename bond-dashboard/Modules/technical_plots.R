@@ -629,8 +629,8 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
                 geom_col(
                     aes(y = macd_histogram,
                         fill = macd_histogram >= 0),
-                    width = 1,
-                    alpha = 0.6,
+                    width = 1.5,
+                    alpha = 0.8,
                     na.rm = TRUE
                 ) +
 
@@ -895,8 +895,8 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
                 geom_col(
                     aes(y = macd_histogram,
                         fill = macd_histogram >= 0),
-                    width = 1,
-                    alpha = 0.6,
+                    width = 1.5,
+                    alpha = 0.8,
                     na.rm = TRUE
                 ) +
                 geom_line(

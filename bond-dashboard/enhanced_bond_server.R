@@ -2672,8 +2672,16 @@ server <- function(input, output, session) {
                             tags$td(sprintf("%.2f", if(!is.na(data$convexity)) data$convexity else 0))
                         ),
                         tags$tr(
-                            tags$td(tags$strong("DV01 (R10m):")),
-                            tags$td(sprintf("R%.0f", dv01))
+                            tags$td(
+                                tags$strong("DV01 (R10m):"),
+                                tags$span(
+                                    class = "text-muted small",
+                                    title = "Rand value change per 1bp yield move on R10m notional",
+                                    style = "cursor: help; margin-left: 3px;",
+                                    icon("question-circle")
+                                )
+                            ),
+                            tags$td(sprintf("R%s", format(round(dv01), big.mark = ",")))
                         )
                     )
                 ),
@@ -2715,6 +2723,11 @@ server <- function(input, output, session) {
                                 )
                             )
                         )
+                    ),
+                    tags$div(
+                        class = "small text-muted",
+                        style = "margin-top: 5px; font-style: italic; font-size: 10px;",
+                        HTML("&#8593; Rising yields = falling prices (bearish)")
                     )
                 )
             )
@@ -2799,7 +2812,7 @@ server <- function(input, output, session) {
             theme_void() +
             theme(
                 axis.text.y = element_text(size = 8, color = "#666666"),
-                plot.margin = margin(5, 10, 5, 5)
+                plot.margin = margin(t = 5, r = 10, b = 5, l = 5, unit = "pt")
             )
     }, bg = "transparent")
 
