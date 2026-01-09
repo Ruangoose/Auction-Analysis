@@ -677,7 +677,7 @@ generate_relative_value_heatmap <- function(data, params) {
             axis.text.y = element_text(face = "bold"),
             panel.border = element_rect(fill = NA, color = insele_palette$dark_gray, linewidth = 1),
             legend.position = "bottom",
-            plot.margin = margin(t = 20, r = 10, b = 10, l = 10)  # Extra top margin for Today label
+            plot.margin = ggplot2::margin(t = 20, r = 10, b = 10, l = 10)  # Extra top margin for Today label
         )
 
     return(p)

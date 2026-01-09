@@ -41,7 +41,7 @@ theme_insele <- function(base_size = 12) {
             legend.position = "right",
             plot.background = element_rect(fill = "white", color = NA),
             panel.background = element_rect(fill = "white", color = NA),
-            plot.margin = margin(20, 20, 20, 20)
+            plot.margin = ggplot2::margin(20, 20, 20, 20)
         )
 }
 
@@ -734,7 +734,7 @@ create_executive_dashboard <- function(df, signals_df = NULL) {
         geom_point(size = 3, color = insele_colors$navy, alpha = 0.8) +
         labs(title = "Current Yield Curve", x = "Duration", y = "Yield (%)") +
         theme_insele(base_size = 10) +
-        theme(plot.margin = margin(5, 5, 5, 5))
+        theme(plot.margin = ggplot2::margin(5, 5, 5, 5))
 
     # 2. Top opportunities table
     if(!is.null(signals_df)) {
