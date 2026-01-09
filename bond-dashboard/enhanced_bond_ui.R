@@ -813,16 +813,25 @@ ui <- dashboardPage(
                                               tags$li(tags$strong("Blue diamond:"), " CVaR - average loss when VaR is breached")
                                           ),
 
-                                          tags$p(tags$strong("Distribution Statistics:")),
+                                          tags$p(tags$strong("Tail Risk Classification:")),
                                           tags$ul(
-                                              tags$li(tags$strong("Skewness < -0.3:"), " Left tail risk - larger losses more likely than gains"),
-                                              tags$li(tags$strong("Excess Kurtosis > 1:"), " Fat tails - extreme moves more likely than normal (Normal distribution = 0)"),
-                                              tags$li(tags$strong("Tail Ratio (99%/95% > 1.5):"), " Significant tail risk present")
+                                              tags$li(tags$strong("High:"), " Multiple risk factors - fat tails (>3.1) AND left skew (<-0.15) or extreme tail ratio (>1.45)"),
+                                              tags$li(tags$strong("Elevated:"), " Top 25% within current bond universe for composite tail risk"),
+                                              tags$li(tags$strong("Moderate:"), " Middle range (40-75th percentile) - monitor but not concerning"),
+                                              tags$li(tags$strong("Low:"), " Below average tail risk relative to peers (bottom 40%)")
+                                          ),
+
+                                          tags$p(tags$strong("Key Metrics:")),
+                                          tags$ul(
+                                              tags$li(tags$strong("Skewness < -0.3:"), " Left tail risk - larger losses more likely"),
+                                              tags$li(tags$strong("Excess Kurtosis:"), " SA bonds typically 2.5-3.5 (all fat-tailed vs normal dist)"),
+                                              tags$li(tags$strong("Tail Ratio:"), " 99%/95% VaR ratio (normal = 1.41)")
                                           ),
 
                                           tags$p(
+                                              class = "small",
                                               style = "margin-top: 10px; font-style: italic;",
-                                              HTML("&#9888; Values shown as positive losses for clarity. Watch for bonds with high kurtosis AND negative skew.")
+                                              HTML("&#9888; Classification is relative to current SA government bond universe, not absolute thresholds.")
                                           )
                                       )
                                )
