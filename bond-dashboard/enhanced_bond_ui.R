@@ -1156,7 +1156,44 @@ ui <- dashboardPage(
                                    status = "primary",
                                    solidHeader = TRUE,
                                    width = 12,
-                                   DT::dataTableOutput("technical_indicators_enhanced_table")
+                                   DT::dataTableOutput("technical_indicators_enhanced_table"),
+
+                                   # Bond Investor Color Guide
+                                   tags$div(
+                                       style = "margin-top: 15px; padding: 12px; background: #FFF8E1; border-left: 4px solid #FF9800; border-radius: 4px;",
+
+                                       tags$p(
+                                           style = "margin: 0 0 8px 0; font-weight: bold; color: #E65100;",
+                                           icon("info-circle"),
+                                           " Bond Investor Color Guide"
+                                       ),
+
+                                       tags$p(
+                                           style = "margin: 0; font-size: 13px;",
+                                           "This table analyzes ", tags$strong("yield"), " trends. For bond holders, the relationship is inverse:"
+                                       ),
+
+                                       tags$ul(
+                                           style = "margin: 8px 0; font-size: 13px;",
+                                           tags$li(
+                                               tags$span(style = "display: inline-block; width: 14px; height: 14px; background: #4CAF50; border-radius: 2px; margin-right: 6px; vertical-align: middle;"),
+                                               tags$strong("Green = Bullish for Prices"),
+                                               " \u2014 Yields falling/bearish \u2192 Bond prices rising \u2192 ",
+                                               tags$span(style = "color: #1B5E20;", "GOOD")
+                                           ),
+                                           tags$li(
+                                               tags$span(style = "display: inline-block; width: 14px; height: 14px; background: #F44336; border-radius: 2px; margin-right: 6px; vertical-align: middle;"),
+                                               tags$strong("Red = Bearish for Prices"),
+                                               " \u2014 Yields rising/bullish \u2192 Bond prices falling \u2192 ",
+                                               tags$span(style = "color: #C62828;", "BAD")
+                                           )
+                                       ),
+
+                                       tags$p(
+                                           style = "margin: 8px 0 0 0; font-size: 12px; color: #666;",
+                                           tags$em("Remember: Yields and Prices move in opposite directions!")
+                                       )
+                                   )
                                )
                            )
                        ),
