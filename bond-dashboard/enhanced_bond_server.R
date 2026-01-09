@@ -696,6 +696,321 @@ server <- function(input, output, session) {
     })
 
 
+    # =============================================================================
+    # SINGLE SOURCE OF TRUTH: Master Curve Data Reactive
+    # =============================================================================
+    # CRITICAL: This reactive recalculates whenever x-axis OR model type changes
+    # Both the yield curve chart AND the opportunities table consume from this
+    # =============================================================================
+
+    fitted_curve_data <- reactive({
+        # -------------------------------------------------------------------------
+        # CRITICAL: Declare ALL dependencies explicitly
+        # -------------------------------------------------------------------------
+        req(processed_data())
+
+        # These inputs trigger recalculation
+        x_var <- input$xaxis_choice %||% "modified_duration"
+        model_type <- input$curve_model %||% "nss"
+        lookback_value <- input$lookback_days %||% 60
+        confidence_level <- input$confidence_level %||% 95
+
+        # Log for debugging
+        message(sprintf("[fitted_curve_data] Recalculating with x_var=%s, model=%s", x_var, model_type))
+
+        bond_data <- processed_data()
+
+        # -------------------------------------------------------------------------
+        # Handle time_to_maturity calculation if needed
+        # -------------------------------------------------------------------------
+        if(x_var == "time_to_maturity") {
+            if("mature_date" %in% names(bond_data) && !all(is.na(bond_data$mature_date))) {
+                bond_data$time_to_maturity <- as.numeric(difftime(bond_data$mature_date,
+                                                                  Sys.Date(),
+                                                                  units = "days")) / 365.25
+            } else {
+                # Approximate using Macaulay duration for semi-annual SA bonds
+                bond_data$macaulay_duration <- bond_data$modified_duration * (1 + bond_data$yield_to_maturity/200)
+                bond_data$time_to_maturity <- bond_data$macaulay_duration
+            }
+        }
+
+        # -------------------------------------------------------------------------
+        # Validate x-axis column exists
+        # -------------------------------------------------------------------------
+        if(!x_var %in% names(bond_data) || all(is.na(bond_data[[x_var]]))) {
+            warning(sprintf("[fitted_curve_data] x_var '%s' not found, falling back to modified_duration", x_var))
+            x_var <- "modified_duration"
+        }
+
+        req(x_var %in% names(bond_data))
+
+        # -------------------------------------------------------------------------
+        # Prepare fitting data
+        # -------------------------------------------------------------------------
+        fit_data <- bond_data %>%
+            filter(
+                !is.na(.data[[x_var]]),
+                !is.na(yield_to_maturity),
+                .data[[x_var]] > 0  # Exclude zero/negative durations
+            ) %>%
+            arrange(.data[[x_var]])
+
+        req(nrow(fit_data) >= 4)  # Minimum bonds for curve fitting
+
+        # Get x values for fitting
+        x_data <- fit_data[[x_var]]
+        x_range <- range(x_data, na.rm = TRUE)
+
+        # Create smooth curve data points
+        curve_df <- data.frame(
+            x = seq(x_range[1], x_range[2], length.out = 200)
+        )
+
+        # -------------------------------------------------------------------------
+        # Fit curve based on selected model type
+        # -------------------------------------------------------------------------
+        curve_fit_result <- tryCatch({
+
+            if (model_type == "nss") {
+                # Nelson-Siegel-Svensson model
+                yields <- fit_data$yield_to_maturity / 100  # Convert to decimal
+                x_values <- x_data
+
+                # Initial parameter estimates
+                beta0 <- mean(yields, na.rm = TRUE)
+                beta1 <- yields[which.min(x_values)] - beta0
+                beta2 <- 0
+                beta3 <- 0
+                lambda1 <- 0.0609
+                lambda2 <- 0.0609
+
+                # NSS objective function
+                nss_objective <- function(params) {
+                    b0 <- params[1]
+                    b1 <- params[2]
+                    b2 <- params[3]
+                    b3 <- params[4]
+                    l1 <- exp(params[5])
+                    l2 <- exp(params[6])
+
+                    x_safe <- pmax(x_values, 0.01)
+
+                    fitted <- b0 +
+                        b1 * (1 - exp(-x_safe/l1)) / (x_safe/l1) +
+                        b2 * ((1 - exp(-x_safe/l1)) / (x_safe/l1) - exp(-x_safe/l1)) +
+                        b3 * ((1 - exp(-x_safe/l2)) / (x_safe/l2) - exp(-x_safe/l2))
+
+                    sum((yields - fitted)^2, na.rm = TRUE)
+                }
+
+                # Optimize
+                opt_result <- optim(
+                    c(beta0, beta1, beta2, beta3, log(lambda1), log(lambda2)),
+                    nss_objective,
+                    method = "BFGS",
+                    control = list(maxit = 500)
+                )
+
+                if (opt_result$convergence != 0) {
+                    stop("NSS optimization failed to converge")
+                }
+
+                params_nss <- opt_result$par
+
+                # Predict smooth curve
+                curve_x <- pmax(curve_df$x, 0.01)
+                curve_df$fitted_yield <- (params_nss[1] +
+                    params_nss[2] * (1 - exp(-curve_x/exp(params_nss[5]))) / (curve_x/exp(params_nss[5])) +
+                    params_nss[3] * ((1 - exp(-curve_x/exp(params_nss[5]))) / (curve_x/exp(params_nss[5])) -
+                                     exp(-curve_x/exp(params_nss[5]))) +
+                    params_nss[4] * ((1 - exp(-curve_x/exp(params_nss[6]))) / (curve_x/exp(params_nss[6])) -
+                                     exp(-curve_x/exp(params_nss[6])))) * 100
+
+                # Predict for actual bonds
+                x_bonds <- pmax(x_data, 0.01)
+                fit_data$fitted_yield <- (params_nss[1] +
+                    params_nss[2] * (1 - exp(-x_bonds/exp(params_nss[5]))) / (x_bonds/exp(params_nss[5])) +
+                    params_nss[3] * ((1 - exp(-x_bonds/exp(params_nss[5]))) / (x_bonds/exp(params_nss[5])) -
+                                     exp(-x_bonds/exp(params_nss[5]))) +
+                    params_nss[4] * ((1 - exp(-x_bonds/exp(params_nss[6]))) / (x_bonds/exp(params_nss[6])) -
+                                     exp(-x_bonds/exp(params_nss[6])))) * 100
+
+                list(success = TRUE, model = "nss", params = params_nss)
+
+            } else if (model_type == "loess") {
+                # LOESS local regression
+                n_unique <- length(unique(x_data))
+                adaptive_span <- max(0.75, min(1, 10/n_unique))
+
+                model_fit <- loess(yield_to_maturity ~ x_var,
+                                   data = data.frame(x_var = x_data,
+                                                     yield_to_maturity = fit_data$yield_to_maturity),
+                                   span = adaptive_span)
+
+                curve_df$fitted_yield <- predict(model_fit, newdata = data.frame(x_var = curve_df$x))
+                fit_data$fitted_yield <- predict(model_fit, newdata = data.frame(x_var = x_data))
+
+                list(success = TRUE, model = "loess", params = NULL)
+
+            } else if (model_type == "spline") {
+                # Smoothing spline
+                model_fit <- smooth.spline(x = x_data,
+                                           y = fit_data$yield_to_maturity,
+                                           spar = 0.6)
+
+                curve_df$fitted_yield <- predict(model_fit, curve_df$x)$y
+                fit_data$fitted_yield <- predict(model_fit, x_data)$y
+
+                list(success = TRUE, model = "spline", params = NULL)
+
+            } else if (model_type == "polynomial") {
+                # Polynomial regression
+                n_unique <- length(unique(x_data))
+                poly_degree <- min(3, max(1, n_unique - 2))
+
+                lm_model <- lm(yield_to_maturity ~ poly(x_var, poly_degree),
+                               data = data.frame(x_var = x_data,
+                                                 yield_to_maturity = fit_data$yield_to_maturity))
+
+                curve_df$fitted_yield <- predict(lm_model, newdata = data.frame(x_var = curve_df$x))
+                fit_data$fitted_yield <- predict(lm_model, newdata = data.frame(x_var = x_data))
+
+                list(success = TRUE, model = "polynomial", params = NULL)
+
+            } else {
+                # Default to polynomial
+                lm_model <- lm(yield_to_maturity ~ poly(x_var, 3),
+                               data = data.frame(x_var = x_data,
+                                                 yield_to_maturity = fit_data$yield_to_maturity))
+
+                curve_df$fitted_yield <- predict(lm_model, newdata = data.frame(x_var = curve_df$x))
+                fit_data$fitted_yield <- predict(lm_model, newdata = data.frame(x_var = x_data))
+
+                list(success = TRUE, model = "polynomial", params = NULL)
+            }
+
+        }, error = function(e) {
+            warning(sprintf("[fitted_curve_data] Model fitting failed (%s): %s - using polynomial fallback",
+                            model_type, e$message))
+
+            # Fallback to simple polynomial
+            lm_model <- lm(yield_to_maturity ~ poly(x_var, 2),
+                           data = data.frame(x_var = x_data,
+                                             yield_to_maturity = fit_data$yield_to_maturity))
+
+            curve_df$fitted_yield <<- predict(lm_model, newdata = data.frame(x_var = curve_df$x))
+            fit_data$fitted_yield <<- predict(lm_model, newdata = data.frame(x_var = x_data))
+
+            list(success = TRUE, model = "polynomial-fallback", params = NULL)
+        })
+
+        # -------------------------------------------------------------------------
+        # Calculate spreads for each bond (THIS IS THE KEY PART)
+        # -------------------------------------------------------------------------
+        fit_data <- fit_data %>%
+            mutate(
+                # Spread in basis points (RECALCULATED based on current x-axis and model)
+                spread_bps = (yield_to_maturity - fitted_yield) * 100,
+
+                # Store original spread_to_curve for backwards compatibility
+                spread_to_curve = spread_bps,
+
+                # Z-Score (cross-sectional)
+                zscore = (spread_bps - mean(spread_bps, na.rm = TRUE)) / sd(spread_bps, na.rm = TRUE),
+                zscore = ifelse(is.finite(zscore), zscore, 0),
+
+                # Also update z_score for backwards compatibility
+                z_score = zscore,
+
+                # Absolute Z-Score for sizing/filtering
+                zscore_abs = abs(zscore),
+
+                # Store which x-variable was used (for labeling)
+                x_variable = x_var,
+                x_value = .data[[x_var]]
+            )
+
+        # -------------------------------------------------------------------------
+        # Calculate curve metrics
+        # -------------------------------------------------------------------------
+        model_residuals <- fit_data$yield_to_maturity - fit_data$fitted_yield
+        r_squared <- 1 - (sum(model_residuals^2) / sum((fit_data$yield_to_maturity - mean(fit_data$yield_to_maturity))^2))
+
+        # Calculate confidence bands
+        n <- length(model_residuals[!is.na(model_residuals)])
+        df <- max(n - 6, 1)
+        se <- sqrt(sum(model_residuals^2, na.rm = TRUE) / df)
+        z_mult <- qnorm(1 - (1 - confidence_level/100)/2)
+
+        curve_df$yield_lower <- curve_df$fitted_yield - z_mult * se
+        curve_df$yield_upper <- curve_df$fitted_yield + z_mult * se
+
+        metrics <- list(
+            r_squared = r_squared,
+            avg_spread = mean(abs(fit_data$spread_bps), na.rm = TRUE),
+            max_spread = max(abs(fit_data$spread_bps), na.rm = TRUE),
+            n_bonds = nrow(fit_data),
+            x_variable = x_var,
+            model_type = model_type,
+            residual_se = se
+        )
+
+        # Dynamic x-axis label
+        x_label <- switch(x_var,
+                          "modified_duration" = "Modified Duration (years)",
+                          "duration" = "Duration (years)",
+                          "time_to_maturity" = "Time to Maturity (years)",
+                          x_var  # fallback
+        )
+
+        # -------------------------------------------------------------------------
+        # Return comprehensive list
+        # -------------------------------------------------------------------------
+        message(sprintf("[fitted_curve_data] SUCCESS: %d bonds, R²=%.3f, avg_spread=%.1f bps",
+                        nrow(fit_data), r_squared, metrics$avg_spread))
+
+        list(
+            curve = curve_df,
+            bonds = fit_data,
+            metrics = metrics,
+            x_var = x_var,
+            x_label = x_label,
+            model_type = model_type
+        )
+    })
+
+
+    # DEBUG: Log when fitted_curve_data recalculates
+    observe({
+        data <- fitted_curve_data()
+        if(!is.null(data)) {
+            message(sprintf(
+                "[DEBUG] fitted_curve_data updated: x_var=%s, model=%s, n_bonds=%d, avg_spread=%.2f bps",
+                data$x_var,
+                data$model_type,
+                nrow(data$bonds),
+                mean(abs(data$bonds$spread_bps), na.rm = TRUE)
+            ))
+        }
+    })
+
+    # DEBUG: Confirm table data is reading fresh values
+    observe({
+        req(fitted_curve_data())
+        bonds <- fitted_curve_data()$bonds
+        if(nrow(bonds) > 0) {
+            message(sprintf(
+                "[DEBUG] Table data: cheapest=%s (%.1f bps), richest=%s (%.1f bps)",
+                bonds$bond[which.max(bonds$spread_bps)],
+                max(bonds$spread_bps, na.rm = TRUE),
+                bonds$bond[which.min(bonds$spread_bps)],
+                min(bonds$spread_bps, na.rm = TRUE)
+            ))
+        }
+    })
+
+
     # Calculate VaR
     var_data <- reactive({
         req(filtered_data())
@@ -1245,9 +1560,14 @@ server <- function(input, output, session) {
     })
 
     # 3. Enhanced Z-Score Distribution
+    # ========================================================================
+    # CRITICAL FIX: Z-Score plot now reads from fitted_curve_data() - SAME source as chart
+    # Z-Scores are recalculated when x-axis or model changes
+    # ========================================================================
     output$enhanced_zscore_plot <- renderPlot({
-        req(processed_data())
-        p <- generate_enhanced_zscore_plot(processed_data(), list())
+        req(fitted_curve_data())
+        # Use bonds from fitted_curve_data which has recalculated z-scores
+        p <- generate_enhanced_zscore_plot(fitted_curve_data()$bonds, list())
         if(!is.null(p)) print(p)
     })
 
@@ -2526,71 +2846,105 @@ server <- function(input, output, session) {
 
 
     # 24. Data Tables
+    # ========================================================================
+    # CRITICAL FIX: Table now reads from fitted_curve_data() - SAME source as chart
+    # When x-axis or model changes, this table AUTOMATICALLY updates
+    # ========================================================================
     output$relative_value_opportunities <- DT::renderDataTable({
-        req(processed_data())
+        req(fitted_curve_data())
 
-        # Debug: Check what data we have
-        cat("\n=== Relative Value Debug ===\n")
-        cat("Total rows in processed_data:", nrow(processed_data()), "\n")
+        # Get bond data WITH spreads from the SAME source as the chart
+        curve_data <- fitted_curve_data()
+        bonds <- curve_data$bonds
+        x_var_label <- curve_data$x_label
+        x_var <- curve_data$x_var
+
+        # Debug: Confirm we're using fitted_curve_data
+        cat("\n=== Relative Value Debug (CONNECTED TO CURVE) ===\n")
+        cat(sprintf("X-Axis: %s, Model: %s\n", x_var, curve_data$model_type))
+        cat("Total bonds:", nrow(bonds), "\n")
+        cat("Spread range:", sprintf("%.1f to %.1f bps\n",
+                                     min(bonds$spread_bps, na.rm = TRUE),
+                                     max(bonds$spread_bps, na.rm = TRUE)))
         cat("Z-score summary:\n")
-        print(summary(processed_data()$z_score))
-        cat("Spread summary:\n")
-        print(summary(processed_data()$spread_to_curve))
+        print(summary(bonds$z_score))
 
-        # Get the data and check for NA values
-        proc_data <- processed_data()
-
-        # First, let's see all data without filtering
-        cat("Number of non-NA z-scores:", sum(!is.na(proc_data$z_score)), "\n")
-        cat("Number of z-scores > 1.5:", sum(abs(proc_data$z_score) > 1.5, na.rm = TRUE), "\n")
-
-        # More lenient filtering - show bonds with z-score > 1.0 instead of 1.5
-        opportunities <- proc_data %>%
+        # Filter opportunities with z-score > 1.0
+        opportunities <- bonds %>%
             filter(!is.na(z_score)) %>%
-            filter(abs(z_score) > 1.0) %>%  # Lowered threshold
+            filter(abs(z_score) > 1.0) %>%
             arrange(desc(abs(z_score))) %>%
             mutate(
+                # CORRECT signal logic based on spread (positive = cheap = buy)
                 signal = case_when(
-                    z_score < -2 ~ "Strong Buy",
-                    z_score < -1.0 ~ "Buy",
-                    z_score > 2 ~ "Strong Sell",
-                    z_score > 1.0 ~ "Sell",
+                    spread_bps > 10 & z_score > 2 ~ "Strong Buy",
+                    spread_bps > 5 ~ "Buy",
+                    spread_bps < -10 & z_score < -2 ~ "Strong Sell",
+                    spread_bps < -5 ~ "Sell",
                     TRUE ~ "Hold"
                 ),
-                opportunity_score = abs(z_score) * abs(spread_to_curve)
-            ) %>%
-            select(bond, yield_to_maturity, modified_duration, spread_to_curve,
-                   z_score, signal, opportunity_score)
+                opportunity_score = abs(z_score) * abs(spread_bps),
+                # Strength indicator
+                strength = case_when(
+                    abs(spread_bps) > 10 & abs(z_score) > 1.5 ~ "Strong",
+                    abs(spread_bps) > 5 | abs(z_score) > 1.0 ~ "Moderate",
+                    TRUE ~ "Weak"
+                )
+            )
 
-        # If still no opportunities, show top 5 bonds by absolute spread
+        # If no opportunities with z-score filter, show all bonds sorted by absolute spread
         if(nrow(opportunities) == 0) {
-            cat("No opportunities found with z-score filter, showing top spreads instead\n")
-            opportunities <- proc_data %>%
-                filter(!is.na(spread_to_curve)) %>%
-                arrange(desc(abs(spread_to_curve))) %>%
-                head(5) %>%
+            cat("No opportunities found with z-score filter, showing all bonds by spread\n")
+            opportunities <- bonds %>%
+                filter(!is.na(spread_bps)) %>%
+                arrange(desc(abs(spread_bps))) %>%
                 mutate(
                     signal = case_when(
-                        spread_to_curve < -20 ~ "Buy",
-                        spread_to_curve > 20 ~ "Sell",
+                        spread_bps > 10 ~ "Buy",
+                        spread_bps < -10 ~ "Sell",
+                        spread_bps > 5 ~ "Buy",
+                        spread_bps < -5 ~ "Sell",
                         TRUE ~ "Hold"
                     ),
-                    opportunity_score = abs(spread_to_curve),
-                    z_score = if_else(is.na(z_score), 0, z_score)
-                ) %>%
-                select(bond, yield_to_maturity, modified_duration, spread_to_curve,
-                       z_score, signal, opportunity_score)
+                    opportunity_score = abs(spread_bps),
+                    z_score = ifelse(is.na(z_score), 0, z_score),
+                    strength = case_when(
+                        abs(spread_bps) > 10 ~ "Strong",
+                        abs(spread_bps) > 5 ~ "Moderate",
+                        TRUE ~ "Weak"
+                    )
+                )
         }
+
+        # Select columns - use x_value which is the DYNAMIC x-axis value
+        opportunities <- opportunities %>%
+            select(
+                Bond = bond,
+                Yield = yield_to_maturity,
+                Duration = x_value,  # Uses whatever x-axis is currently selected
+                Spread = spread_bps,
+                ZScore = z_score,
+                Signal = signal,
+                Score = opportunity_score
+            )
 
         # Format the display
         opportunities <- opportunities %>%
             mutate(
-                yield_to_maturity = sprintf("%.3f%%", yield_to_maturity),
-                modified_duration = sprintf("%.2f", modified_duration),
-                spread_to_curve = sprintf("%.1f bps", spread_to_curve),
-                z_score = sprintf("%.2f", z_score),
-                opportunity_score = sprintf("%.1f", opportunity_score)
+                Yield = sprintf("%.3f%%", Yield),
+                Duration = sprintf("%.2f", Duration),
+                Spread = sprintf("%.1f bps", Spread),
+                ZScore = sprintf("%.2f", ZScore),
+                Score = sprintf("%.1f", Score)
             )
+
+        # Dynamic column name based on x-axis selection
+        duration_col_name <- switch(x_var,
+            "modified_duration" = "Mod Duration",
+            "duration" = "Duration",
+            "time_to_maturity" = "TTM (yrs)",
+            "Duration"  # fallback
+        )
 
         datatable(
             opportunities,
@@ -2604,10 +2958,10 @@ server <- function(input, output, session) {
             ),
             rownames = FALSE,
             class = 'table-striped table-bordered',
-            colnames = c("Bond", "Yield", "Duration", "Spread", "Z-Score", "Signal", "Score")
+            colnames = c("Bond", "Yield", duration_col_name, "Spread", "Z-Score", "Signal", "Score")
         ) %>%
             formatStyle(
-                "signal",
+                "Signal",
                 backgroundColor = styleEqual(
                     c("Strong Buy", "Buy", "Hold", "Sell", "Strong Sell"),
                     c(insele_palette$success, insele_palette$success_light,
@@ -2888,51 +3242,50 @@ server <- function(input, output, session) {
     # OUTPUT: UI COMPONENTS
     # ================================================================================
 
+    # ========================================================================
+    # CRITICAL FIX: Curve metrics now reads from fitted_curve_data()
+    # Cheapest/Richest bonds and R² are consistent with chart and table
+    # ========================================================================
     output$curve_metrics_summary <- renderUI({
-        req(processed_data())
+        req(fitted_curve_data())
 
-        data <- processed_data()
+        # Get curve data from single source of truth
+        curve_data <- fitted_curve_data()
+        data <- curve_data$bonds
+        metrics <- curve_data$metrics
+        x_var <- curve_data$x_var
 
         # Calculate key curve metrics
-        short_yield <- mean(data$yield_to_maturity[data$modified_duration <= 5], na.rm = TRUE)
-        medium_yield <- mean(data$yield_to_maturity[data$modified_duration > 5 & data$modified_duration <= 10], na.rm = TRUE)
-        long_yield <- mean(data$yield_to_maturity[data$modified_duration > 10], na.rm = TRUE)
+        short_yield <- mean(data$yield_to_maturity[data$x_value <= 5], na.rm = TRUE)
+        medium_yield <- mean(data$yield_to_maturity[data$x_value > 5 & data$x_value <= 10], na.rm = TRUE)
+        long_yield <- mean(data$yield_to_maturity[data$x_value > 10], na.rm = TRUE)
 
         curve_slope <- (long_yield - short_yield) * 100
         curve_level <- mean(data$yield_to_maturity, na.rm = TRUE)
         curve_curvature <- 2 * medium_yield - short_yield - long_yield
 
-        # Calculate model fit quality
-        avg_spread <- mean(abs(data$spread_to_curve), na.rm = TRUE)
-        r_squared <- tryCatch({
-            summary(lm(yield_to_maturity ~ modified_duration, data = data))$r.squared
-        }, error = function(e) NA_real_)
+        # Use model fit quality from fitted_curve_data metrics (already calculated)
+        avg_spread <- metrics$avg_spread
+        r_squared <- metrics$r_squared
 
         # ================================================================================
-        # TRADING SIGNALS - Actionable Intelligence
+        # TRADING SIGNALS - Actionable Intelligence (from fitted_curve_data)
         # ================================================================================
 
-        # Ensure z_score and spread_to_curve exist
-        if (!"z_score" %in% names(data)) data$z_score <- 0
-        if (!"spread_to_curve" %in% names(data)) data$spread_to_curve <- 0
-
-        # Get latest observation per bond for signals
+        # Data already has z_score and spread_bps from fitted_curve_data
         latest_data <- data %>%
-            group_by(bond) %>%
-            filter(date == max(date)) %>%
-            ungroup() %>%
             mutate(zscore_abs = abs(z_score))
 
         # Find cheapest bond (highest positive spread = above curve = buy signal)
         cheapest <- latest_data %>%
-            filter(!is.na(spread_to_curve)) %>%
-            filter(spread_to_curve == max(spread_to_curve, na.rm = TRUE)) %>%
+            filter(!is.na(spread_bps)) %>%
+            filter(spread_bps == max(spread_bps, na.rm = TRUE)) %>%
             slice(1)
 
         # Find richest bond (lowest/most negative spread = below curve = sell signal)
         richest <- latest_data %>%
-            filter(!is.na(spread_to_curve)) %>%
-            filter(spread_to_curve == min(spread_to_curve, na.rm = TRUE)) %>%
+            filter(!is.na(spread_bps)) %>%
+            filter(spread_bps == min(spread_bps, na.rm = TRUE)) %>%
             slice(1)
 
         # Find highest conviction trade (highest |z-score|)
@@ -2980,23 +3333,23 @@ server <- function(input, output, session) {
             # ═══════════════════════════════════════════════════════════
             h5("Trading Signals", style = "color: #1B3A6B; font-weight: bold;"),
 
-            # Cheapest bond (BUY signal)
-            if (nrow(cheapest) > 0 && !is.na(cheapest$spread_to_curve[1])) {
+            # Cheapest bond (BUY signal) - uses spread_bps from fitted_curve_data
+            if (nrow(cheapest) > 0 && !is.na(cheapest$spread_bps[1])) {
                 tags$p(
                     tags$b("Cheapest: "),
                     tags$span(cheapest$bond[1], style = "color: #388E3C; font-weight: bold;"),
-                    sprintf(" (+%.1f bps)", cheapest$spread_to_curve[1])
+                    sprintf(" (+%.1f bps)", cheapest$spread_bps[1])
                 )
             } else {
                 tags$p(tags$b("Cheapest: "), "N/A")
             },
 
-            # Richest bond (SELL signal)
-            if (nrow(richest) > 0 && !is.na(richest$spread_to_curve[1])) {
+            # Richest bond (SELL signal) - uses spread_bps from fitted_curve_data
+            if (nrow(richest) > 0 && !is.na(richest$spread_bps[1])) {
                 tags$p(
                     tags$b("Richest: "),
                     tags$span(richest$bond[1], style = "color: #D32F2F; font-weight: bold;"),
-                    sprintf(" (%.1f bps)", richest$spread_to_curve[1])
+                    sprintf(" (%.1f bps)", richest$spread_bps[1])
                 )
             } else {
                 tags$p(tags$b("Richest: "), "N/A")
