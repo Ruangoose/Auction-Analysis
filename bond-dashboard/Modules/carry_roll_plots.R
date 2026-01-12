@@ -793,13 +793,13 @@ generate_butterfly_chart <- function(bf, zscore_threshold = 2.0) {
             size = 4
         ) +
 
-        # Current value annotation
+        # Current value annotation (positioned to the left of the point to stay within plot area)
         annotate(
             "label",
             x = max(spread_ts$date),
             y = current_pct,
             label = sprintf("%.3f%%\nZ: %.2f", current_pct, bf$z_score),
-            hjust = -0.1,
+            hjust = 1.1,
             fill = ifelse(abs(bf$z_score) > 2, "#FFCDD2", "#FFF9C4"),
             size = 3
         ) +
