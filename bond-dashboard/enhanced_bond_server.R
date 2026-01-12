@@ -1200,6 +1200,21 @@ server <- function(input, output, session) {
             8.25
         }
 
+        # ═══════════════════════════════════════════════════════════════════════
+        # PRE-CALCULATION: Check raw coupon values per bond
+        # ═══════════════════════════════════════════════════════════════════════
+        if("coupon" %in% names(processed_data())) {
+            coupon_check <- processed_data() %>%
+                select(bond, coupon) %>%
+                distinct() %>%
+                arrange(bond)
+
+            message("=== COUPON VALUES PER BOND (PRE-CALCULATION) ===")
+            message(sprintf("Unique coupons: %d for %d bonds", n_distinct(coupon_check$coupon), nrow(coupon_check)))
+            print(coupon_check)
+            message("=================================================")
+        }
+
         result <- calculate_advanced_carry_roll(
             processed_data(),
             holding_periods = c(30, 90, 180, 360),
@@ -1207,37 +1222,52 @@ server <- function(input, output, session) {
         )
 
         # ═══════════════════════════════════════════════════════════════════════
-        # DIAGNOSTIC: Check for identical returns (bug detection)
+        # POST-CALCULATION: Verify carry income differentiation
         # ═══════════════════════════════════════════════════════════════════════
         if(nrow(result) > 0) {
-            # Check 90-day returns for uniqueness
-            gross_90 <- result %>%
-                filter(holding_period == "90d") %>%
-                select(bond, any_of(c("coupon_standardized", "yield_to_maturity",
-                                      "modified_duration", "carry_income",
-                                      "roll_return", "gross_return", "net_return")))
+            # Check 360-day returns (most visible in heatmap)
+            returns_360 <- result %>%
+                filter(holding_period == "360d") %>%
+                select(bond, any_of(c("coupon_standardized", "carry_income",
+                                      "roll_return", "gross_return", "net_return"))) %>%
+                arrange(desc(net_return))
 
-            n_unique_gross <- n_distinct(gross_90$gross_return)
-            n_unique_carry <- n_distinct(gross_90$carry_income)
-            n_unique_roll <- n_distinct(gross_90$roll_return)
-            n_bonds <- nrow(gross_90)
+            n_unique_net <- n_distinct(round(returns_360$net_return, 2))
+            n_unique_carry <- n_distinct(round(returns_360$carry_income, 2))
+            n_bonds <- nrow(returns_360)
 
-            message("=== CARRY & ROLL DIAGNOSTIC ===")
+            message("=== CARRY & ROLL DIAGNOSTIC (360-DAY) ===")
             message(sprintf("Total bonds: %d", n_bonds))
-            message(sprintf("Unique gross returns: %d", n_unique_gross))
-            message(sprintf("Unique carry incomes: %d", n_unique_carry))
-            message(sprintf("Unique roll returns: %d", n_unique_roll))
+            message(sprintf("Unique net returns: %d (should equal bonds)", n_unique_net))
+            message(sprintf("Unique carry incomes: %d (should match unique coupons)", n_unique_carry))
+
+            # Show net return range
+            if(n_bonds > 0) {
+                message(sprintf("Net return range: %.2f%% to %.2f%%",
+                                min(returns_360$net_return, na.rm = TRUE),
+                                max(returns_360$net_return, na.rm = TRUE)))
+
+                # Log all bonds with their returns (sorted by net return)
+                message("\n--- ALL BONDS (sorted by net return) ---")
+                for(i in 1:nrow(returns_360)) {
+                    message(sprintf("  %s: coupon=%.2f%%, carry=%.2f%%, roll=%.2f%%, net=%.2f%%",
+                                    returns_360$bond[i],
+                                    if("coupon_standardized" %in% names(returns_360)) returns_360$coupon_standardized[i] else NA,
+                                    returns_360$carry_income[i],
+                                    returns_360$roll_return[i],
+                                    returns_360$net_return[i]))
+                }
+                message("-----------------------------------------")
+            }
 
             # Warn if returns are suspiciously uniform
-            if(n_unique_gross < min(5, n_bonds) && n_bonds > 1) {
-                warning(sprintf("⚠ LOW VARIATION: Only %d unique gross returns for %d bonds - calculation may be incorrect",
-                                n_unique_gross, n_bonds))
-
-                # Log first few rows for debugging
-                message("Sample data (first 5 bonds):")
-                print(head(gross_90, 5))
+            if(n_unique_net < min(5, n_bonds) && n_bonds > 1) {
+                warning(sprintf("⚠ LOW VARIATION: Only %d unique net returns for %d bonds - check coupon data!",
+                                n_unique_net, n_bonds))
+            } else {
+                message(sprintf("✓ Return variation check PASSED: %d unique returns for %d bonds", n_unique_net, n_bonds))
             }
-            message("================================")
+            message("==========================================")
         }
 
         return(result)

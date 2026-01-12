@@ -56,23 +56,28 @@ generate_enhanced_carry_roll_heatmap <- function(data, return_type = "net", fund
     }
 
     # ═══════════════════════════════════════════════════════════════════════
-    # FIX 2: IMPROVED COLOR SCALE FOR LOW VALUE DIFFERENTIATION
+    # FIX 2: UPDATED COLOR SCALE FOR WIDER RETURN RANGE (removed 4% cap)
     # ═══════════════════════════════════════════════════════════════════════
 
-    # Custom color scale optimized for typical carry returns (0-4%)
-    # Clusters more colors in the low range for better differentiation
-    return_colors <- c(
-        "#FFEBEE",      # 0% - very light red (poor)
-        "#FFCDD2",      # 0.25% - light red
-        "#FFF9C4",      # 0.5% - yellow (break-even zone)
-        "#C8E6C9",      # 1.0% - light green (acceptable)
-        "#66BB6A",      # 2.0% - medium green (good)
-        "#1B5E20"       # 4%+ - dark green (excellent)
-    )
-
-    # Determine dynamic limits based on data
+    # Determine dynamic limits based on actual data
     max_return <- max(heatmap_data$return_value, na.rm = TRUE)
     min_return <- min(heatmap_data$return_value, na.rm = TRUE)
+
+    # Extended color scale for returns up to 8%+ (high coupon bonds)
+    return_colors <- c(
+        "#FFEBEE",      # 0% - very light red (poor)
+        "#FFCDD2",      # 0.5% - light red
+        "#FFF9C4",      # 1.0% - yellow (break-even zone)
+        "#C8E6C9",      # 2.0% - light green (acceptable)
+        "#81C784",      # 3.0% - medium-light green
+        "#66BB6A",      # 4.0% - medium green (good)
+        "#43A047",      # 5.0% - medium-dark green
+        "#2E7D32",      # 6.0% - dark green
+        "#1B5E20"       # 8%+ - darkest green (excellent)
+    )
+
+    # Dynamic scale limits based on actual data range
+    scale_max <- max(8, ceiling(max_return))
 
     # Use appropriate scale based on return range
     if(min_return < 0) {
@@ -82,7 +87,7 @@ generate_enhanced_carry_roll_heatmap <- function(data, return_type = "net", fund
             mid = "#FFF9C4",           # Yellow at zero
             high = "#1B5E20",          # Dark green for positive
             midpoint = 0,
-            limits = c(min(min_return, -0.5), max(max_return, 4)),
+            limits = c(min(min_return, -1), max(max_return, 6)),
             oob = scales::squish,
             name = "Return (%)",
             guide = guide_colorbar(
@@ -92,11 +97,11 @@ generate_enhanced_carry_roll_heatmap <- function(data, return_type = "net", fund
             )
         )
     } else {
-        # Sequential scale optimized for typical 0-4% returns
+        # Sequential scale with dynamic breakpoints based on data
         color_scale <- scale_fill_gradientn(
             colors = return_colors,
-            values = scales::rescale(c(0, 0.25, 0.5, 1.0, 2.0, 4.0)),
-            limits = c(0, max(4, max_return)),
+            values = scales::rescale(c(0, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0)),
+            limits = c(0, scale_max),
             oob = scales::squish,
             name = "Return (%)",
             guide = guide_colorbar(
@@ -107,15 +112,12 @@ generate_enhanced_carry_roll_heatmap <- function(data, return_type = "net", fund
         )
     }
 
-    # Dynamic text color based on return value (darker text on light backgrounds)
-    text_colors <- ifelse(
-        heatmap_data$return_value < 0.5 | heatmap_data$return_value > 2.5,
-        "black",
-        "black"
+    # Dynamic text color based on return value (white on dark backgrounds)
+    text_colors <- case_when(
+        heatmap_data$return_value > 4 ~ "white",     # White text on dark green
+        heatmap_data$return_value < -0.5 ~ "white",  # White text on dark red
+        TRUE ~ "black"                               # Black text otherwise
     )
-    # Override for very high/low values
-    text_colors <- ifelse(heatmap_data$return_value > 3, "white", text_colors)
-    text_colors <- ifelse(heatmap_data$return_value < -0.5, "white", text_colors)
 
     # Create heatmap with realistic scale
     p <- ggplot(heatmap_data, aes(x = holding_period, y = bond, fill = return_value)) +
