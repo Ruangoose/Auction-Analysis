@@ -1511,50 +1511,56 @@ ui <- dashboardPage(
                                    width = 12,
                                    collapsible = TRUE,
 
-                                   # Educational explainer panel
+                                   # Educational explainer panel - Dark blue background with white text
                                    tags$div(
                                        class = "alert alert-info",
-                                       style = "margin-bottom: 15px;",
+                                       style = "margin-bottom: 15px; background: #1565C0; border: none;",
 
-                                       tags$strong("Understanding Forward Rates"),
+                                       tags$h5(
+                                           style = "color: white; margin-top: 0;",
+                                           "Understanding Forward Rates"
+                                       ),
 
                                        tags$p(
-                                           style = "margin: 10px 0;",
+                                           style = "color: white; margin: 10px 0;",
                                            "Forward rates represent the market's implied expectation for future interest rates, ",
                                            "derived from the current yield curve using no-arbitrage pricing."
                                        ),
 
+                                       # Notation box - white background with dark text
                                        tags$div(
                                            style = "background: white; padding: 10px; border-radius: 4px; margin: 10px 0;",
-                                           tags$strong("Notation: "), tags$code("XyYy"), " = Y-year rate starting X years from now",
+                                           tags$span(style = "color: #1B3A6B;", tags$strong("Notation: ")),
+                                           tags$code(style = "background: #E3F2FD; color: #1565C0; padding: 2px 6px;", "XyYy"),
+                                           tags$span(style = "color: #333;", " = Y-year rate starting X years from now"),
                                            tags$br(),
-                                           tags$strong("Example: "), tags$code("3y2y"), " = The 2-year rate, 3 years forward (borrowing from Year 3 to Year 5)"
+                                           tags$span(style = "color: #1B3A6B;", tags$strong("Example: ")),
+                                           tags$code(style = "background: #E3F2FD; color: #1565C0; padding: 2px 6px;", "3y2y"),
+                                           tags$span(style = "color: #333;", " = The 2-year rate, 3 years forward (Year 3 to Year 5)")
                                        ),
 
-                                       tags$div(
-                                           style = "margin-top: 10px;",
-                                           tags$strong("Interpretation:"),
-                                           tags$ul(
-                                               style = "margin: 5px 0;",
-                                               tags$li(
-                                                   tags$span(style = "color: #C62828; font-weight: bold;", "Positive spread (+50 bps+):"),
-                                                   " Market expects rates to RISE - Bearish for bond prices"
-                                               ),
-                                               tags$li(
-                                                   tags$span(style = "color: #1B5E20; font-weight: bold;", "Negative spread (-50 bps-):"),
-                                                   " Market expects rates to FALL - Bullish for bond prices"
-                                               ),
-                                               tags$li(
-                                                   tags$span(style = "color: #666666; font-weight: bold;", "Near zero spread:"),
-                                                   " Market expects rates roughly unchanged"
-                                               )
+                                       tags$h6(style = "color: white; margin-top: 15px;", "Interpretation:"),
+
+                                       tags$ul(
+                                           style = "color: white; margin: 5px 0;",
+                                           tags$li(
+                                               tags$span(style = "color: #FFCDD2; font-weight: bold;", "Positive spread (+50 bps+):"),
+                                               " Market expects rates to RISE - Bearish for bond prices"
+                                           ),
+                                           tags$li(
+                                               tags$span(style = "color: #C8E6C9; font-weight: bold;", "Negative spread (-50 bps-):"),
+                                               " Market expects rates to FALL - Bullish for bond prices"
+                                           ),
+                                           tags$li(
+                                               tags$span(style = "color: #FFF9C4; font-weight: bold;", "Near zero spread:"),
+                                               " Market expects rates roughly unchanged"
                                            )
                                        ),
 
-                                       tags$div(
-                                           style = "margin-top: 10px; font-size: 12px; color: #666;",
-                                           tags$em("Note: Forward rates are mathematical constructs, not forecasts. ",
-                                                   "They represent break-even rates for carry trades.")
+                                       tags$p(
+                                           style = "color: rgba(255,255,255,0.8); font-size: 12px; font-style: italic; margin-top: 10px;",
+                                           "Note: Forward rates are mathematical constructs, not forecasts. ",
+                                           "They represent break-even rates for carry trades."
                                        )
                                    ),
 
