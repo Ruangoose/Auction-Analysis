@@ -544,19 +544,56 @@ calculate_butterfly_spreads <- function(bond_data, lookback_days = 365) {
                 current_spread <- tail(spread_ts$butterfly_spread, 1)
                 z_score <- (current_spread - spread_mean) / spread_sd
 
-                # ADF test for stationarity with improved p-value handling
+                # DEBUG: Log spread data details for first 5 combos to verify data varies
+                if (combos_valid <= 5) {
+                    message(sprintf("[SPREAD DEBUG] %s: n=%d, first=%.6f, last=%.6f, mean=%.6f, sd=%.6f",
+                                    spread_name,
+                                    nrow(spread_ts),
+                                    head(spread_ts$butterfly_spread, 1),
+                                    tail(spread_ts$butterfly_spread, 1),
+                                    spread_mean,
+                                    spread_sd))
+                }
+
+                # ADF test for stationarity with comprehensive logging
                 adf_result <- tryCatch({
-                    test_result <- tseries::adf.test(spread_ts$butterfly_spread, alternative = "stationary")
+                    spread_vec <- spread_ts$butterfly_spread
+                    n_obs <- length(spread_vec)
+
+                    # Pre-test checks
+                    if (n_obs < 20) {
+                        message(sprintf("[ADF] %s: SKIP - insufficient data (%d obs)", spread_name, n_obs))
+                        return(list(p.value = NA, statistic = NA, p_truncated = FALSE))
+                    }
+
+                    vec_sd <- sd(spread_vec, na.rm = TRUE)
+                    if (is.na(vec_sd) || vec_sd < 1e-10) {
+                        message(sprintf("[ADF] %s: SKIP - constant/near-constant series (sd=%.2e)", spread_name, vec_sd))
+                        return(list(p.value = NA, statistic = NA, p_truncated = FALSE))
+                    }
+
+                    test_result <- tseries::adf.test(spread_vec, alternative = "stationary")
+
+                    # Log detailed ADF results for first 10 butterflies
+                    if (combos_valid <= 10) {
+                        message(sprintf("[ADF] %s: stat=%.4f, p=%.4f, lag=%d, n=%d",
+                                        spread_name,
+                                        test_result$statistic,
+                                        test_result$p.value,
+                                        test_result$parameter,
+                                        n_obs))
+                    }
 
                     # tseries::adf.test truncates p-values at 0.01 and 0.99
                     # If p.value == 0.01, it's actually <= 0.01
                     list(
                         p.value = test_result$p.value,
                         statistic = test_result$statistic,
+                        lag = test_result$parameter,
                         p_truncated = (test_result$p.value == 0.01)
                     )
                 }, error = function(e) {
-                    message(sprintf("ADF error for %s: %s", spread_name, e$message))
+                    message(sprintf("[ADF] %s: ERROR - %s", spread_name, e$message))
                     list(p.value = NA, statistic = NA, p_truncated = FALSE)
                 })
 
@@ -586,6 +623,42 @@ calculate_butterfly_spreads <- function(bond_data, lookback_days = 365) {
     message(sprintf("Combinations checked: %d", combos_checked))
     message(sprintf("Valid butterflies (60+ obs): %d", combos_valid))
     message(sprintf("Final butterflies: %d", length(butterflies)))
+
+    # DEBUG: Stationarity distribution summary
+    if (length(butterflies) > 0) {
+        stationary_count <- sum(sapply(butterflies, function(bf) isTRUE(bf$is_stationary)))
+        non_stationary_count <- sum(sapply(butterflies, function(bf) !isTRUE(bf$is_stationary) && !is.na(bf$is_stationary)))
+        na_count <- sum(sapply(butterflies, function(bf) is.na(bf$is_stationary)))
+
+        message("=== STATIONARITY DISTRIBUTION ===")
+        message(sprintf("Stationary (p<0.05): %d", stationary_count))
+        message(sprintf("Non-Stationary (p>=0.05): %d", non_stationary_count))
+        message(sprintf("NA/Error: %d", na_count))
+
+        # ADF statistic range
+        adf_stats <- sapply(butterflies, function(bf) bf$adf_statistic)
+        adf_stats <- adf_stats[!is.na(adf_stats)]
+        if (length(adf_stats) > 0) {
+            message(sprintf("ADF stat range: %.4f to %.4f (mean=%.4f, sd=%.4f)",
+                            min(adf_stats), max(adf_stats), mean(adf_stats), sd(adf_stats)))
+        }
+
+        # ADF p-value range
+        adf_pvals <- sapply(butterflies, function(bf) bf$adf_pvalue)
+        adf_pvals <- adf_pvals[!is.na(adf_pvals)]
+        if (length(adf_pvals) > 0) {
+            message(sprintf("ADF p-value range: %.4f to %.4f", min(adf_pvals), max(adf_pvals)))
+            message(sprintf("P-values at 0.01 (truncated): %d", sum(adf_pvals == 0.01)))
+            message(sprintf("P-values > 0.05 (non-stationary): %d", sum(adf_pvals > 0.05)))
+        }
+
+        # WARNING if all stationary
+        if (stationary_count == length(butterflies)) {
+            message("WARNING: ALL butterflies marked as stationary! This may indicate a bug.")
+        }
+        message("==================================")
+    }
+
     message("=== BUTTERFLY SPREAD CALCULATION END ===")
 
     return(butterflies)
