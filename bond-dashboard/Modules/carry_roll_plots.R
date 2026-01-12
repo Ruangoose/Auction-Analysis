@@ -195,24 +195,38 @@ generate_optimal_holding_enhanced_plot <- function(data) {
         return(NULL)
     }
 
-    # Find optimal holding period (highest efficiency)
-    optimal_period <- frontier_data %>% slice_max(efficiency, n = 1)
+    # Find THE optimal period (highest efficiency) and mark it
+    optimal_idx <- which.max(frontier_data$efficiency)
+    frontier_data$is_optimal <- FALSE
+    frontier_data$is_optimal[optimal_idx] <- TRUE
+
+    # Get optimal period info for caption
+    optimal_period <- frontier_data[optimal_idx, ]
 
     p <- ggplot(frontier_data, aes(x = holding_days, y = avg_return)) +
 
-        # Confidence band showing return dispersion across bonds
+        # Min/max range as lighter ribbon (draw first, behind std dev band)
+        geom_ribbon(
+            aes(ymin = min_return, ymax = max_return),
+            fill = "#E3F2FD",
+            alpha = 0.4
+        ) +
+
+        # Confidence band showing return dispersion across bonds (±1 std dev)
         geom_ribbon(
             aes(ymin = avg_return - return_volatility,
                 ymax = avg_return + return_volatility),
-            alpha = 0.15,
-            fill = insele_palette$primary
+            fill = "#90CAF9",
+            alpha = 0.5
         ) +
 
-        # Min/max range as lighter ribbon
-        geom_ribbon(
-            aes(ymin = min_return, ymax = max_return),
-            alpha = 0.08,
-            fill = insele_palette$accent
+        # Trend line
+        geom_smooth(
+            method = "lm",
+            se = FALSE,
+            color = insele_palette$primary,
+            linetype = "dashed",
+            size = 0.8
         ) +
 
         # Connecting line
@@ -222,24 +236,21 @@ generate_optimal_holding_enhanced_plot <- function(data) {
             alpha = 0.8
         ) +
 
-        # Points sized by efficiency (Sharpe-like metric)
+        # Points sized by efficiency (Sharpe-like metric) - all bubbles
         geom_point(
             aes(size = abs(efficiency)),
-            shape = 21,
-            fill = insele_palette$accent,
-            color = "white",
-            stroke = 2
+            color = insele_palette$accent,
+            alpha = 0.9
         ) +
 
-        # Highlight optimal period
+        # Highlight optimal period with ring
         geom_point(
-            data = optimal_period,
-            aes(x = holding_days, y = avg_return),
+            data = frontier_data %>% filter(is_optimal),
+            aes(x = holding_days, y = avg_return, size = abs(efficiency)),
             shape = 21,
-            size = 12,
             color = "#1B5E20",
             fill = NA,
-            stroke = 2
+            stroke = 3
         ) +
 
         # Labels for each holding period
@@ -251,48 +262,41 @@ generate_optimal_holding_enhanced_plot <- function(data) {
             color = insele_palette$dark_gray
         ) +
 
-        # Return value labels
+        # Sharpe ratio labels (below points)
         geom_text(
-            aes(label = sprintf("%.2f%%", avg_return)),
+            aes(label = sprintf("SR: %.2f", sharpe_display)),
             vjust = 2.5,
-            size = 3,
+            size = 2.5,
             color = "#666666"
         ) +
 
-        # Sharpe ratio annotations
-        geom_text(
-            aes(label = sprintf("SR: %.2f", sharpe_display)),
-            vjust = 4,
-            size = 2.5,
-            color = "#999999"
-        ) +
-
-        # Optimal period annotation
-        annotate(
-            "text",
-            x = optimal_period$holding_days,
-            y = optimal_period$avg_return + (optimal_period$return_volatility * 1.5),
-            label = "OPTIMAL",
-            color = "#1B5E20",
+        # OPTIMAL label - ONLY on the best period (using geom_label with filtered data)
+        geom_label(
+            data = frontier_data %>% filter(is_optimal),
+            aes(x = holding_days, y = avg_return, label = "OPTIMAL"),
+            vjust = -3.5,
+            fill = "#1B5E20",
+            color = "white",
             fontface = "bold",
-            size = 3.5
+            size = 3,
+            label.padding = unit(0.2, "lines")
         ) +
 
         # X-axis: Holding period in days
         scale_x_continuous(
-            breaks = frontier_data$holding_days,
-            labels = frontier_data$holding_period,
+            breaks = c(30, 90, 180, 360),
+            labels = c("30d", "90d", "180d", "360d"),
             limits = c(min(frontier_data$holding_days) - 20,
                        max(frontier_data$holding_days) + 40)
         ) +
 
         # Y-axis formatting
         scale_y_continuous(
-            labels = function(x) paste0(sprintf("%.1f", x), "%")
+            labels = function(x) sprintf("%.1f%%", x)
         ) +
 
         scale_size_continuous(
-            range = c(6, 14),
+            range = c(8, 20),
             guide = "none"  # Hide size legend for cleaner look
         ) +
 
@@ -302,7 +306,7 @@ generate_optimal_holding_enhanced_plot <- function(data) {
             x = "Holding Period",
             y = "Average Net Return (%)",
             caption = sprintf(
-                "Optimal period: %s (efficiency: %.2f) | Dark band: ±1 std dev | Light band: min-max range | SR = Sharpe Ratio",
+                "\u2605 Optimal: %s (Efficiency: %.2f) | Dark band: \u00b11\u03c3 | Light band: min-max | SR = Sharpe Ratio",
                 optimal_period$holding_period, optimal_period$efficiency
             )
         ) +
@@ -311,8 +315,13 @@ generate_optimal_holding_enhanced_plot <- function(data) {
         theme(
             legend.position = "none",
             panel.grid.major.x = element_blank(),
-            panel.grid.minor.x = element_blank()
+            panel.grid.minor.x = element_blank(),
+            plot.title = element_text(face = "bold", color = insele_palette$primary),
+            plot.caption = element_text(size = 9, color = "#666666")
         )
+
+    # Add metrics as attribute for the explainer panel
+    attr(p, "metrics") <- frontier_data
 
     return(p)
 }

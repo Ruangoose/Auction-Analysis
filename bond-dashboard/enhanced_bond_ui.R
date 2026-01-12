@@ -1409,6 +1409,10 @@ ui <- dashboardPage(
                                    solidHeader = TRUE,
                                    width = 6,
                                    plotOutput("optimal_holding_enhanced_plot", height = "400px"),
+
+                                   # Explainer box to clarify "Efficiency" metric
+                                   uiOutput("holding_period_explainer"),
+
                                    tags$div(
                                        style = "margin-top: 15px;",
                                        downloadButton("download_optimal_holding", "Download Chart",
