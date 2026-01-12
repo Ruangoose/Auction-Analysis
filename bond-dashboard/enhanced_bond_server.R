@@ -5428,14 +5428,31 @@ server <- function(input, output, session) {
             n_valid <- nrow(valid_preds)
 
             if (n_valid == 0) {
+                # FIX: Show historical averages when no forecasts available
                 return(tags$div(
-                    class = "alert alert-info",
-                    style = "margin: 0;",
-                    tags$strong("No Valid Predictions"),
-                    tags$br(),
-                    tags$small(
-                        sprintf("%.0f bonds selected, but none have sufficient auction history (10+ auctions needed)",
-                                n_total)
+                    class = "well",
+                    style = "background: #FFF9C4; padding: 15px; border-radius: 4px; margin: 0;",
+                    tags$div(style = "font-size: 11px; color: #F57F17; text-transform: uppercase;",
+                             "Market Outlook"),
+                    tags$div(style = "font-size: 18px; font-weight: bold; color: #F57F17; margin: 8px 0;",
+                             icon("question-circle"), " INSUFFICIENT DATA"),
+                    tags$p(style = "font-size: 12px; color: #666; margin: 0;",
+                           sprintf("%.0f bonds selected, but none have 10+ auction history", n_total)),
+                    tags$hr(style = "margin: 10px 0; border-color: #FFE082;"),
+                    tags$div(
+                        style = "font-size: 11px; color: #666;",
+                        tags$strong("Historical averages:"),
+                        tags$div(
+                            style = "margin-top: 5px;",
+                            lapply(seq_len(min(5, n_total)), function(i) {
+                                row <- preds[i, ]
+                                tags$div(
+                                    style = "display: flex; justify-content: space-between; padding: 2px 0;",
+                                    tags$span(row$bond_name),
+                                    tags$span(sprintf("%.2fx (n=%d)", row$historical_avg, row$n_auctions))
+                                )
+                            })
+                        )
                     )
                 ))
             }
@@ -5713,19 +5730,29 @@ server <- function(input, output, session) {
             list(label = "BEARISH", color = "#B71C1C", emoji = icon("chart-line", style = "transform: rotate(180deg);"))
         }
 
-        # Trend text
+        # FIX 3: Clearer trend display with percentage changes
+        # Calculate trend as percentage of average
+        trend_pct <- if (!is.na(recent$trend) && recent$avg_btc > 0) {
+            (recent$trend / recent$avg_btc) * 100  # % change per month
+        } else {
+            NA
+        }
+
+        # Trend text with percentage (more informative than just "Declining")
         trend_text <- case_when(
-            is.na(recent$trend) ~ "",
-            recent$trend > 0.1 ~ "Improving",
-            recent$trend < -0.1 ~ "Declining",
+            is.na(trend_pct) ~ "",
+            trend_pct > 3 ~ sprintf("+%.0f%%/mo", trend_pct),
+            trend_pct > 0.5 ~ sprintf("+%.0f%%/mo", trend_pct),
+            trend_pct < -3 ~ sprintf("%.0f%%/mo", trend_pct),
+            trend_pct < -0.5 ~ sprintf("%.0f%%/mo", trend_pct),
             TRUE ~ "Stable"
         )
 
-        trend_icon <- if(is.na(recent$trend)) {
+        trend_icon <- if(is.na(trend_pct)) {
             ""
-        } else if(recent$trend > 0.1) {
+        } else if(trend_pct > 0.5) {
             icon("arrow-up", style = "color: #4CAF50;")
-        } else if(recent$trend < -0.1) {
+        } else if(trend_pct < -0.5) {
             icon("arrow-down", style = "color: #F44336;")
         } else {
             icon("arrows-alt-h", style = "color: #FF9800;")
@@ -5785,6 +5812,222 @@ server <- function(input, output, session) {
                 tags$h6("Market Sentiment", style = "color: #C62828;"),
                 tags$small(paste("Error:", e$message))
             )
+        })
+    })
+
+    # ════════════════════════════════════════════════════════════════════════════
+    # FIX 2: QUICK SELECT FOR 3-BOND AUCTION WORKFLOW
+    # ════════════════════════════════════════════════════════════════════════════
+
+    # Helper function to get next Tuesday (SA auction day)
+    get_next_tuesday <- function(from_date) {
+        days_to_add <- (2 - as.numeric(format(from_date, "%u"))) %% 7
+        if (days_to_add == 0) days_to_add <- 7
+        from_date + days(days_to_add)
+    }
+
+    # Quick Select UI for common auction groupings
+    output$auction_quick_select <- renderUI({
+        req(bond_data())
+
+        # Get upcoming auction dates
+        today_date <- today()
+        next_auction <- get_next_tuesday(today_date)
+        following_auction <- next_auction + days(7)
+
+        # Get bonds with recent auction activity (likely to be in upcoming auctions)
+        recent_bonds <- bond_data() %>%
+            filter(!is.na(bid_to_cover), date >= today_date - days(90)) %>%
+            group_by(bond) %>%
+            summarise(n_auctions = n(), last_auction = max(date), .groups = "drop") %>%
+            arrange(desc(n_auctions), desc(last_auction)) %>%
+            pull(bond)
+
+        # Common 3-bond selections for SA government bonds
+        # These are typically auctioned together based on maturity buckets
+        common_groups <- list(
+            "Short/Medium" = c("R186", "R2030", "R213"),
+            "Long-Dated" = c("R2032", "R2035", "R2037"),
+            "Ultra-Long" = c("R2040", "R2044", "R2048")
+        )
+
+        tags$div(
+            style = "margin-bottom: 10px;",
+            tags$label("Quick Select:", style = "font-size: 11px; color: #666; display: block; margin-bottom: 4px;"),
+
+            tags$div(
+                style = "display: flex; flex-wrap: wrap; gap: 4px;",
+
+                # Next auction button
+                actionButton(
+                    "select_next_auction",
+                    tags$span(
+                        icon("calendar-check"),
+                        sprintf(" %s", format(next_auction, "%b %d"))
+                    ),
+                    class = "btn-sm btn-outline-primary",
+                    style = "font-size: 10px; padding: 3px 8px; background: #E3F2FD; border-color: #1565C0; color: #1565C0;"
+                ),
+
+                # Following week button
+                actionButton(
+                    "select_following_auction",
+                    tags$span(
+                        icon("calendar"),
+                        sprintf(" %s", format(following_auction, "%b %d"))
+                    ),
+                    class = "btn-sm btn-outline-secondary",
+                    style = "font-size: 10px; padding: 3px 8px;"
+                ),
+
+                # Top 3 recent bonds button
+                actionButton(
+                    "select_top_recent",
+                    "Top 3",
+                    class = "btn-sm btn-outline-info",
+                    style = "font-size: 10px; padding: 3px 8px;",
+                    title = "Select 3 most frequently auctioned bonds"
+                )
+            )
+        )
+    })
+
+    # Observer for "Next Auction" quick select
+    observeEvent(input$select_next_auction, {
+        req(bond_data())
+
+        # Get bonds with most recent auction activity
+        recent_bonds <- bond_data() %>%
+            filter(!is.na(bid_to_cover), date >= today() - days(60)) %>%
+            group_by(bond) %>%
+            summarise(n_auctions = n(), .groups = "drop") %>%
+            arrange(desc(n_auctions)) %>%
+            head(3) %>%
+            pull(bond)
+
+        if (length(recent_bonds) > 0) {
+            updatePickerInput(session, "auction_bonds_select", selected = recent_bonds)
+
+            # Update auction date to next Tuesday
+            next_auction <- get_next_tuesday(today())
+            updateDateInput(session, "next_auction_date", value = next_auction)
+        }
+    })
+
+    # Observer for "Following Auction" quick select
+    observeEvent(input$select_following_auction, {
+        req(bond_data())
+
+        # Get bonds with recent auction activity
+        recent_bonds <- bond_data() %>%
+            filter(!is.na(bid_to_cover), date >= today() - days(60)) %>%
+            group_by(bond) %>%
+            summarise(n_auctions = n(), .groups = "drop") %>%
+            arrange(desc(n_auctions)) %>%
+            head(3) %>%
+            pull(bond)
+
+        if (length(recent_bonds) > 0) {
+            updatePickerInput(session, "auction_bonds_select", selected = recent_bonds)
+
+            # Update auction date to following Tuesday
+            following_auction <- get_next_tuesday(today()) + days(7)
+            updateDateInput(session, "next_auction_date", value = following_auction)
+        }
+    })
+
+    # Observer for "Top 3 Recent" quick select
+    observeEvent(input$select_top_recent, {
+        req(bond_data())
+
+        # Get the 3 bonds with most auction history
+        top_bonds <- bond_data() %>%
+            filter(!is.na(bid_to_cover)) %>%
+            group_by(bond) %>%
+            summarise(n_auctions = n(), .groups = "drop") %>%
+            arrange(desc(n_auctions)) %>%
+            head(3) %>%
+            pull(bond)
+
+        if (length(top_bonds) > 0) {
+            updatePickerInput(session, "auction_bonds_select", selected = top_bonds)
+        }
+    })
+
+    # ════════════════════════════════════════════════════════════════════════════
+    # FIX 4: AUCTION INSIGHT SUMMARY
+    # ════════════════════════════════════════════════════════════════════════════
+
+    output$auction_insight_summary <- renderUI({
+        tryCatch({
+            preds <- auction_predictions_data()
+
+            if (is.null(preds) || nrow(preds) == 0) {
+                return(NULL)
+            }
+
+            valid_preds <- preds %>% filter(!is.na(forecast))
+
+            if (nrow(valid_preds) == 0) {
+                return(NULL)
+            }
+
+            # Generate insights
+            insights <- list()
+
+            # Best performing bond
+            best_bond <- valid_preds %>%
+                slice_max(forecast, n = 1)
+            insights$best <- sprintf("Strongest demand expected for %s (%.2fx forecast)",
+                                    best_bond$bond_name, best_bond$forecast)
+
+            # Check for weak demand bonds
+            weak_bonds <- valid_preds %>% filter(forecast < 2.0)
+            if (nrow(weak_bonds) > 0) {
+                weak_names <- paste(weak_bonds$bond_name, collapse = ", ")
+                insights$weak <- sprintf("Monitor %s for potential tail risk", weak_names)
+            }
+
+            # Overall assessment
+            avg_forecast <- mean(valid_preds$forecast, na.rm = TRUE)
+            if (avg_forecast > 2.5) {
+                insights$overall <- "Overall auction conditions appear favorable"
+            } else if (avg_forecast > 2.0) {
+                insights$overall <- "Moderate demand expected - standard allocation approach"
+            } else {
+                insights$overall <- "Consider conservative allocations given weak forecast"
+            }
+
+            # vs Historical comparison
+            avg_hist <- mean(valid_preds$historical_avg, na.rm = TRUE)
+            diff <- avg_forecast - avg_hist
+            if (abs(diff) > 0.2) {
+                direction <- if (diff > 0) "above" else "below"
+                insights$comparison <- sprintf("Forecasts %.2f %s historical averages",
+                                              abs(diff), direction)
+            }
+
+            tags$div(
+                class = "well",
+                style = "padding: 10px; margin-top: 8px; background: #E8F5E9; border-left: 4px solid #4CAF50; border-radius: 4px;",
+
+                tags$div(
+                    style = "display: flex; align-items: center; margin-bottom: 6px;",
+                    icon("lightbulb", style = "color: #2E7D32; margin-right: 6px;"),
+                    tags$span(style = "font-weight: bold; color: #2E7D32; font-size: 12px;",
+                             "Auction Insights")
+                ),
+
+                tags$ul(
+                    style = "margin: 0; padding-left: 18px; font-size: 11px; color: #333;",
+                    lapply(insights, function(insight) {
+                        tags$li(style = "margin: 3px 0;", insight)
+                    })
+                )
+            )
+
+        }, error = function(e) {
+            NULL
         })
     })
 
@@ -7208,10 +7451,81 @@ server <- function(input, output, session) {
         },
         content = function(file) {
             req(filtered_data())
-            p <- generate_auction_sentiment_gauge(filtered_data(), list())
-            if(!is.null(p)) {
-                ggsave(file, plot = p, width = 10, height = 6, dpi = 300, bg = "white")
-            }
+
+            # FIX: Use same data processing as market_sentiment_compact to ensure consistency
+            tryCatch({
+                base_data <- filtered_data()
+
+                # Filter to actual auction data (same logic as display)
+                auction_data <- base_data %>%
+                    filter(!is.na(bid_to_cover), bid_to_cover > 0) %>%
+                    group_by(date, bond) %>%
+                    slice_head(n = 1) %>%
+                    ungroup() %>%
+                    filter(date >= max(date, na.rm = TRUE) - 180)
+
+                n_auctions <- nrow(auction_data)
+
+                # Generate appropriate plot based on data availability
+                if (n_auctions < 5) {
+                    # Create informative "insufficient data" plot
+                    p <- ggplot() +
+                        annotate("text", x = 0.5, y = 0.55,
+                                 label = "Insufficient Auction Data",
+                                 size = 8, fontface = "bold", color = "#666666") +
+                        annotate("text", x = 0.5, y = 0.45,
+                                 label = sprintf("Found %d auction events (need 5+)", n_auctions),
+                                 size = 5, color = "#999999") +
+                        annotate("text", x = 0.5, y = 0.35,
+                                 label = "Based on records with bid_to_cover > 0",
+                                 size = 4, color = "#AAAAAA") +
+                        xlim(0, 1) + ylim(0, 1) +
+                        theme_void() +
+                        theme(plot.background = element_rect(fill = "#FFF9C4", color = NA),
+                              plot.margin = margin(20, 20, 20, 20))
+
+                    ggsave(file, plot = p, width = 10, height = 6, dpi = 150, bg = "white")
+                } else {
+                    # Generate full sentiment gauge using the standard function
+                    p <- generate_auction_sentiment_gauge(base_data, list())
+
+                    if (!is.null(p)) {
+                        # Handle both ggplot and grob objects
+                        if (inherits(p, "grob") || inherits(p, "gtable") || inherits(p, "arrangelist")) {
+                            # For grob objects, use grid.draw approach
+                            png(file, width = 10, height = 6, units = "in", res = 150, bg = "white")
+                            gridExtra::grid.arrange(p)
+                            dev.off()
+                        } else {
+                            # For ggplot objects
+                            ggsave(file, plot = p, width = 10, height = 6, dpi = 150, bg = "white")
+                        }
+                    } else {
+                        # Fallback if function returns NULL
+                        p <- ggplot() +
+                            annotate("text", x = 0.5, y = 0.5,
+                                     label = "Unable to generate sentiment chart",
+                                     size = 6, color = "#666666") +
+                            theme_void() +
+                            theme(plot.background = element_rect(fill = "#f8f9fa", color = NA))
+                        ggsave(file, plot = p, width = 10, height = 6, dpi = 150, bg = "white")
+                    }
+                }
+            }, error = function(e) {
+                # Error fallback - generate a proper error message plot
+                message(sprintf("[DOWNLOAD ERROR] %s", e$message))
+                p <- ggplot() +
+                    annotate("text", x = 0.5, y = 0.55,
+                             label = "Error Generating Chart",
+                             size = 8, fontface = "bold", color = "#C62828") +
+                    annotate("text", x = 0.5, y = 0.45,
+                             label = "Please try refreshing the data",
+                             size = 5, color = "#666666") +
+                    xlim(0, 1) + ylim(0, 1) +
+                    theme_void() +
+                    theme(plot.background = element_rect(fill = "#FFEBEE", color = NA))
+                ggsave(file, plot = p, width = 10, height = 6, dpi = 150, bg = "white")
+            })
         }
     )
 

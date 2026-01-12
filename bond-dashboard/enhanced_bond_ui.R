@@ -1603,6 +1603,9 @@ ui <- dashboardPage(
 
                                                   tags$h5("Configuration", style = "margin-top: 0; margin-bottom: 12px; color: #1B3A6B; font-weight: bold;"),
 
+                                                  # Quick Select for Auction Weeks
+                                                  uiOutput("auction_quick_select"),
+
                                                   # Bond selection for next auction
                                                   pickerInput(
                                                       "auction_bonds_select",
@@ -1676,6 +1679,9 @@ ui <- dashboardPage(
                                        column(5,
                                               # Market Outlook Summary (replaces empty cards)
                                               uiOutput("market_outlook_summary"),
+
+                                              # Auction Insight Summary (3-bond workflow optimization)
+                                              uiOutput("auction_insight_summary"),
 
                                               # Detailed Forecast Table (replaces vertical cards)
                                               tags$div(
