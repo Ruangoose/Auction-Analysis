@@ -1591,103 +1591,120 @@ ui <- dashboardPage(
                                    status = "primary",
                                    solidHeader = TRUE,
                                    width = 12,
+                                   collapsible = TRUE,
 
                                    fluidRow(
-                                       column(4,
+                                       # Left Column: Configuration + Model Performance (compact)
+                                       column(3,
+                                              # Configuration Panel
                                               tags$div(
-                                                  style = "background: #f8f9fa; border-radius: 8px; padding: 15px;",
-                                                  h4("Prediction Configuration", style = "color: #1B3A6B;"),
+                                                  class = "well",
+                                                  style = "padding: 12px; margin-bottom: 10px; background: #f8f9fa; border-radius: 8px;",
+
+                                                  tags$h5("Configuration", style = "margin-top: 0; margin-bottom: 12px; color: #1B3A6B; font-weight: bold;"),
 
                                                   # Bond selection for next auction
                                                   pickerInput(
                                                       "auction_bonds_select",
-                                                      "Select Bonds for Next Auction:",
-                                                      choices = NULL,  # Will be populated dynamically
+                                                      "Select Bonds:",
+                                                      choices = NULL,
                                                       selected = NULL,
                                                       multiple = TRUE,
                                                       options = list(
                                                           `actions-box` = TRUE,
                                                           `selected-text-format` = "count > 2",
                                                           `count-selected-text` = "{0} bonds selected",
-                                                          `live-search` = TRUE
+                                                          `live-search` = TRUE,
+                                                          `max-options` = 8
                                                       )
                                                   ),
 
-                                                  # Auction parameters
-                                                  dateInput(
-                                                      "next_auction_date",
-                                                      "Expected Auction Date:",
-                                                      value = today() + days(7),
-                                                      min = today() + days(1)
-                                                  ),
-
-                                                  numericInput(
-                                                      "expected_offer_size",
-                                                      "Expected Offer (R millions):",
-                                                      value = 5000,
-                                                      min = 100,
-                                                      max = 20000,
-                                                      step = 500
+                                                  # Compact row for date and offer
+                                                  fluidRow(
+                                                      column(6, style = "padding-right: 5px;",
+                                                             dateInput(
+                                                                 "next_auction_date",
+                                                                 "Auction Date:",
+                                                                 value = today() + days(7),
+                                                                 min = today() + days(1),
+                                                                 width = "100%"
+                                                             )
+                                                      ),
+                                                      column(6, style = "padding-left: 5px;",
+                                                             numericInput(
+                                                                 "expected_offer_size",
+                                                                 "Offer (Rm):",
+                                                                 value = 5000,
+                                                                 min = 100,
+                                                                 max = 20000,
+                                                                 step = 500,
+                                                                 width = "100%"
+                                                             )
+                                                      )
                                                   ),
 
                                                   selectInput(
                                                       "prediction_model",
-                                                      "Prediction Model:",
+                                                      "Model:",
                                                       choices = list(
                                                           "ARIMA (Auto)" = "arima_auto",
-                                                          "Machine Learning Ensemble" = "ml_ensemble",
-                                                          "Neural Network" = "neural_net",
-                                                          "Hybrid Model" = "hybrid"
+                                                          "ETS (Exp. Smoothing)" = "ets",
+                                                          "Ensemble (Best)" = "ensemble"
                                                       ),
-                                                      selected = "arima_auto"
+                                                      selected = "ensemble",
+                                                      width = "100%"
                                                   ),
 
-                                                  hr(),
-
-                                                  tags$div(
-                                                      title = "Recalculate auction predictions with current parameters",
-                                                      actionButton(
-                                                          "update_predictions",
-                                                          "Update Predictions",
-                                                          class = "btn-primary btn-block",
-                                                          icon = icon("sync-alt")
-                                                      )
+                                                  actionButton(
+                                                      "update_predictions",
+                                                      "Update Predictions",
+                                                      class = "btn-primary btn-block",
+                                                      icon = icon("sync-alt"),
+                                                      style = "margin-top: 8px;"
                                                   ),
 
-                                                  hr(),
+                                                  # Quick Stats
+                                                  tags$hr(style = "margin: 10px 0;"),
+                                                  uiOutput("auction_quick_stats")
+                                              ),
 
-                                                  h5("Model Performance", style = "color: #1B3A6B; margin-top: 15px;"),
-                                                  uiOutput("model_performance_metrics")
+                                              # Model Performance Card (compact)
+                                              uiOutput("model_performance_card")
+                                       ),
+
+                                       # Middle Column: Market Outlook + Forecast Table
+                                       column(5,
+                                              # Market Outlook Summary (replaces empty cards)
+                                              uiOutput("market_outlook_summary"),
+
+                                              # Detailed Forecast Table (replaces vertical cards)
+                                              tags$div(
+                                                  style = "margin-top: 12px;",
+                                                  tags$h5("Detailed Forecasts", style = "color: #1B3A6B; font-weight: bold; margin-bottom: 10px;"),
+                                                  DT::dataTableOutput("auction_forecast_table", height = "auto")
+                                              ),
+
+                                              # Market Sentiment (compact)
+                                              tags$div(
+                                                  style = "margin-top: 12px;",
+                                                  uiOutput("market_sentiment_compact")
                                               )
                                        ),
-                                       column(4,
-                                              tags$div(
-                                                  style = "background: #f8f9fa; border-radius: 8px; padding: 15px;",
-                                                  h4("Auction Forecasts", style = "color: #1B3A6B;"),
-                                                  uiOutput("ml_auction_predictions"),
-                                                  hr(),
-                                                  h5("Market Sentiment", style = "color: #1B3A6B;"),
-                                                  plotOutput("auction_sentiment_gauge", height = "200px"),
-                                                  # === ADDED: download_auction_sentiment ===
-                                                  tags$div(
-                                                      style = "margin-top: 10px;",
-                                                      downloadButton("download_auction_sentiment", "Download Sentiment",
-                                                                     class = "btn-sm btn-primary")
-                                                  )
-                                              )
-                                       ),
-                                       column(4,
-                                              tags$div(
-                                                  style = "background: white; border-radius: 8px; padding: 15px;",
-                                                  plotOutput("auction_forecast_plot", height = "400px")
-                                              )
-                                       )
-                                   ),
 
-                                   fluidRow(
-                                       column(12,
-                                              tags$div(style = "margin-top: 20px;"),
-                                              plotOutput("prediction_confidence_plot", height = "250px")
+                                       # Right Column: Chart + Calendar
+                                       column(4,
+                                              tags$h5("Bid-to-Cover Forecast", style = "color: #1B3A6B; font-weight: bold; margin-bottom: 10px;"),
+                                              plotOutput("auction_forecast_plot", height = "320px"),
+
+                                              # Auction Calendar Mini
+                                              uiOutput("auction_calendar_mini"),
+
+                                              # Download buttons
+                                              tags$div(
+                                                  style = "margin-top: 10px;",
+                                                  downloadButton("download_auction_sentiment", "Download Chart",
+                                                                 class = "btn-sm btn-primary")
+                                              )
                                        )
                                    )
                                )

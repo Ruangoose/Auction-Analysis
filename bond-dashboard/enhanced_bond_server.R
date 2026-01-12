@@ -5130,6 +5130,550 @@ server <- function(input, output, session) {
         }
     })
 
+    # ════════════════════════════════════════════════════════════════════════════
+    # REDESIGNED AUCTION PREDICTIONS - NEW COMPONENTS
+    # ════════════════════════════════════════════════════════════════════════════
+
+    # Helper function to calculate auction predictions for selected bonds
+    auction_predictions_data <- reactive({
+        req(filtered_data(), input$auction_bonds_select)
+
+        selected_bonds <- input$auction_bonds_select
+
+        # Calculate predictions for each bond
+        predictions <- lapply(selected_bonds, function(bond_name) {
+            pred <- predict_btc_arima(filtered_data(), bond_name)
+
+            # Get historical stats
+            hist_data <- filtered_data() %>%
+                filter(bond == bond_name, !is.na(bid_to_cover)) %>%
+                arrange(date)
+
+            historical_avg <- if(nrow(hist_data) > 0) mean(hist_data$bid_to_cover, na.rm = TRUE) else NA
+            last_value <- if(nrow(hist_data) > 0) tail(hist_data$bid_to_cover, 1) else NA
+            n_auctions <- nrow(hist_data)
+
+            data.frame(
+                bond_name = bond_name,
+                forecast = pred$forecast,
+                ci_lower = pred$lower_80,
+                ci_upper = pred$upper_80,
+                ci_lower_95 = pred$lower_95,
+                ci_upper_95 = pred$upper_95,
+                confidence = pred$confidence,
+                model_type = pred$model_type,
+                historical_avg = historical_avg,
+                last_value = last_value,
+                n_auctions = n_auctions,
+                stringsAsFactors = FALSE
+            )
+        })
+
+        do.call(rbind, predictions)
+    })
+
+    # Quick Stats Output
+    output$auction_quick_stats <- renderUI({
+        req(filtered_data(), input$auction_bonds_select)
+
+        selected_bonds <- input$auction_bonds_select
+        n_selected <- length(selected_bonds)
+
+        # Count bonds with sufficient data
+        sufficient_data <- sapply(selected_bonds, function(bond_name) {
+            n <- filtered_data() %>%
+                filter(bond == bond_name, !is.na(bid_to_cover)) %>%
+                nrow()
+            n >= 10
+        })
+
+        n_sufficient <- sum(sufficient_data)
+
+        # Get model info from first prediction
+        model_info <- "N/A"
+        if(n_sufficient > 0) {
+            first_bond <- selected_bonds[sufficient_data][1]
+            pred <- predict_btc_arima(filtered_data(), first_bond)
+            model_info <- pred$model_type
+        }
+
+        tags$div(
+            style = "font-size: 12px; color: #666;",
+            tags$div(
+                style = "display: flex; justify-content: space-between; margin: 3px 0;",
+                tags$span(icon("check-circle", style = "color: #4CAF50;"), " Selected:"),
+                tags$strong(sprintf("%d bonds", n_selected))
+            ),
+            tags$div(
+                style = "display: flex; justify-content: space-between; margin: 3px 0;",
+                tags$span(icon("database", style = "color: #2196F3;"), " Sufficient data:"),
+                tags$strong(sprintf("%d bonds", n_sufficient),
+                           style = ifelse(n_sufficient < n_selected, "color: #FF9800;", "color: #4CAF50;"))
+            ),
+            tags$div(
+                style = "display: flex; justify-content: space-between; margin: 3px 0;",
+                tags$span(icon("cog", style = "color: #9E9E9E;"), " Model:"),
+                tags$strong(model_info, style = "font-size: 11px;")
+            )
+        )
+    })
+
+    # Model Performance Card (replaces model_performance_metrics with actual calculations)
+    output$model_performance_card <- renderUI({
+        req(filtered_data(), input$auction_bonds_select)
+
+        # Calculate actual backtesting metrics
+        backtest_results <- tryCatch({
+            # Perform backtesting for selected bonds
+            all_results <- lapply(input$auction_bonds_select, function(bond_name) {
+                hist_data <- filtered_data() %>%
+                    filter(bond == bond_name, !is.na(bid_to_cover)) %>%
+                    arrange(date)
+
+                if(nrow(hist_data) < 15) return(NULL)
+
+                # Use last 5 observations for backtesting
+                n <- nrow(hist_data)
+                errors <- c()
+                hits <- c()
+
+                for(i in 5:1) {
+                    train_data <- hist_data[1:(n-i), ]
+                    actual <- hist_data$bid_to_cover[n-i+1]
+
+                    if(nrow(train_data) >= 10) {
+                        ts_data <- ts(train_data$bid_to_cover, frequency = 12)
+                        model <- tryCatch({
+                            auto.arima(ts_data, seasonal = TRUE, stepwise = FALSE, approximation = FALSE, trace = FALSE)
+                        }, error = function(e) NULL)
+
+                        if(!is.null(model)) {
+                            fc <- forecast(model, h = 1)
+                            pred <- as.numeric(fc$mean)
+                            error <- abs(pred - actual) / actual * 100
+                            errors <- c(errors, error)
+                            # Hit = prediction within 20% of actual
+                            hits <- c(hits, error <= 20)
+                        }
+                    }
+                }
+
+                if(length(errors) > 0) {
+                    data.frame(mape = mean(errors), hit_rate = mean(hits) * 100)
+                } else {
+                    NULL
+                }
+            })
+
+            valid_results <- all_results[!sapply(all_results, is.null)]
+            if(length(valid_results) > 0) {
+                combined <- do.call(rbind, valid_results)
+                list(
+                    mape = mean(combined$mape, na.rm = TRUE),
+                    hit_rate = mean(combined$hit_rate, na.rm = TRUE),
+                    n_backtest = length(valid_results)
+                )
+            } else {
+                NULL
+            }
+        }, error = function(e) NULL)
+
+        if(is.null(backtest_results)) {
+            return(tags$div(
+                class = "well",
+                style = "padding: 10px; background: #FFF9C4; border-radius: 8px;",
+                tags$h6("Model Performance", style = "margin-top: 0; color: #F57F17; font-weight: bold;"),
+                tags$p(style = "font-size: 11px; margin: 0; color: #666;",
+                       icon("exclamation-triangle", style = "color: #F57F17;"),
+                       " Insufficient data for backtesting (need 15+ auctions)")
+            ))
+        }
+
+        # Determine MAPE color
+        mape_color <- case_when(
+            backtest_results$mape < 10 ~ "#1B5E20",
+            backtest_results$mape < 15 ~ "#4CAF50",
+            backtest_results$mape < 20 ~ "#FF9800",
+            TRUE ~ "#C62828"
+        )
+
+        # Determine hit rate color
+        hit_color <- case_when(
+            backtest_results$hit_rate >= 80 ~ "#1B5E20",
+            backtest_results$hit_rate >= 70 ~ "#4CAF50",
+            backtest_results$hit_rate >= 60 ~ "#FF9800",
+            TRUE ~ "#C62828"
+        )
+
+        tags$div(
+            class = "well",
+            style = "padding: 10px; background: #f8f9fa; border-radius: 8px;",
+
+            tags$h6("Model Performance", style = "margin-top: 0; color: #1B3A6B; font-weight: bold;"),
+
+            # Key metrics row
+            fluidRow(
+                column(6, style = "padding: 5px;",
+                    tags$div(style = "text-align: center; background: white; border-radius: 4px; padding: 8px;",
+                        tags$div(style = sprintf("font-size: 20px; font-weight: bold; color: %s;", mape_color),
+                                 sprintf("%.1f%%", backtest_results$mape)),
+                        tags$div(style = "font-size: 10px; color: #666;", "MAPE")
+                    )
+                ),
+                column(6, style = "padding: 5px;",
+                    tags$div(style = "text-align: center; background: white; border-radius: 4px; padding: 8px;",
+                        tags$div(style = sprintf("font-size: 20px; font-weight: bold; color: %s;", hit_color),
+                                 sprintf("%.0f%%", backtest_results$hit_rate)),
+                        tags$div(style = "font-size: 10px; color: #666;", "Hit Rate")
+                    )
+                )
+            ),
+
+            tags$div(
+                style = "margin-top: 8px; font-size: 10px; color: #888; text-align: center;",
+                sprintf("Based on %d bond(s) backtesting", backtest_results$n_backtest)
+            )
+        )
+    })
+
+    # Market Outlook Summary (replaces empty cards with gradient banner)
+    output$market_outlook_summary <- renderUI({
+        req(auction_predictions_data())
+
+        preds <- auction_predictions_data()
+
+        # Skip if no valid predictions
+        valid_preds <- preds %>% filter(!is.na(forecast))
+
+        if(nrow(valid_preds) == 0) {
+            return(tags$div(
+                class = "alert alert-warning",
+                style = "margin-bottom: 0;",
+                tags$strong(icon("exclamation-triangle"), " No Valid Predictions"),
+                tags$p(style = "margin: 5px 0 0 0; font-size: 12px;",
+                       "Select bonds with sufficient auction history (minimum 10 auctions)")
+            ))
+        }
+
+        # Calculate summary metrics
+        avg_forecast <- mean(valid_preds$forecast, na.rm = TRUE)
+        avg_historical <- mean(valid_preds$historical_avg, na.rm = TRUE)
+        diff_from_avg <- avg_forecast - avg_historical
+
+        # Determine overall outlook
+        outlook <- if(avg_forecast > 3.0) {
+            list(label = "STRONG DEMAND", color = "#1B5E20", color_light = "#C8E6C9", icon = "arrow-up")
+        } else if(avg_forecast > 2.5) {
+            list(label = "HEALTHY DEMAND", color = "#4CAF50", color_light = "#E8F5E9", icon = "check")
+        } else if(avg_forecast > 2.0) {
+            list(label = "MODERATE DEMAND", color = "#FF9800", color_light = "#FFF3E0", icon = "minus")
+        } else if(avg_forecast > 1.5) {
+            list(label = "WEAK DEMAND", color = "#F44336", color_light = "#FFEBEE", icon = "arrow-down")
+        } else {
+            list(label = "POOR DEMAND", color = "#B71C1C", color_light = "#FFCDD2", icon = "exclamation-triangle")
+        }
+
+        # Build visual summary with gradient
+        tags$div(
+            style = sprintf("background: linear-gradient(135deg, %s 0%%, %s 100%%);
+                           color: white; padding: 15px; border-radius: 8px;",
+                           outlook$color, adjustcolor(outlook$color, alpha.f = 0.7)),
+
+            fluidRow(
+                column(7,
+                    tags$div(
+                        style = "font-size: 11px; opacity: 0.9; text-transform: uppercase;",
+                        "Market Outlook"
+                    ),
+                    tags$div(
+                        style = "font-size: 22px; font-weight: bold; margin: 3px 0;",
+                        icon(outlook$icon), " ", outlook$label
+                    ),
+                    tags$div(
+                        style = "font-size: 13px;",
+                        sprintf("Avg Forecast: %.2fx", avg_forecast),
+                        tags$span(
+                            style = sprintf("margin-left: 8px; padding: 2px 6px; border-radius: 3px; background: %s;",
+                                           ifelse(diff_from_avg >= 0, "rgba(255,255,255,0.3)", "rgba(0,0,0,0.2)")),
+                            sprintf("%+.2f vs hist", diff_from_avg)
+                        )
+                    )
+                ),
+                column(5,
+                    # Mini forecast bars
+                    tags$div(
+                        style = "text-align: right;",
+                        lapply(1:min(5, nrow(valid_preds)), function(i) {
+                            row <- valid_preds[i, ]
+                            bar_width <- min(80, (row$forecast / 4) * 80)
+                            signal_color <- if(row$forecast > row$historical_avg + 0.3) {
+                                "#C8E6C9"
+                            } else if(row$forecast < row$historical_avg - 0.3) {
+                                "#FFCDD2"
+                            } else {
+                                "#E0E0E0"
+                            }
+                            tags$div(
+                                style = "margin: 2px 0; display: flex; align-items: center; justify-content: flex-end;",
+                                tags$span(style = "font-size: 10px; width: 45px; text-align: left; opacity: 0.9;",
+                                         row$bond_name),
+                                tags$div(
+                                    style = sprintf("height: 10px; width: %dpx;
+                                                   background: %s; border-radius: 2px; margin: 0 4px;",
+                                                   bar_width, signal_color)
+                                ),
+                                tags$span(style = "font-size: 10px; width: 30px; text-align: right;",
+                                         sprintf("%.1fx", row$forecast))
+                            )
+                        })
+                    )
+                )
+            )
+        )
+    })
+
+    # Compact Forecast Table (replaces vertical cards)
+    output$auction_forecast_table <- DT::renderDataTable({
+        req(auction_predictions_data())
+
+        preds <- auction_predictions_data()
+
+        display_df <- preds %>%
+            mutate(
+                Bond = bond_name,
+                Forecast = ifelse(is.na(forecast), "—", sprintf("%.2fx", forecast)),
+                `CI 80%` = ifelse(is.na(ci_lower), "—", sprintf("[%.2f-%.2f]", ci_lower, ci_upper)),
+                `vs Avg` = case_when(
+                    is.na(forecast) ~ "—",
+                    TRUE ~ sprintf("%+.2f", forecast - historical_avg)
+                ),
+                Signal = case_when(
+                    is.na(forecast) ~ '<span class="label label-default">No Data</span>',
+                    forecast > historical_avg + 0.5 ~ '<span class="label label-success" style="background:#1B5E20;">STRONG</span>',
+                    forecast > historical_avg + 0.2 ~ '<span class="label label-info" style="background:#2196F3;">BUY</span>',
+                    forecast < historical_avg - 0.5 ~ '<span class="label label-danger" style="background:#C62828;">WEAK</span>',
+                    forecast < historical_avg - 0.2 ~ '<span class="label label-warning" style="background:#FF9800;">CAUTION</span>',
+                    TRUE ~ '<span class="label label-default" style="background:#9E9E9E;">HOLD</span>'
+                ),
+                `Hist` = sprintf("%.2fx", historical_avg),
+                `Last` = sprintf("%.2fx", last_value),
+                `n` = n_auctions
+            ) %>%
+            select(Bond, Forecast, `CI 80%`, `vs Avg`, Signal, `Hist`, `Last`, `n`)
+
+        DT::datatable(
+            display_df,
+            rownames = FALSE,
+            escape = FALSE,  # Allow HTML in Signal column
+            options = list(
+                pageLength = 10,
+                dom = 't',  # Table only, no search/pagination for compact view
+                ordering = TRUE,
+                scrollX = FALSE,
+                columnDefs = list(
+                    list(className = 'dt-center', targets = '_all'),
+                    list(width = '70px', targets = 0),
+                    list(width = '60px', targets = 1),
+                    list(width = '90px', targets = 2),
+                    list(width = '55px', targets = 3),
+                    list(width = '70px', targets = 4),
+                    list(width = '50px', targets = 5),
+                    list(width = '50px', targets = 6),
+                    list(width = '30px', targets = 7)
+                )
+            ),
+            class = 'compact stripe hover'
+        )
+    })
+
+    # Market Sentiment Compact (visual gauge)
+    output$market_sentiment_compact <- renderUI({
+        req(filtered_data())
+
+        # Calculate sentiment from recent auctions
+        recent <- filtered_data() %>%
+            filter(!is.na(bid_to_cover),
+                   date >= today() - days(90)) %>%
+            summarise(
+                avg_btc = mean(bid_to_cover, na.rm = TRUE),
+                trend = if(n() >= 5) {
+                    coef(lm(bid_to_cover ~ as.numeric(date)))[2] * 30  # Monthly trend
+                } else NA,
+                n_auctions = n()
+            )
+
+        if(recent$n_auctions < 5) {
+            return(tags$div(
+                class = "well",
+                style = "padding: 10px; text-align: center; background: #f8f9fa; border-radius: 8px;",
+                tags$h6("Market Sentiment", style = "color: #1B3A6B; margin: 0 0 5px 0;"),
+                tags$p(style = "color: #999; font-size: 11px; margin: 0;",
+                       sprintf("Insufficient data (%d auctions, need 5+)", recent$n_auctions))
+            ))
+        }
+
+        # Calculate sentiment score (-1 to +1)
+        sentiment_score <- case_when(
+            recent$avg_btc > 3.5 ~ 0.9,
+            recent$avg_btc > 3.0 ~ 0.6,
+            recent$avg_btc > 2.5 ~ 0.3,
+            recent$avg_btc > 2.0 ~ 0.0,
+            recent$avg_btc > 1.5 ~ -0.3,
+            TRUE ~ -0.6
+        )
+
+        # Adjust for trend
+        if(!is.na(recent$trend)) {
+            sentiment_score <- sentiment_score + (recent$trend * 0.5)
+            sentiment_score <- max(-1, min(1, sentiment_score))
+        }
+
+        # Sentiment label and color
+        sentiment_info <- if(sentiment_score > 0.5) {
+            list(label = "BULLISH", color = "#1B5E20", emoji = icon("chart-line"))
+        } else if(sentiment_score > 0.2) {
+            list(label = "POSITIVE", color = "#4CAF50", emoji = icon("thumbs-up"))
+        } else if(sentiment_score > -0.2) {
+            list(label = "NEUTRAL", color = "#FF9800", emoji = icon("minus"))
+        } else if(sentiment_score > -0.5) {
+            list(label = "NEGATIVE", color = "#F44336", emoji = icon("thumbs-down"))
+        } else {
+            list(label = "BEARISH", color = "#B71C1C", emoji = icon("chart-line", style = "transform: rotate(180deg);"))
+        }
+
+        # Trend text
+        trend_text <- case_when(
+            is.na(recent$trend) ~ "",
+            recent$trend > 0.1 ~ "Improving",
+            recent$trend < -0.1 ~ "Declining",
+            TRUE ~ "Stable"
+        )
+
+        trend_icon <- if(is.na(recent$trend)) {
+            ""
+        } else if(recent$trend > 0.1) {
+            icon("arrow-up", style = "color: #4CAF50;")
+        } else if(recent$trend < -0.1) {
+            icon("arrow-down", style = "color: #F44336;")
+        } else {
+            icon("arrows-alt-h", style = "color: #FF9800;")
+        }
+
+        tags$div(
+            class = "well",
+            style = "padding: 10px; background: #f8f9fa; border-radius: 8px;",
+
+            tags$h6("Market Sentiment (90-day)", style = "margin: 0 0 8px 0; color: #1B3A6B; font-weight: bold;"),
+
+            # Gauge visualization (gradient bar with pointer)
+            tags$div(
+                style = "position: relative; height: 16px;
+                        background: linear-gradient(to right, #B71C1C, #F44336, #FF9800, #4CAF50, #1B5E20);
+                        border-radius: 8px; margin: 8px 0;",
+                # Pointer
+                tags$div(
+                    style = sprintf("position: absolute; left: %d%%; top: -4px; transform: translateX(-50%%);",
+                                   round((sentiment_score + 1) / 2 * 100)),
+                    tags$div(style = "width: 0; height: 0;
+                            border-left: 6px solid transparent;
+                            border-right: 6px solid transparent;
+                            border-top: 8px solid #333;")
+                )
+            ),
+
+            # Labels under gauge
+            tags$div(
+                style = "display: flex; justify-content: space-between; font-size: 9px; color: #666; margin-bottom: 8px;",
+                tags$span("Bearish"),
+                tags$span("Neutral"),
+                tags$span("Bullish")
+            ),
+
+            # Main sentiment display
+            tags$div(
+                style = "text-align: center;",
+                tags$div(
+                    style = sprintf("font-size: 16px; font-weight: bold; color: %s;", sentiment_info$color),
+                    sentiment_info$emoji, " ", sentiment_info$label
+                ),
+                tags$div(
+                    style = "font-size: 11px; color: #666; margin-top: 3px;",
+                    trend_icon, " ", trend_text,
+                    tags$span(style = "margin-left: 8px;",
+                             sprintf("BTC: %.2fx", recent$avg_btc))
+                )
+            )
+        )
+    })
+
+    # Auction Calendar Mini
+    output$auction_calendar_mini <- renderUI({
+        # Generate upcoming auction dates (Tuesday pattern - SA auctions are typically Tuesdays)
+        next_tuesday <- function(from_date) {
+            days_to_add <- (2 - as.numeric(format(from_date, "%u"))) %% 7
+            if(days_to_add == 0) days_to_add <- 7
+            from_date + days(days_to_add)
+        }
+
+        # Get next 3 auction dates
+        today_date <- today()
+        auction_dates <- c(
+            next_tuesday(today_date),
+            next_tuesday(today_date) + days(7),
+            next_tuesday(today_date) + days(14)
+        )
+
+        # Get selected bonds for display
+        selected_bonds <- input$auction_bonds_select
+        if(is.null(selected_bonds) || length(selected_bonds) == 0) {
+            selected_bonds <- c("R186", "R2032", "R2040")  # Default bonds
+        }
+
+        # Distribute bonds across auction dates for display
+        bonds_per_auction <- ceiling(length(selected_bonds) / 3)
+
+        tags$div(
+            class = "well",
+            style = "padding: 10px; margin-top: 10px; background: #f8f9fa; border-radius: 8px;",
+
+            tags$h6("Upcoming Auctions", style = "margin: 0 0 8px 0; color: #1B3A6B; font-weight: bold;"),
+
+            lapply(1:3, function(i) {
+                is_next <- i == 1
+                start_idx <- (i - 1) * bonds_per_auction + 1
+                end_idx <- min(i * bonds_per_auction, length(selected_bonds))
+                bonds_display <- if(start_idx <= length(selected_bonds)) {
+                    paste(selected_bonds[start_idx:end_idx], collapse = ", ")
+                } else {
+                    "TBD"
+                }
+
+                tags$div(
+                    style = sprintf("padding: 6px 8px; margin: 4px 0; border-radius: 4px; font-size: 11px; %s",
+                                   ifelse(is_next,
+                                          "background: #E3F2FD; border-left: 3px solid #1565C0;",
+                                          "background: white;")),
+                    tags$div(
+                        style = "display: flex; justify-content: space-between; align-items: center;",
+                        tags$span(
+                            style = ifelse(is_next, "font-weight: bold; color: #1565C0;", "color: #666;"),
+                            ifelse(is_next, icon("calendar-check"), icon("calendar")),
+                            " ",
+                            format(auction_dates[i], "%b %d")
+                        ),
+                        tags$span(style = "color: #888; font-size: 10px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
+                                 bonds_display)
+                    )
+                )
+            }),
+
+            tags$div(
+                style = "text-align: right; margin-top: 6px;",
+                tags$small(style = "color: #888; font-size: 10px;", "Tuesdays (typical)")
+            )
+        )
+    })
+
 
     output$auction_sentiment_gauge <- renderPlot({
         req(filtered_data())

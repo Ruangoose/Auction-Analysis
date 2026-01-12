@@ -3319,7 +3319,7 @@ fit_nss_model <- memoise(function(data, lambda1 = 0.0609, lambda2 = 0.0609) {
 })
 
 #' @export
-# ARIMA-based Bid-to-Cover Prediction
+# ARIMA-based Bid-to-Cover Prediction with ETS fallback for degenerate models
 predict_btc_arima <- function(historical_data, bond_name, h = 1) {
     safe_execute({
         bond_data <- historical_data %>%
@@ -3329,8 +3329,10 @@ predict_btc_arima <- function(historical_data, bond_name, h = 1) {
         if (nrow(bond_data) < 10) {
             return(list(
                 forecast = NA,
-                lower = NA,
-                upper = NA,
+                lower_80 = NA,
+                upper_80 = NA,
+                lower_95 = NA,
+                upper_95 = NA,
                 confidence = "Insufficient Data",
                 model_type = "None"
             ))
@@ -3348,12 +3350,64 @@ predict_btc_arima <- function(historical_data, bond_name, h = 1) {
             trace = FALSE
         )
 
+        # Check if model is degenerate (0,0,0) - ARIMA(0,0,0) is just a mean model
+        # arma indices: [1]=p, [2]=q, [3]=P, [4]=Q, [5]=frequency, [6]=d, [7]=D
+        is_degenerate <- (model$arma[1] == 0 && model$arma[6] == 0 && model$arma[2] == 0 &&
+                         model$arma[3] == 0 && model$arma[7] == 0 && model$arma[4] == 0)
+
+        model_type <- ""
+
+        if (is_degenerate) {
+            # Fallback to ETS for degenerate ARIMA models
+            message(sprintf("WARNING: ARIMA(0,0,0) detected for %s - falling back to ETS", bond_name))
+            model <- tryCatch({
+                ets(ts_data)
+            }, error = function(e) {
+                # If ETS also fails, use simple mean forecast
+                NULL
+            })
+
+            if (is.null(model)) {
+                # Simple mean forecast as last resort
+                mean_val <- mean(ts_data, na.rm = TRUE)
+                sd_val <- sd(ts_data, na.rm = TRUE)
+                return(list(
+                    forecast = mean_val,
+                    lower_80 = mean_val - 1.28 * sd_val,
+                    upper_80 = mean_val + 1.28 * sd_val,
+                    lower_95 = mean_val - 1.96 * sd_val,
+                    upper_95 = mean_val + 1.96 * sd_val,
+                    confidence = "Low",
+                    model_type = "Mean"
+                ))
+            }
+
+            # Build ETS model type string
+            model_type <- sprintf("ETS(%s)", model$method)
+        } else {
+            # Build ARIMA model type string
+            model_type <- paste0("ARIMA(", model$arma[1], ",", model$arma[6], ",", model$arma[2], ")")
+            if (model$arma[3] > 0 || model$arma[7] > 0 || model$arma[4] > 0) {
+                model_type <- paste0(model_type, "(", model$arma[3], ",", model$arma[7], ",", model$arma[4], ")")
+            }
+        }
+
         # Generate forecast
         fc <- forecast(model, h = h, level = c(80, 95))
 
         # Calculate confidence based on model fit
-        accuracy_metrics <- accuracy(model)
-        mape <- accuracy_metrics[, "MAPE"]
+        accuracy_metrics <- tryCatch({
+            accuracy(model)
+        }, error = function(e) {
+            # Return default high MAPE if accuracy fails
+            matrix(25, nrow = 1, ncol = 1, dimnames = list(NULL, "MAPE"))
+        })
+
+        mape <- if ("MAPE" %in% colnames(accuracy_metrics)) {
+            accuracy_metrics[, "MAPE"]
+        } else {
+            25  # Default moderate MAPE
+        }
 
         confidence <- case_when(
             mape < 10 ~ "High",
@@ -3369,10 +3423,9 @@ predict_btc_arima <- function(historical_data, bond_name, h = 1) {
             lower_95 = as.numeric(fc$lower[1, 2]),
             upper_95 = as.numeric(fc$upper[1, 2]),
             confidence = confidence,
-            model_type = paste0("ARIMA", "(", model$arma[1], ",", model$arma[6], ",", model$arma[2], ")",
-                                if(model$arma[3] > 0) paste0("(", model$arma[3], ",", model$arma[7], ",", model$arma[4], ")"))
+            model_type = model_type
         ))
-    }, default = list(forecast = NA, lower_80 = NA, upper_80 = NA, confidence = "Error", model_type = "None"))
+    }, default = list(forecast = NA, lower_80 = NA, upper_80 = NA, lower_95 = NA, upper_95 = NA, confidence = "Error", model_type = "None"))
 }
 
 
