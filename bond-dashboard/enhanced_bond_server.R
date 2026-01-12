@@ -4729,6 +4729,64 @@ server <- function(input, output, session) {
         )
     })
 
+    # Debug observer for forward rate calculations
+    observe({
+        req(processed_data())
+
+        curve_data <- processed_data() %>%
+            arrange(modified_duration)
+
+        if(nrow(curve_data) < 2) return()
+
+        # Create yield curve interpolation function
+        yield_curve_func <- approxfun(
+            x = curve_data$modified_duration,
+            y = curve_data$yield_to_maturity,
+            rule = 2
+        )
+
+        message("=== FORWARD RATE DEBUG ===")
+        message(sprintf("Curve has %d points, duration range: %.2f to %.2f",
+                       nrow(curve_data),
+                       min(curve_data$modified_duration),
+                       max(curve_data$modified_duration)))
+
+        # Test spot curve values at key tenors
+        test_tenors <- c(1, 2, 3, 5, 7, 10)
+        for (t in test_tenors) {
+            spot <- yield_curve_func(t)
+            message(sprintf("Tenor %d years: Spot = %.2f%%", t, spot))
+        }
+
+        # Test forward rate calculations
+        message("--- Forward Rate Calculations ---")
+        test_forwards <- list(
+            list(name = "1y1y", start = 1, tenor = 1),
+            list(name = "3y2y", start = 3, tenor = 2),
+            list(name = "5y2y", start = 5, tenor = 2)
+        )
+
+        for (fp in test_forwards) {
+            t1 <- fp$start
+            t2 <- fp$start + fp$tenor
+            tenor <- fp$tenor
+
+            r_t1 <- yield_curve_func(t1) / 100
+            r_t2 <- yield_curve_func(t2) / 100
+            r_tenor <- yield_curve_func(tenor)
+
+            forward_rate <- ((1 + r_t2)^t2 / (1 + r_t1)^t1)^(1/tenor) - 1
+            forward_rate_pct <- forward_rate * 100
+            spread_bps <- (forward_rate_pct - r_tenor) * 100
+
+            message(sprintf("[%s] t1=%d, t2=%d, tenor=%d | r_t1=%.2f%%, r_t2=%.2f%%, r_tenor=%.2f%% | FWD=%.2f%%, Spread=%.0f bps",
+                           fp$name, t1, t2, tenor,
+                           r_t1*100, r_t2*100, r_tenor,
+                           forward_rate_pct, spread_bps))
+        }
+        message("==========================")
+    })
+
     # Add this output to the server function
     output$forward_rate_table <- DT::renderDataTable({
         req(processed_data())
@@ -4790,15 +4848,36 @@ server <- function(input, output, session) {
             spread_bps <- (forward_rate_pct - r_tenor_pct) * 100
 
             # Find reference bonds closest to t1 and t2 for display
-            from_bond <- curve_data %>%
-                mutate(dur_diff = abs(modified_duration - t1)) %>%
-                arrange(dur_diff) %>%
-                head(1)
+            # Special handling for t1 = 0: use shortest duration bond
+            if(t1 == 0 || t1 <= 1) {
+                from_bond <- curve_data %>%
+                    slice_min(modified_duration, n = 1)
+            } else {
+                from_bond <- curve_data %>%
+                    mutate(dur_diff = abs(modified_duration - t1)) %>%
+                    slice_min(dur_diff, n = 1)
+            }
 
+            # Find bond closest to t2 (end year)
             to_bond <- curve_data %>%
                 mutate(dur_diff = abs(modified_duration - t2)) %>%
-                arrange(dur_diff) %>%
-                head(1)
+                slice_min(dur_diff, n = 1)
+
+            # Ensure we don't show same bond twice unless necessary
+            from_bond_name <- if(nrow(from_bond) > 0) from_bond$bond[1] else NA
+            to_bond_name <- if(nrow(to_bond) > 0) to_bond$bond[1] else NA
+
+            if(!is.na(from_bond_name) && !is.na(to_bond_name) &&
+               from_bond_name == to_bond_name && t1 != t2) {
+                # Find second closest bond to t2
+                alt_to_bond <- curve_data %>%
+                    filter(bond != from_bond_name) %>%
+                    mutate(dur_diff = abs(modified_duration - t2)) %>%
+                    slice_min(dur_diff, n = 1)
+                if(nrow(alt_to_bond) > 0) {
+                    to_bond_name <- alt_to_bond$bond[1]
+                }
+            }
 
             forward_rates <- rbind(forward_rates, data.frame(
                 Period = periods$label[i],
@@ -4810,8 +4889,8 @@ server <- function(input, output, session) {
                 Current_Spot_Tenor = r_tenor_pct,  # Current spot for same tenor as forward
                 Forward_Rate = forward_rate_pct,
                 Spread_bps = spread_bps,
-                From_Bond = if(nrow(from_bond) > 0) from_bond$bond else NA,
-                To_Bond = if(nrow(to_bond) > 0) to_bond$bond else NA,
+                From_Bond = from_bond_name,
+                To_Bond = to_bond_name,
                 stringsAsFactors = FALSE
             ))
         }
@@ -4897,10 +4976,16 @@ server <- function(input, output, session) {
             formatStyle(
                 "Market_View",
                 backgroundColor = styleEqual(
-                    c("Rates Rising", "Slightly Bearish", "Neutral",
-                      "Slightly Bullish", "Rates Falling"),
-                    c("#FFCDD2", "#FFE0B2", "#E0E0E0", "#DCEDC8", "#C8E6C9")
-                )
+                    c("Rates Falling", "Slightly Bullish", "Neutral",
+                      "Slightly Bearish", "Rates Rising"),
+                    c("#C8E6C9", "#DCEDC8", "#F5F5F5", "#FFE0B2", "#FFCDD2")
+                ),
+                color = styleEqual(
+                    c("Rates Falling", "Slightly Bullish", "Neutral",
+                      "Slightly Bearish", "Rates Rising"),
+                    c("#1B5E20", "#33691E", "#666666", "#E65100", "#C62828")
+                ),
+                fontWeight = "bold"
             ) %>%
             formatStyle(
                 "Signal_Strength",
