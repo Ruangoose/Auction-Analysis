@@ -2552,8 +2552,26 @@ calculate_advanced_carry_roll <- memoise(function(data,
                     # Annualized metrics
                     annualized_return = net_return / period_years,
 
-                    # Simplified Sharpe (assuming 3% volatility)
-                    sharpe_estimate = annualized_return / 3,
+                    # ═══════════════════════════════════════════════════════════
+                    # SHARPE RATIO CALCULATION (FIXED)
+                    # ═══════════════════════════════════════════════════════════
+                    # Proper Sharpe = (Return - Risk-Free Rate) / Volatility
+                    # All values in consistent units (annual %)
+
+                    # Risk-free rate (SA 3-month T-bill proxy, typically ~7-8%)
+                    risk_free_rate = 7.5,
+
+                    # Estimated annual volatility based on bond characteristics
+                    # Longer duration bonds have higher price volatility
+                    # Typical SA bond yield volatility: 50-150 bps annually
+                    # Price volatility ≈ Duration × Yield volatility
+                    annual_yield_vol_bps = 75,  # Conservative 75 bps annual yield vol
+                    annual_price_vol = (annual_yield_vol_bps / 100) * modified_duration,
+
+                    # Sharpe Ratio: (Annualized Return - Risk-Free Rate) / Price Volatility
+                    # Cap to reasonable range to avoid display issues
+                    sharpe_raw = (annualized_return - risk_free_rate) / pmax(annual_price_vol, 0.5),
+                    sharpe_estimate = pmax(pmin(sharpe_raw, 5.0), -5.0),  # Cap to [-5, +5]
 
                     # Breakeven: How much can yields rise before losing money?
                     breakeven_yield_rise = gross_return / pmax(modified_duration, 0.1),
