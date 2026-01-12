@@ -139,10 +139,16 @@ collect_report_charts <- function(processed_data, filtered_data, filtered_data_w
                     generate_scenario_analysis_plot(processed_data)
                 } else { NULL }
             },
-            # ✨ NEW PLOT
-            optimal_holding = function() {
-                if(!is.null(carry_roll_data) && nrow(carry_roll_data) > 0) {
-                    generate_optimal_holding_enhanced_plot(carry_roll_data)
+            # ✨ Butterfly Spread Analyzer
+            butterfly_spread = function() {
+                if(!is.null(processed_data) && nrow(processed_data) > 0) {
+                    # Calculate butterfly spreads
+                    butterflies <- calculate_butterfly_spreads(processed_data, lookback_days = 365)
+                    if(!is.null(butterflies) && length(butterflies) > 0) {
+                        # Get the top butterfly by absolute Z-Score
+                        top_bf_name <- names(butterflies)[which.max(sapply(butterflies, function(x) abs(x$z_score)))]
+                        generate_butterfly_chart(butterflies[[top_bf_name]], zscore_threshold = 2.0)
+                    } else { NULL }
                 } else { NULL }
             },
             # ✨ NEW PLOT

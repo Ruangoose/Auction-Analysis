@@ -1395,28 +1395,108 @@ ui <- dashboardPage(
                                    title = "Scenario Analysis",
                                    status = "primary",
                                    solidHeader = TRUE,
-                                   width = 6,
+                                   width = 12,
                                    plotOutput("scenario_analysis_plot", height = "400px"),
                                    tags$div(
                                        style = "margin-top: 15px;",
                                        downloadButton("download_scenario_analysis", "Download Chart",
                                                       class = "btn-sm btn-primary")
                                    )
-                               ),
+                               )
+                           ),
+
+                           # Butterfly Spread Analyzer
+                           fluidRow(
                                box(
-                                   title = "Annualized Return by Holding Period",
+                                   title = "Butterfly Spread Analyzer",
                                    status = "primary",
                                    solidHeader = TRUE,
-                                   width = 6,
-                                   plotOutput("optimal_holding_enhanced_plot", height = "400px"),
+                                   width = 12,
+                                   collapsible = TRUE,
 
-                                   # Decision table with actionable guidance
-                                   uiOutput("holding_period_explainer"),
-
+                                   # Educational header
                                    tags$div(
-                                       style = "margin-top: 15px;",
-                                       downloadButton("download_optimal_holding", "Download Chart",
-                                                      class = "btn-sm btn-primary")
+                                       class = "alert alert-info",
+                                       style = "margin-bottom: 15px;",
+                                       tags$strong("What is a Butterfly Spread?"),
+                                       tags$p(
+                                           style = "margin: 5px 0;",
+                                           "A butterfly measures yield curve curvature using 3 bonds: ",
+                                           tags$code("Spread = Short Wing - 2 x Body + Long Wing"),
+                                           ". When stationary (mean-reverting), extreme Z-scores suggest trading opportunities."
+                                       ),
+                                       tags$ul(
+                                           style = "margin: 5px 0; font-size: 13px;",
+                                           tags$li(tags$strong("Z-Score > +2:"), " Spread is HIGH - Sell wings, buy body (expect compression)"),
+                                           tags$li(tags$strong("Z-Score < -2:"), " Spread is LOW - Buy wings, sell body (expect expansion)"),
+                                           tags$li(tags$strong("ADF p < 0.05:"), " Spread is stationary (mean-reverting) - Trade is valid")
+                                       )
+                                   ),
+
+                                   # Controls row
+                                   fluidRow(
+                                       column(3,
+                                              selectInput(
+                                                  "butterfly_lookback",
+                                                  "Lookback Period:",
+                                                  choices = c("6 Months" = 180, "1 Year" = 365, "2 Years" = 730, "All History" = 9999),
+                                                  selected = 365
+                                              )
+                                       ),
+                                       column(3,
+                                              sliderInput(
+                                                  "zscore_threshold",
+                                                  "Z-Score Threshold:",
+                                                  min = 1.5, max = 3.0, value = 2.0, step = 0.1
+                                              )
+                                       ),
+                                       column(3,
+                                              selectInput(
+                                                  "stationarity_filter",
+                                                  "Stationarity Filter:",
+                                                  choices = c("Stationary Only (p<0.05)" = "stationary",
+                                                              "All Butterflies" = "all"),
+                                                  selected = "stationary"
+                                              )
+                                       ),
+                                       column(3,
+                                              actionButton(
+                                                  "generate_butterflies",
+                                                  "Generate Butterflies",
+                                                  icon = icon("sync"),
+                                                  class = "btn-primary",
+                                                  style = "margin-top: 25px; width: 100%;"
+                                              )
+                                       )
+                                   ),
+
+                                   tags$hr(),
+
+                                   # Main content: Table on left, Chart on right
+                                   fluidRow(
+                                       # Left: Ranked butterfly table
+                                       column(5,
+                                              tags$h5("Top Butterfly Opportunities", class = "text-primary"),
+                                              tags$small(class = "text-muted", "Ranked by absolute Z-Score | Click row to view chart"),
+                                              DT::dataTableOutput("butterfly_table"),
+                                              tags$div(
+                                                  style = "margin-top: 10px;",
+                                                  downloadButton("download_butterfly_data", "Export Data", class = "btn-sm")
+                                              )
+                                       ),
+
+                                       # Right: Selected butterfly chart
+                                       column(7,
+                                              tags$h5("Butterfly Spread History", class = "text-primary"),
+                                              uiOutput("selected_butterfly_info"),
+                                              plotOutput("butterfly_chart", height = "400px"),
+                                              tags$div(
+                                                  style = "margin-top: 10px;",
+                                                  downloadButton("download_butterfly_chart", "Download Chart", class = "btn-sm"),
+                                                  actionButton("butterfly_trade_details", "Trade Details",
+                                                               icon = icon("info-circle"), class = "btn-sm btn-outline-secondary")
+                                              )
+                                       )
                                    )
                                )
                            ),
@@ -1916,7 +1996,7 @@ ui <- dashboardPage(
                                                               style = "margin-left: 20px; margin-top: 10px;",
                                                               checkboxInput("plot_carry_heatmap", "Carry & Roll Heatmap", value = TRUE),
                                                               checkboxInput("plot_scenario_analysis", "Scenario Analysis (Rate Shocks)", value = TRUE),
-                                                              checkboxInput("plot_optimal_holding", HTML("&#10024; Annualized Return Analysis"), value = FALSE),
+                                                              checkboxInput("plot_butterfly_spread", HTML("&#10024; Butterfly Spread Analysis"), value = FALSE),
                                                               checkboxInput("plot_forward_curve", HTML("&#10024; Forward Curve Analysis"), value = FALSE)
                                                           )
                                                       ),

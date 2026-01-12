@@ -2547,6 +2547,353 @@ server <- function(input, output, session) {
         )
     })
 
+    # ================================================================================
+    # BUTTERFLY SPREAD ANALYZER
+    # ================================================================================
+
+    # Reactive value to track selected butterfly
+    selected_butterfly <- reactiveVal(NULL)
+
+    # Calculate butterflies reactively
+    butterfly_data <- eventReactive(input$generate_butterflies, {
+        req(processed_data())
+
+        withProgress(message = "Calculating butterfly spreads...", {
+
+            lookback <- as.numeric(input$butterfly_lookback)
+            if (lookback == 9999) lookback <- 3650  # ~10 years for "all"
+
+            butterflies <- calculate_butterfly_spreads(
+                processed_data(),
+                lookback_days = lookback
+            )
+
+            if (is.null(butterflies) || length(butterflies) == 0) {
+                return(list(summary = data.frame(), details = list()))
+            }
+
+            # Convert to summary data frame
+            summary_df <- purrr::map_dfr(butterflies, function(bf) {
+                data.frame(
+                    Trade = paste0("Butterfly: ", bf$name),
+                    Short_Wing = bf$short_wing,
+                    Body = bf$body,
+                    Long_Wing = bf$long_wing,
+                    Z_Score = bf$z_score,
+                    ADF_p = bf$adf_pvalue,
+                    Mean = bf$mean * 100,  # Convert to percentage
+                    Current = bf$current * 100,
+                    Diff = bf$diff_from_mean * 100,
+                    Is_Stationary = bf$is_stationary,
+                    stringsAsFactors = FALSE
+                )
+            })
+
+            # Filter by stationarity if requested
+            if (input$stationarity_filter == "stationary") {
+                summary_df <- summary_df %>% filter(Is_Stationary == TRUE)
+            }
+
+            # Rank by absolute Z-Score
+            summary_df <- summary_df %>%
+                arrange(desc(abs(Z_Score)))
+
+            list(
+                summary = summary_df,
+                details = butterflies
+            )
+        })
+    }, ignoreNULL = FALSE)
+
+    # Initialize on load
+    observe({
+        # Trigger initial calculation when data is ready
+        req(processed_data())
+        shinyjs::delay(1000, shinyjs::click("generate_butterflies"))
+    })
+
+    # Butterfly table output
+    output$butterfly_table <- DT::renderDataTable({
+        req(butterfly_data())
+
+        df <- butterfly_data()$summary
+
+        if (nrow(df) == 0) {
+            return(DT::datatable(data.frame(Message = "No butterflies found. Try adjusting filters.")))
+        }
+
+        zscore_threshold <- if (!is.null(input$zscore_threshold)) input$zscore_threshold else 2.0
+
+        df <- df %>%
+            mutate(
+                # Format for display
+                Z_Score_Display = sprintf("%.2f", Z_Score),
+                ADF_p_Display = sprintf("%.4f", ADF_p),
+                Mean_Display = sprintf("%.3f%%", Mean),
+                Current_Display = sprintf("%.3f%%", Current),
+                Diff_Display = sprintf("%+.3f%%", Diff),
+
+                # Signal based on Z-Score
+                Signal = case_when(
+                    Z_Score > zscore_threshold ~ "SELL WINGS",
+                    Z_Score < -zscore_threshold ~ "BUY WINGS",
+                    TRUE ~ "NEUTRAL"
+                )
+            ) %>%
+            select(
+                Trade,
+                `Z-Score` = Z_Score_Display,
+                `ADF p` = ADF_p_Display,
+                Avg = Mean_Display,
+                Current = Current_Display,
+                Diff = Diff_Display,
+                Signal
+            )
+
+        DT::datatable(
+            df,
+            selection = "single",
+            rownames = FALSE,
+            options = list(
+                pageLength = 10,
+                dom = 'tip',
+                ordering = FALSE  # Already sorted
+            )
+        ) %>%
+            DT::formatStyle(
+                'Z-Score',
+                color = DT::styleInterval(
+                    c(-zscore_threshold, zscore_threshold),
+                    c('#C62828', '#666666', '#1B5E20')
+                ),
+                fontWeight = 'bold'
+            ) %>%
+            DT::formatStyle(
+                'ADF p',
+                backgroundColor = DT::styleInterval(
+                    c(0.05, 0.10),
+                    c('#C8E6C9', '#FFF9C4', '#FFCDD2')
+                )
+            ) %>%
+            DT::formatStyle(
+                'Signal',
+                backgroundColor = DT::styleEqual(
+                    c('SELL WINGS', 'NEUTRAL', 'BUY WINGS'),
+                    c('#FFCDD2', '#E0E0E0', '#C8E6C9')
+                ),
+                fontWeight = 'bold'
+            )
+    })
+
+    # Update selection when table row clicked
+    observeEvent(input$butterfly_table_rows_selected, {
+        req(butterfly_data())
+
+        row_idx <- input$butterfly_table_rows_selected
+        if (length(row_idx) > 0) {
+            trade_name <- butterfly_data()$summary$Trade[row_idx]
+            # Extract spread name from "Butterfly: R209-R2040-R2048"
+            spread_name <- gsub("Butterfly: ", "", trade_name)
+            selected_butterfly(spread_name)
+        }
+    })
+
+    # Auto-select first butterfly if none selected
+    observe({
+        req(butterfly_data())
+        if (is.null(selected_butterfly()) && nrow(butterfly_data()$summary) > 0) {
+            first_name <- gsub("Butterfly: ", "", butterfly_data()$summary$Trade[1])
+            selected_butterfly(first_name)
+        }
+    })
+
+    # Selected butterfly info panel
+    output$selected_butterfly_info <- renderUI({
+        req(selected_butterfly(), butterfly_data())
+
+        bf <- butterfly_data()$details[[selected_butterfly()]]
+        if (is.null(bf)) return(NULL)
+
+        zscore_threshold <- if (!is.null(input$zscore_threshold)) input$zscore_threshold else 2.0
+
+        signal <- dplyr::case_when(
+            bf$z_score > zscore_threshold ~ "SELL WINGS / BUY BODY",
+            bf$z_score < -zscore_threshold ~ "BUY WINGS / SELL BODY",
+            TRUE ~ "NEUTRAL - No Action"
+        )
+
+        signal_color <- dplyr::case_when(
+            bf$z_score > zscore_threshold ~ "#C62828",
+            bf$z_score < -zscore_threshold ~ "#1B5E20",
+            TRUE ~ "#666666"
+        )
+
+        tags$div(
+            class = "well well-sm",
+            style = "padding: 10px; margin-bottom: 10px;",
+
+            fluidRow(
+                column(3,
+                       tags$div(class = "text-muted small", "Selected Trade"),
+                       tags$div(style = "font-weight: bold;", bf$name)
+                ),
+                column(2,
+                       tags$div(class = "text-muted small", "Z-Score"),
+                       tags$div(
+                           style = sprintf("font-weight: bold; font-size: 18px; color: %s;", signal_color),
+                           sprintf("%.2f", bf$z_score)
+                       )
+                ),
+                column(2,
+                       tags$div(class = "text-muted small", "Current"),
+                       tags$div(style = "font-weight: bold;", sprintf("%.3f%%", bf$current * 100))
+                ),
+                column(2,
+                       tags$div(class = "text-muted small", "Mean"),
+                       tags$div(sprintf("%.3f%%", bf$mean * 100))
+                ),
+                column(3,
+                       tags$div(class = "text-muted small", "Signal"),
+                       tags$div(
+                           style = sprintf("font-weight: bold; color: %s;", signal_color),
+                           signal
+                       )
+                )
+            )
+        )
+    })
+
+    # Butterfly chart
+    output$butterfly_chart <- renderPlot({
+        req(selected_butterfly(), butterfly_data())
+
+        bf <- butterfly_data()$details[[selected_butterfly()]]
+        if (is.null(bf)) {
+            plot.new()
+            text(0.5, 0.5, "Select a butterfly from the table", cex = 1.2)
+            return()
+        }
+
+        zscore_threshold <- if (!is.null(input$zscore_threshold)) input$zscore_threshold else 2.0
+        p <- generate_butterfly_chart(bf, zscore_threshold)
+        if (!is.null(p)) print(p)
+    }, res = 100)
+
+    # Trade details modal
+    observeEvent(input$butterfly_trade_details, {
+        req(selected_butterfly(), butterfly_data())
+
+        bf <- butterfly_data()$details[[selected_butterfly()]]
+        if (is.null(bf)) return()
+
+        zscore_threshold <- if (!is.null(input$zscore_threshold)) input$zscore_threshold else 2.0
+
+        # Determine trade direction
+        if (bf$z_score > zscore_threshold) {
+            trade_direction <- "SELL WINGS / BUY BODY"
+            trade_legs <- tagList(
+                tags$li(tags$span(style = "color: #C62828;", "SELL"), " ", bf$short_wing, " (Short Wing)"),
+                tags$li(tags$span(style = "color: #1B5E20;", "BUY 2x"), " ", bf$body, " (Body)"),
+                tags$li(tags$span(style = "color: #C62828;", "SELL"), " ", bf$long_wing, " (Long Wing)")
+            )
+            rationale <- "Spread is ABOVE mean - Expect compression back to mean"
+        } else if (bf$z_score < -zscore_threshold) {
+            trade_direction <- "BUY WINGS / SELL BODY"
+            trade_legs <- tagList(
+                tags$li(tags$span(style = "color: #1B5E20;", "BUY"), " ", bf$short_wing, " (Short Wing)"),
+                tags$li(tags$span(style = "color: #C62828;", "SELL 2x"), " ", bf$body, " (Body)"),
+                tags$li(tags$span(style = "color: #1B5E20;", "BUY"), " ", bf$long_wing, " (Long Wing)")
+            )
+            rationale <- "Spread is BELOW mean - Expect expansion back to mean"
+        } else {
+            trade_direction <- "NO TRADE"
+            trade_legs <- tags$li("Z-Score within threshold - no action recommended")
+            rationale <- "Spread is near mean - wait for better entry"
+        }
+
+        showModal(modalDialog(
+            title = sprintf("Trade Details: %s", bf$name),
+            size = "l",
+
+            fluidRow(
+                column(6,
+                       tags$h5("Trade Structure"),
+                       tags$div(
+                           style = "background: #F5F5F5; padding: 15px; border-radius: 4px;",
+                           tags$div(
+                               style = "font-size: 18px; font-weight: bold; margin-bottom: 10px;",
+                               trade_direction
+                           ),
+                           tags$ul(trade_legs)
+                       ),
+
+                       tags$h5("Rationale", style = "margin-top: 15px;"),
+                       tags$p(rationale),
+                       tags$p(
+                           sprintf("Current spread (%.3f%%) is %.2f standard deviations from mean (%.3f%%).",
+                                   bf$current * 100, bf$z_score, bf$mean * 100)
+                       )
+                ),
+
+                column(6,
+                       tags$h5("Statistics"),
+                       tags$table(
+                           class = "table table-condensed",
+                           tags$tbody(
+                               tags$tr(tags$td("Z-Score:"), tags$td(sprintf("%.2f", bf$z_score))),
+                               tags$tr(tags$td("ADF p-value:"), tags$td(sprintf("%.4f", bf$adf_pvalue))),
+                               tags$tr(tags$td("Stationary:"), tags$td(ifelse(bf$is_stationary, "Yes (valid)", "No (caution)"))),
+                               tags$tr(tags$td("Mean:"), tags$td(sprintf("%.3f%%", bf$mean * 100))),
+                               tags$tr(tags$td("Std Dev:"), tags$td(sprintf("%.3f%%", bf$sd * 100))),
+                               tags$tr(tags$td("Current:"), tags$td(sprintf("%.3f%%", bf$current * 100))),
+                               tags$tr(tags$td("Diff from Mean:"), tags$td(sprintf("%+.3f%%", bf$diff_from_mean * 100)))
+                           )
+                       ),
+
+                       tags$h5("Risk Warning", style = "margin-top: 15px;"),
+                       tags$div(
+                           class = "alert alert-warning",
+                           style = "font-size: 12px;",
+                           "Mean reversion is not guaranteed. Check for structural changes, ",
+                           "liquidity conditions, and fundamental drivers before trading."
+                       )
+                )
+            ),
+
+            footer = tagList(
+                modalButton("Close")
+            )
+        ))
+    })
+
+    # Download butterfly data
+    output$download_butterfly_data <- downloadHandler(
+        filename = function() {
+            paste0("butterfly_spreads_", format(Sys.Date(), "%Y%m%d"), ".csv")
+        },
+        content = function(file) {
+            req(butterfly_data())
+            write.csv(butterfly_data()$summary, file, row.names = FALSE)
+        }
+    )
+
+    # Download butterfly chart
+    output$download_butterfly_chart <- downloadHandler(
+        filename = function() {
+            paste0("butterfly_chart_", selected_butterfly(), "_", format(Sys.Date(), "%Y%m%d"), ".png")
+        },
+        content = function(file) {
+            req(selected_butterfly(), butterfly_data())
+            bf <- butterfly_data()$details[[selected_butterfly()]]
+            zscore_threshold <- if (!is.null(input$zscore_threshold)) input$zscore_threshold else 2.0
+            p <- generate_butterfly_chart(bf, zscore_threshold)
+            ggsave(file, plot = p, width = 10, height = 6, dpi = 150)
+        }
+    )
+
+    # End of Butterfly Spread Analyzer
+    # ================================================================================
+
     output$forward_curve_plot <- renderPlot({
         req(processed_data())
         p <- generate_forward_curve_plot(processed_data(), list())
@@ -5004,7 +5351,7 @@ server <- function(input, output, session) {
         if(isTRUE(input$section_carry)) {
             if(isTRUE(input$plot_carry_heatmap)) selected_plots <- c(selected_plots, "Carry Heatmap")
             if(isTRUE(input$plot_scenario_analysis)) selected_plots <- c(selected_plots, "Scenario Analysis")
-            if(isTRUE(input$plot_optimal_holding)) selected_plots <- c(selected_plots, "\U2728 Optimal Holding")
+            if(isTRUE(input$plot_butterfly_spread)) selected_plots <- c(selected_plots, "\U2728 Butterfly Spread")
             if(isTRUE(input$plot_forward_curve)) selected_plots <- c(selected_plots, "\U2728 Forward Curve")
         }
 
@@ -6060,7 +6407,7 @@ server <- function(input, output, session) {
                         # Carry & Roll
                         carry_heatmap = isTRUE(input$plot_carry_heatmap),
                         scenario_analysis = isTRUE(input$plot_scenario_analysis),
-                        optimal_holding = isTRUE(input$plot_optimal_holding),  # NEW
+                        butterfly_spread = isTRUE(input$plot_butterfly_spread),  # Butterfly Spread Analyzer
                         forward_curve = isTRUE(input$plot_forward_curve),  # NEW
 
                         # Auction (8 new plots)
@@ -6468,7 +6815,7 @@ server <- function(input, output, session) {
                         # Carry & Roll
                         carry_heatmap = isTRUE(input$plot_carry_heatmap),
                         scenario_analysis = isTRUE(input$plot_scenario_analysis),
-                        optimal_holding = isTRUE(input$plot_optimal_holding),  # NEW
+                        butterfly_spread = isTRUE(input$plot_butterfly_spread),  # Butterfly Spread Analyzer
                         forward_curve = isTRUE(input$plot_forward_curve),  # NEW
 
                         # Auction (8 new plots)
