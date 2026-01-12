@@ -1275,6 +1275,25 @@ server <- function(input, output, session) {
         values$carry_refresh <- runif(1)  # Add this to reactive values at the top
     })
 
+    # FIX 4: Update carry bond selector when data changes
+    observe({
+        req(carry_roll_data())
+
+        # Get unique bonds sorted by 90-day net return
+        bonds_sorted <- carry_roll_data() %>%
+            filter(holding_period == "90d") %>%
+            arrange(desc(net_return)) %>%
+            pull(bond) %>%
+            unique()
+
+        updateSelectInput(
+            session,
+            "selected_carry_bond",
+            choices = bonds_sorted,
+            selected = if(length(bonds_sorted) > 0) bonds_sorted[1] else NULL
+        )
+    })
+
     observeEvent(input$qtr_btn, {
         updateDateRangeInput(session, "date_range",
                              start = floor_date(today(), "quarter"),
@@ -2285,7 +2304,17 @@ server <- function(input, output, session) {
             "net"
         }
 
-        p <- generate_enhanced_carry_roll_heatmap(carry_roll_data(), return_type_value)
+        funding_rate_value <- if(!is.null(input$funding_rate)) {
+            input$funding_rate
+        } else {
+            8.25
+        }
+
+        p <- generate_enhanced_carry_roll_heatmap(
+            carry_roll_data(),
+            return_type_value,
+            funding_rate = funding_rate_value
+        )
         if(!is.null(p)) {
             print(p)
         } else {
@@ -3702,41 +3731,206 @@ server <- function(input, output, session) {
             )
     })
 
-    # Add this to server function
+    # ═══════════════════════════════════════════════════════════════════════
+    # FIX 5: IMPROVED QUICK METRICS WITH SPECIFIC BOND NAMES
+    # FIX 6: BREAKEVEN YIELD MOVE CALCULATION
+    # ═══════════════════════════════════════════════════════════════════════
     output$carry_roll_summary <- renderUI({
         req(carry_roll_data())
 
-        # Calculate summary statistics
-        summary_stats <- carry_roll_data() %>%
-            filter(holding_period == "90d") %>%
-            summarise(
-                avg_net = mean(net_return, na.rm = TRUE),
-                best_net = max(net_return, na.rm = TRUE),
-                worst_net = min(net_return, na.rm = TRUE),
-                positive_carry = sum(net_return > 0, na.rm = TRUE),
-                total_bonds = n()
-            )
+        data_90d <- carry_roll_data() %>%
+            filter(holding_period == "90d")
 
-        if(nrow(summary_stats) > 0) {
-            tagList(
-                tags$p(style = "margin: 5px 0;",
-                       tags$strong("90-day Average:"),
-                       tags$span(sprintf(" %.2f%%", summary_stats$avg_net),
-                                 style = ifelse(summary_stats$avg_net > 0,
-                                                "color: #28a745;", "color: #dc3545;"))),
-                tags$p(style = "margin: 5px 0;",
-                       tags$strong("Best Performer:"),
-                       tags$span(sprintf(" %.2f%%", summary_stats$best_net),
-                                 style = "color: #28a745;")),
-                tags$p(style = "margin: 5px 0;",
-                       tags$strong("Positive Carry:"),
-                       tags$span(sprintf(" %d of %d bonds",
-                                         summary_stats$positive_carry,
-                                         summary_stats$total_bonds)))
-            )
-        } else {
-            tags$p("Calculating metrics...")
+        if(nrow(data_90d) == 0) {
+            return(tags$p("No 90-day data available"))
         }
+
+        # Calculate summary statistics
+        avg_net_return <- mean(data_90d$net_return, na.rm = TRUE)
+        best_bond <- data_90d %>% slice_max(net_return, n = 1, with_ties = FALSE)
+        worst_bond <- data_90d %>% slice_min(net_return, n = 1, with_ties = FALSE)
+        positive_carry_count <- sum(data_90d$net_return > 0, na.rm = TRUE)
+        total_bonds <- nrow(data_90d)
+
+        # Calculate risk-adjusted average
+        avg_risk_adj <- if("return_per_unit_risk" %in% names(data_90d)) {
+            mean(data_90d$return_per_unit_risk, na.rm = TRUE)
+        } else {
+            NA
+        }
+
+        # FIX 6: Calculate average breakeven yield move
+        # Breakeven = Net Return / Modified Duration * 10000 (bps)
+        data_90d_breakeven <- data_90d %>%
+            filter(!is.na(modified_duration), modified_duration > 0) %>%
+            mutate(
+                breakeven_bps = (net_return / 100) / modified_duration * 10000
+            )
+        avg_breakeven <- mean(data_90d_breakeven$breakeven_bps, na.rm = TRUE)
+
+        # Progress bar percentage
+        positive_pct <- (positive_carry_count / total_bonds) * 100
+
+        tagList(
+            # Section title with period specification
+            tags$small(class = "text-muted", "Based on 90-day holding period"),
+            tags$hr(style = "margin: 8px 0;"),
+
+            # Average Net Return
+            tags$div(
+                style = "margin-bottom: 12px;",
+                tags$div(class = "text-muted", style = "font-size: 11px;", "Average Net Return:"),
+                tags$div(
+                    style = sprintf("font-size: 18px; font-weight: bold; color: %s;",
+                                    ifelse(avg_net_return > 0, "#1B5E20", "#C62828")),
+                    sprintf("%.2f%%", avg_net_return)
+                )
+            ),
+
+            # Best Performer (with bond name)
+            tags$div(
+                style = "margin-bottom: 12px;",
+                tags$div(class = "text-muted", style = "font-size: 11px;", "Best Performer:"),
+                tags$div(
+                    style = "font-size: 14px; font-weight: bold; color: #1B5E20;",
+                    sprintf("%s: %.2f%%", best_bond$bond, best_bond$net_return)
+                )
+            ),
+
+            # Worst Performer (with bond name)
+            tags$div(
+                style = "margin-bottom: 12px;",
+                tags$div(class = "text-muted", style = "font-size: 11px;", "Worst Performer:"),
+                tags$div(
+                    style = sprintf("font-size: 14px; font-weight: bold; color: %s;",
+                                    ifelse(worst_bond$net_return > 0, "#FF9800", "#C62828")),
+                    sprintf("%s: %.2f%%", worst_bond$bond, worst_bond$net_return)
+                )
+            ),
+
+            # Positive Carry Count with Progress Bar
+            tags$div(
+                style = "margin-bottom: 12px;",
+                tags$div(class = "text-muted", style = "font-size: 11px;", "Positive Net Return:"),
+                tags$div(
+                    style = "font-size: 14px; font-weight: bold;",
+                    sprintf("%d of %d bonds", positive_carry_count, total_bonds)
+                ),
+                # Progress bar
+                tags$div(
+                    style = "background: #E0E0E0; height: 6px; border-radius: 3px; margin-top: 4px;",
+                    tags$div(
+                        style = sprintf("background: #4CAF50; width: %.0f%%; height: 100%%; border-radius: 3px;",
+                                        positive_pct)
+                    )
+                )
+            ),
+
+            # FIX 6: Average Yield Breakeven
+            tags$div(
+                style = "margin-bottom: 12px;",
+                tags$div(class = "text-muted", style = "font-size: 11px;", "Avg Yield Breakeven:"),
+                tags$div(
+                    style = "font-size: 14px; font-weight: bold;",
+                    sprintf("+%.0f bps", avg_breakeven)
+                ),
+                tags$small(
+                    class = "text-muted",
+                    style = "font-size: 10px;",
+                    "(yields can rise this much before loss)"
+                )
+            ),
+
+            # Risk-Adjusted Return (if available)
+            if(!is.na(avg_risk_adj)) {
+                tags$div(
+                    tags$div(class = "text-muted", style = "font-size: 11px;", "Avg Risk-Adjusted Return:"),
+                    tags$div(
+                        style = "font-size: 12px;",
+                        sprintf("%.2f%% per year of duration", avg_risk_adj)
+                    )
+                )
+            }
+        )
+    })
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # FIX 4: COMPONENT BREAKDOWN VIEW (Return Decomposition)
+    # ═══════════════════════════════════════════════════════════════════════
+    output$carry_decomposition <- renderUI({
+        req(carry_roll_data(), input$selected_carry_bond)
+
+        data <- carry_roll_data() %>%
+            filter(bond == input$selected_carry_bond, holding_period == "90d")
+
+        if(nrow(data) == 0) {
+            return(tags$p("Select a bond to see decomposition"))
+        }
+
+        # Get component values
+        carry_val <- if("carry_income" %in% names(data)) data$carry_income[1] else NA
+        roll_val <- if("roll_return" %in% names(data)) data$roll_return[1] else NA
+        funding_val <- if("funding_cost" %in% names(data)) data$funding_cost[1] else NA
+        net_val <- data$net_return[1]
+
+        tags$div(
+            class = "panel panel-default",
+            style = "margin-top: 15px;",
+            tags$div(
+                class = "panel-heading",
+                style = "background: #1B3A6B; color: white; padding: 8px 12px;",
+                sprintf("Return Decomposition: %s (90-day)", input$selected_carry_bond)
+            ),
+            tags$div(
+                class = "panel-body",
+                style = "padding: 10px;",
+
+                # Waterfall-style breakdown table
+                tags$table(
+                    class = "table table-condensed",
+                    style = "margin-bottom: 0;",
+                    tags$tbody(
+                        if(!is.na(carry_val)) {
+                            tags$tr(
+                                tags$td("Carry Income:"),
+                                tags$td(
+                                    style = "color: #1B5E20; text-align: right; font-weight: bold;",
+                                    sprintf("+%.2f%%", carry_val)
+                                )
+                            )
+                        },
+                        if(!is.na(roll_val)) {
+                            tags$tr(
+                                tags$td("Roll-Down Benefit:"),
+                                tags$td(
+                                    style = sprintf("color: %s; text-align: right; font-weight: bold;",
+                                                    ifelse(roll_val >= 0, "#1B5E20", "#C62828")),
+                                    sprintf("%s%.2f%%", ifelse(roll_val >= 0, "+", ""), roll_val)
+                                )
+                            )
+                        },
+                        if(!is.na(funding_val)) {
+                            tags$tr(
+                                tags$td("Funding Cost:"),
+                                tags$td(
+                                    style = "color: #C62828; text-align: right; font-weight: bold;",
+                                    sprintf("-%.2f%%", funding_val)
+                                )
+                            )
+                        },
+                        tags$tr(
+                            style = "border-top: 2px solid #333;",
+                            tags$td(tags$strong("Net Return:")),
+                            tags$td(
+                                style = sprintf("color: %s; text-align: right; font-weight: bold; font-size: 14px;",
+                                                ifelse(net_val > 0, "#1B5E20", "#C62828")),
+                                sprintf("%.2f%%", net_val)
+                            )
+                        )
+                    )
+                )
+            )
+        )
     })
 
     # Add this output to the server function

@@ -1,6 +1,6 @@
 #' @export
 # 10. Enhanced Carry & Roll Heatmap Generation
-generate_enhanced_carry_roll_heatmap <- function(data, return_type = "net") {
+generate_enhanced_carry_roll_heatmap <- function(data, return_type = "net", funding_rate = 8.25) {
     # Select return column based on input
     return_col <- switch(return_type,
                          "gross" = "gross_return",
@@ -13,14 +13,109 @@ generate_enhanced_carry_roll_heatmap <- function(data, return_type = "net") {
         return_col <- "net_return"
     }
 
+    # Get return type label for display
+    return_type_label <- switch(return_type,
+                                "gross" = "Gross",
+                                "net" = "Net",
+                                "risk_adj" = "Risk-Adjusted",
+                                "Net")
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # FIX 1: SORT BONDS BY 90-DAY RETURN (Most common trading horizon)
+    # ═══════════════════════════════════════════════════════════════════════
+
+    # Get bond order sorted by 90-day return (highest to lowest)
+    bond_order <- data %>%
+        filter(holding_period == "90d") %>%
+        arrange(desc(!!sym(return_col))) %>%
+        pull(bond)
+
+    # If no 90d data, fall back to any available period
+    if(length(bond_order) == 0) {
+        bond_order <- data %>%
+            arrange(desc(!!sym(return_col))) %>%
+            distinct(bond) %>%
+            pull(bond)
+    }
+
     heatmap_data <- data %>%
         filter(!is.na(!!sym(return_col))) %>%
-        select(bond, holding_period, all_of(return_col)) %>%
-        rename(return_value = all_of(return_col))
+        select(bond, holding_period, all_of(return_col),
+               any_of(c("carry_income", "roll_return", "funding_cost", "modified_duration"))) %>%
+        rename(return_value = all_of(return_col)) %>%
+        mutate(
+            # Apply bond ordering (rev for ggplot - highest at top)
+            bond = factor(bond, levels = rev(bond_order)),
+            # Ensure holding period order is correct
+            holding_period = factor(holding_period,
+                                    levels = c("30d", "90d", "180d", "360d"))
+        )
 
     if(nrow(heatmap_data) == 0) {
         return(NULL)
     }
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # FIX 2: IMPROVED COLOR SCALE FOR LOW VALUE DIFFERENTIATION
+    # ═══════════════════════════════════════════════════════════════════════
+
+    # Custom color scale optimized for typical carry returns (0-4%)
+    # Clusters more colors in the low range for better differentiation
+    return_colors <- c(
+        "#FFEBEE",      # 0% - very light red (poor)
+        "#FFCDD2",      # 0.25% - light red
+        "#FFF9C4",      # 0.5% - yellow (break-even zone)
+        "#C8E6C9",      # 1.0% - light green (acceptable)
+        "#66BB6A",      # 2.0% - medium green (good)
+        "#1B5E20"       # 4%+ - dark green (excellent)
+    )
+
+    # Determine dynamic limits based on data
+    max_return <- max(heatmap_data$return_value, na.rm = TRUE)
+    min_return <- min(heatmap_data$return_value, na.rm = TRUE)
+
+    # Use appropriate scale based on return range
+    if(min_return < 0) {
+        # Diverging scale for negative returns
+        color_scale <- scale_fill_gradient2(
+            low = "#C62828",           # Dark red for negative
+            mid = "#FFF9C4",           # Yellow at zero
+            high = "#1B5E20",          # Dark green for positive
+            midpoint = 0,
+            limits = c(min(min_return, -0.5), max(max_return, 4)),
+            oob = scales::squish,
+            name = "Return (%)",
+            guide = guide_colorbar(
+                title.position = "top",
+                barwidth = 10,
+                barheight = 0.5
+            )
+        )
+    } else {
+        # Sequential scale optimized for typical 0-4% returns
+        color_scale <- scale_fill_gradientn(
+            colors = return_colors,
+            values = scales::rescale(c(0, 0.25, 0.5, 1.0, 2.0, 4.0)),
+            limits = c(0, max(4, max_return)),
+            oob = scales::squish,
+            name = "Return (%)",
+            guide = guide_colorbar(
+                title.position = "top",
+                barwidth = 10,
+                barheight = 0.5
+            )
+        )
+    }
+
+    # Dynamic text color based on return value (darker text on light backgrounds)
+    text_colors <- ifelse(
+        heatmap_data$return_value < 0.5 | heatmap_data$return_value > 2.5,
+        "black",
+        "black"
+    )
+    # Override for very high/low values
+    text_colors <- ifelse(heatmap_data$return_value > 3, "white", text_colors)
+    text_colors <- ifelse(heatmap_data$return_value < -0.5, "white", text_colors)
 
     # Create heatmap with realistic scale
     p <- ggplot(heatmap_data, aes(x = holding_period, y = bond, fill = return_value)) +
@@ -29,27 +124,24 @@ generate_enhanced_carry_roll_heatmap <- function(data, return_type = "net") {
 
         geom_text(aes(label = sprintf("%.2f%%", return_value)),
                   size = 4,
-                  fontface = 2,
-                  color = ifelse(abs(heatmap_data$return_value) > 2, "white", "black")) +
+                  fontface = "bold",
+                  color = text_colors) +
 
-        scale_fill_gradientn(
-            colors = c(insele_palette$danger, "#FF6B6B", "white",
-                       "#4ECDC4", insele_palette$success),
-            values = scales::rescale(c(-2, -0.5, 0, 3, 10)),
-            limits = c(-2, 10),
-            oob = scales::squish,
-            name = "Return (%)"
-        ) +
+        color_scale +
 
         scale_x_discrete(expand = c(0, 0)) +
         scale_y_discrete(expand = c(0, 0)) +
 
+        # ═══════════════════════════════════════════════════════════════════════
+        # FIX 3: CLARIFY RETURN TYPE (Period vs Annualized)
+        # ═══════════════════════════════════════════════════════════════════════
         labs(
             title = "Carry & Roll Analysis",
-            subtitle = paste("Expected returns including funding cost | Return type:", return_type),
+            subtitle = sprintf("Sorted by 90-day %s return (highest at top) | Funding: %.2f%%",
+                               return_type_label, funding_rate),
             x = "Holding Period",
             y = "",
-            caption = "Returns shown are annualized"
+            caption = "Returns shown are total period returns (not annualized)"
         ) +
 
         create_insele_theme() +
