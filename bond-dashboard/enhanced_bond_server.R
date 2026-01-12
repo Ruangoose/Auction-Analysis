@@ -517,6 +517,167 @@ server <- function(input, output, session) {
         return(result)
     })
 
+    # ════════════════════════════════════════════════════════════════════════════
+    # TECHNICAL SIGNALS MASTER - SINGLE SOURCE OF TRUTH
+    # ════════════════════════════════════════════════════════════════════════════
+    # CRITICAL: This reactive provides the AUTHORITATIVE signal calculations
+    # used by BOTH the Trading Signal Matrix AND the Technical Indicators Table.
+    # This ensures consistency between these two displays.
+    # ════════════════════════════════════════════════════════════════════════════
+
+    technical_signals_master <- reactive({
+        req(filtered_data_with_technicals())
+
+        # Get the full technical data
+        data <- filtered_data_with_technicals()
+
+        # Get latest data per bond (most recent date for each bond)
+        latest_data <- data %>%
+            group_by(bond) %>%
+            slice_max(date, n = 1) %>%
+            ungroup() %>%
+            distinct(bond, .keep_all = TRUE)
+
+        # ════════════════════════════════════════════════════════════════════════
+        # Calculate individual indicator signals (-2 to +2 scale)
+        # These are YIELD perspective signals that will be INVERTED for bond prices
+        # ════════════════════════════════════════════════════════════════════════
+
+        result <- latest_data %>%
+            mutate(
+                # ═══════════════════════════════════════════════════════════════
+                # RSI Signal (YIELD perspective)
+                # High RSI = overbought yields = yields may reverse DOWN
+                # For bonds: yields down = prices up = GOOD
+                # So: High RSI → POSITIVE signal (buy)
+                # ═══════════════════════════════════════════════════════════════
+                rsi_signal_yield = case_when(
+                    is.na(rsi_14) ~ 0L,
+                    rsi_14 > 80 ~ 2L,    # Extremely overbought yields → Strong Buy
+                    rsi_14 > 70 ~ 1L,    # Overbought yields → Buy
+                    rsi_14 < 20 ~ -2L,   # Extremely oversold yields → Strong Sell
+                    rsi_14 < 30 ~ -1L,   # Oversold yields → Sell
+                    TRUE ~ 0L            # Neutral
+                ),
+
+                # ═══════════════════════════════════════════════════════════════
+                # BB Signal (YIELD perspective)
+                # bb_position > 1 = above upper band = yields extended high
+                # Yields extended high may reverse → GOOD for bond prices
+                # ═══════════════════════════════════════════════════════════════
+                bb_signal_yield = case_when(
+                    is.na(bb_position) ~ 0L,
+                    bb_position > 1.0 ~ 2L,    # Above upper band → Strong Buy
+                    bb_position > 0.8 ~ 1L,    # Near upper band → Buy
+                    bb_position < 0 ~ -2L,     # Below lower band → Strong Sell
+                    bb_position < 0.2 ~ -1L,   # Near lower band → Sell
+                    TRUE ~ 0L                   # Within bands → Neutral
+                ),
+
+                # ═══════════════════════════════════════════════════════════════
+                # MACD Signal (YIELD perspective)
+                # Positive histogram = yields momentum UP = BAD for bond prices
+                # So invert: Positive histogram → NEGATIVE signal
+                # ═══════════════════════════════════════════════════════════════
+                macd_signal_yield = case_when(
+                    is.na(macd_histogram) ~ 0L,
+                    macd_histogram > 0.05 ~ -2L,   # Strong bullish yields → Strong Sell
+                    macd_histogram > 0 ~ -1L,      # Bullish yields → Sell
+                    macd_histogram < -0.05 ~ 2L,   # Strong bearish yields → Strong Buy
+                    macd_histogram < 0 ~ 1L,       # Bearish yields → Buy
+                    TRUE ~ 0L
+                ),
+
+                # ═══════════════════════════════════════════════════════════════
+                # Momentum Signal (ROC - YIELD perspective)
+                # Positive ROC = yields rising = BAD for bond prices
+                # So invert: Positive ROC → NEGATIVE signal
+                # ═══════════════════════════════════════════════════════════════
+                momentum_signal_yield = case_when(
+                    is.na(roc_20) ~ 0L,
+                    roc_20 > 5 ~ -2L,       # Strong yield rise → Strong Sell
+                    roc_20 > 2 ~ -1L,       # Yield rise → Sell
+                    roc_20 < -5 ~ 2L,       # Strong yield fall → Strong Buy
+                    roc_20 < -2 ~ 1L,       # Yield fall → Buy
+                    TRUE ~ 0L
+                ),
+
+                # ═══════════════════════════════════════════════════════════════
+                # TOTAL Score (from BOND PRICE perspective)
+                # Range: -8 to +8
+                # Positive = Good for bond holders (yields falling/reversing)
+                # Negative = Bad for bond holders (yields rising)
+                # ═══════════════════════════════════════════════════════════════
+                total_score = rsi_signal_yield + bb_signal_yield +
+                              macd_signal_yield + momentum_signal_yield,
+
+                # ═══════════════════════════════════════════════════════════════
+                # Overall Signal Classification (5 levels)
+                # Uses bond price perspective thresholds
+                # ═══════════════════════════════════════════════════════════════
+                overall_signal = case_when(
+                    total_score >= 4 ~ "Strong Buy",
+                    total_score >= 2 ~ "Buy",
+                    total_score >= -1 ~ "Neutral",
+                    total_score >= -3 ~ "Sell",
+                    TRUE ~ "Strong Sell"
+                ),
+
+                # ═══════════════════════════════════════════════════════════════
+                # Text labels for individual indicator displays (for table)
+                # ═══════════════════════════════════════════════════════════════
+                rsi_signal_label = case_when(
+                    rsi_14 > 80 ~ "Extreme OB",
+                    rsi_14 > 70 ~ "Overbought",
+                    rsi_14 < 20 ~ "Extreme OS",
+                    rsi_14 < 30 ~ "Oversold",
+                    TRUE ~ "Neutral"
+                ),
+
+                bb_signal_label = case_when(
+                    bb_position > 1.0 ~ "Above Upper",
+                    bb_position > 0.8 ~ "Near Upper",
+                    bb_position < 0 ~ "Below Lower",
+                    bb_position < 0.2 ~ "Near Lower",
+                    TRUE ~ "Within Bands"
+                ),
+
+                macd_signal_label = case_when(
+                    macd_histogram > 0.05 ~ "Strong Bullish",
+                    macd_histogram > 0 ~ "Bullish",
+                    macd_histogram < -0.05 ~ "Strong Bearish",
+                    macd_histogram < 0 ~ "Bearish",
+                    TRUE ~ "Neutral"
+                ),
+
+                trend_label = case_when(
+                    sma_50 > sma_200 * 1.02 ~ "Strong Uptrend",
+                    sma_50 > sma_200 ~ "Uptrend",
+                    sma_50 < sma_200 * 0.98 ~ "Strong Downtrend",
+                    sma_50 < sma_200 ~ "Downtrend",
+                    TRUE ~ "Sideways"
+                ),
+
+                roc_signal_label = case_when(
+                    roc_20 > 5 ~ "Strong Rise",
+                    roc_20 > 2 ~ "Rising",
+                    roc_20 > -2 ~ "Flat",
+                    roc_20 > -5 ~ "Falling",
+                    TRUE ~ "Strong Fall"
+                )
+            )
+
+        # Log the master reactive creation
+        message(sprintf(
+            "✓ technical_signals_master: %d bonds | Score range: [%d, %d]",
+            nrow(result),
+            min(result$total_score, na.rm = TRUE),
+            max(result$total_score, na.rm = TRUE)
+        ))
+
+        return(result)
+    })
+
 
     # Periodic theme cache cleanup (every 30 minutes)
     # Prevents memory bloat from cached theme objects
@@ -1880,37 +2041,133 @@ server <- function(input, output, session) {
         })
     })
 
-    # 9. Signal Matrix Heatmap
+    # 9. Signal Matrix Heatmap - USING MASTER REACTIVE FOR CONSISTENCY
     output$signal_matrix_heatmap <- renderPlot({
-        req(filtered_data())
-        p <- generate_signal_matrix_heatmap(filtered_data_with_technicals())
-        if(!is.null(p)) print(p)
+        req(technical_signals_master())
+
+        # Use the MASTER reactive for consistent signals
+        signal_data <- technical_signals_master()
+
+        # Validation
+        if(nrow(signal_data) < 2) {
+            plot.new()
+            text(0.5, 0.5, "Need at least 2 bonds for signal matrix",
+                 cex = 1.2, col = "#666666")
+            return()
+        }
+
+        # Prepare data for matrix visualization
+        matrix_data <- signal_data %>%
+            select(
+                bond,
+                RSI = rsi_signal_yield,
+                BB = bb_signal_yield,
+                MACD = macd_signal_yield,
+                MOM = momentum_signal_yield,
+                TOTAL = total_score
+            ) %>%
+            pivot_longer(
+                cols = c(RSI, BB, MACD, MOM, TOTAL),
+                names_to = "indicator",
+                values_to = "score"
+            ) %>%
+            mutate(
+                score = as.numeric(score),
+                score = ifelse(is.na(score), 0, score),
+                indicator = factor(indicator, levels = c("RSI", "BB", "MACD", "MOM", "TOTAL"))
+            )
+
+        # Sort bonds by TOTAL score (strongest buy at top)
+        bond_order <- signal_data %>%
+            arrange(desc(total_score)) %>%
+            pull(bond)
+
+        matrix_data <- matrix_data %>%
+            mutate(bond = factor(bond, levels = rev(bond_order)))
+
+        # Create discrete color categories
+        # Different thresholds for TOTAL (-8 to +8) vs individual indicators (-2 to +2)
+        matrix_data <- matrix_data %>%
+            mutate(
+                color_cat = case_when(
+                    # TOTAL column uses different thresholds
+                    indicator == "TOTAL" & score >= 4 ~ "strong_buy",
+                    indicator == "TOTAL" & score >= 2 ~ "buy",
+                    indicator == "TOTAL" & score >= -1 ~ "neutral",
+                    indicator == "TOTAL" & score >= -3 ~ "sell",
+                    indicator == "TOTAL" ~ "strong_sell",
+                    # Individual indicators (-2 to +2 scale)
+                    score == 2 ~ "strong_buy",
+                    score == 1 ~ "buy",
+                    score == 0 ~ "neutral",
+                    score == -1 ~ "sell",
+                    score == -2 ~ "strong_sell",
+                    TRUE ~ "neutral"
+                ),
+                color_cat = factor(color_cat,
+                    levels = c("strong_sell", "sell", "neutral", "buy", "strong_buy"))
+            )
+
+        # Create the heatmap
+        p <- ggplot(matrix_data, aes(x = indicator, y = bond, fill = color_cat)) +
+            geom_tile(color = "white", linewidth = 1) +
+            geom_text(aes(label = score), size = 3.5, fontface = "bold",
+                color = ifelse(matrix_data$color_cat %in% c("strong_buy", "strong_sell"),
+                               "white", "gray20")) +
+            scale_fill_manual(
+                values = c(
+                    "strong_sell" = "#B71C1C",
+                    "sell" = "#E57373",
+                    "neutral" = "#9E9E9E",
+                    "buy" = "#81C784",
+                    "strong_buy" = "#1B5E20"
+                ),
+                name = "Signal",
+                labels = c("Strong Sell", "Sell", "Neutral", "Buy", "Strong Buy"),
+                drop = FALSE
+            ) +
+            scale_x_discrete(expand = c(0, 0)) +
+            scale_y_discrete(expand = c(0, 0)) +
+            labs(
+                title = "Trading Signal Matrix",
+                subtitle = "Sorted by total score (strongest buy at top) | Bond Price Perspective",
+                x = "", y = "",
+                caption = "+2 = Strong Buy (good for prices) | -2 = Strong Sell (bad for prices)"
+            ) +
+            theme_minimal() +
+            theme(
+                plot.title = element_text(face = "bold", color = "#1B3A6B", size = 14),
+                plot.subtitle = element_text(color = "#666666", size = 10),
+                plot.caption = element_text(color = "#888888", size = 8),
+                axis.text.x = element_text(angle = 0, hjust = 0.5, face = "bold", size = 10),
+                axis.text.y = element_text(face = "bold", size = 9),
+                panel.grid = element_blank(),
+                panel.border = element_rect(fill = NA, color = "#666666", linewidth = 1),
+                legend.position = "bottom"
+            )
+
+        print(p)
     })
 
-    # 9b. Signal Summary Statistics Panel
+    # 9b. Signal Summary Statistics Panel - USING MASTER REACTIVE FOR CONSISTENCY
     output$signal_summary_stats <- renderUI({
-        req(filtered_data_with_technicals())
+        req(technical_signals_master())
 
-        tech_data <- filtered_data_with_technicals()
+        # Use the MASTER reactive for consistent signals
+        latest_data <- technical_signals_master()
 
         # Ensure required columns exist
-        if(!"signal_strength" %in% names(tech_data)) {
+        if(!"overall_signal" %in% names(latest_data)) {
             return(tags$div(
                 style = "color: #666; padding: 10px;",
                 "Signal data not available"
             ))
         }
 
-        # Get latest values for each bond
-        latest_data <- tech_data %>%
-            group_by(bond) %>%
-            filter(date == max(date)) %>%
-            ungroup() %>%
-            distinct(bond, .keep_all = TRUE)
-
-        # Count signals by type
+        # Count signals by type (using overall_signal from master reactive)
         signal_counts <- latest_data %>%
-            count(signal_strength) %>%
+            count(overall_signal) %>%
+            rename(signal_strength = overall_signal) %>%
             arrange(factor(signal_strength,
                            levels = c("Strong Buy", "Buy", "Neutral", "Sell", "Strong Sell")))
 
@@ -3276,101 +3533,44 @@ server <- function(input, output, session) {
         showNotification("Refreshing technical data...", type = "message", duration = 2)
     })
 
+    # TECHNICAL INDICATORS TABLE - USING MASTER REACTIVE FOR CONSISTENCY
     output$technical_indicators_enhanced_table <- DT::renderDataTable({
-        req(processed_data())
+        req(technical_signals_master())
 
-        # Get latest technical indicators for all bonds
-        tech_data <- filtered_data_with_technicals()
-
-        # Ensure total_signal_score column exists
-        if(!"total_signal_score" %in% names(tech_data)) {
-            tech_data$total_signal_score <- 0L
-        }
-
-        tech_summary <- tech_data %>%
-            select(
-                bond,
-                date,
-                yield_to_maturity,
-                rsi_14,
-                bb_position,
-                macd,
-                macd_signal,
-                macd_histogram,
-                sma_50,
-                sma_200,
-                signal_strength,
-                roc_20,
-                total_signal_score
-            ) %>%
-            filter(!is.na(signal_strength))  %>%
-            group_by(bond) %>%
-            # CRITICAL: Filter to most recent date for each bond
-            filter(date == max(date)) %>%
-            ungroup() %>%
-            # Select only one row per bond (in case of duplicates on same date)
-            distinct(bond, .keep_all = TRUE) %>%
-            # SORT BY SIGNAL SCORE (strongest buy at top)
-            arrange(desc(total_signal_score))
+        # Use the MASTER reactive - ensures consistency with Signal Matrix
+        tech_summary <- technical_signals_master()
 
         # Check if we have data
         if(nrow(tech_summary) == 0) {
-            # Return empty table with message
             empty_df <- data.frame(
                 Message = "No technical indicator data available. Please adjust date range or bond selection."
             )
             return(datatable(empty_df, options = list(dom = 't'), rownames = FALSE))
         }
 
-        # Format for display with improved indicators
+        # Sort by total_score (same as matrix TOTAL column)
+        tech_summary <- tech_summary %>%
+            arrange(desc(total_score))
+
+        # Format for display using pre-calculated labels from master reactive
         display_table <- tech_summary %>%
             mutate(
                 `Current Yield` = sprintf("%.3f%%", yield_to_maturity),
                 RSI = sprintf("%.1f", rsi_14),
-                `RSI Signal` = case_when(
-                    rsi_14 > 80 ~ "Extreme OB",
-                    rsi_14 > 70 ~ "Overbought",
-                    rsi_14 < 20 ~ "Extreme OS",
-                    rsi_14 < 30 ~ "Oversold",
-                    TRUE ~ "Neutral"
-                ),
-                # BB Position as percentage with context label
-                bb_pct = bb_position * 100,
-                `BB %` = sprintf("%.0f%%", bb_pct),
-                `BB Signal` = case_when(
-                    bb_position > 1.0 ~ "Above Upper",
-                    bb_position > 0.8 ~ "Near Upper",
-                    bb_position < 0 ~ "Below Lower",
-                    bb_position < 0.2 ~ "Near Lower",
-                    TRUE ~ "Within Bands"
-                ),
+                `RSI Signal` = rsi_signal_label,
+                # BB Position as percentage
+                `BB %` = sprintf("%.0f%%", bb_position * 100),
+                `BB Signal` = bb_signal_label,
                 MACD = sprintf("%.4f", macd_histogram),
-                `MACD Signal` = case_when(
-                    macd_histogram > 0.03 ~ "Strong Bullish",
-                    macd_histogram > 0 ~ "Bullish",
-                    macd_histogram < -0.03 ~ "Strong Bearish",
-                    macd_histogram < 0 ~ "Bearish",
-                    TRUE ~ "Neutral"
-                ),
-                Trend = case_when(
-                    sma_50 > sma_200 * 1.02 ~ "Strong Uptrend",
-                    sma_50 > sma_200 ~ "Uptrend",
-                    sma_50 < sma_200 * 0.98 ~ "Strong Downtrend",
-                    sma_50 < sma_200 ~ "Downtrend",
-                    TRUE ~ "Sideways"
-                ),
+                `MACD Signal` = macd_signal_label,
+                Trend = trend_label,
                 # ROC with sign indicator
                 `ROC (20d)` = sprintf("%+.2f%%", roc_20),
-                `ROC Signal` = case_when(
-                    roc_20 > 3 ~ "Strong Rise",
-                    roc_20 > 1 ~ "Rising",
-                    roc_20 > -1 ~ "Flat",
-                    roc_20 > -3 ~ "Falling",
-                    TRUE ~ "Strong Fall"
-                ),
-                # Score column for transparency
-                Score = ifelse(!is.na(total_signal_score), as.character(total_signal_score), "0"),
-                `Overall Signal` = signal_strength
+                `ROC Signal` = roc_signal_label,
+                # Score column - uses total_score from master (same as matrix TOTAL)
+                Score = as.character(total_score),
+                # Overall Signal - uses overall_signal from master (matches matrix classification)
+                `Overall Signal` = overall_signal
             ) %>%
             select(
                 Bond = bond,
@@ -3408,14 +3608,17 @@ server <- function(input, output, session) {
                 style = 'caption-side: top; text-align: left; padding: 10px;',
                 htmltools::tags$strong('Technical Analysis Summary'),
                 htmltools::tags$br(),
-                htmltools::tags$small('Sorted by Signal Score (strongest buy at top) | Score range: -8 to +8')
+                htmltools::tags$small('Sorted by Signal Score (strongest buy at top) | Score range: -8 to +8 | '),
+                htmltools::tags$strong(style = 'color: #1B5E20;', 'Bond Price Perspective'),
+                htmltools::tags$small(' (Green = Good for bonds)')
             )
         ) %>%
-            # Color code RSI Signal (5 levels)
+            # Color code RSI Signal (5 levels) - BOND PRICE PERSPECTIVE
+            # Overbought yields = Good for bonds (yields may fall), Oversold yields = Bad for bonds
             formatStyle(
                 "RSI Signal",
                 backgroundColor = styleEqual(
-                    c("Extreme OS", "Oversold", "Neutral", "Overbought", "Extreme OB"),
+                    c("Extreme OB", "Overbought", "Neutral", "Oversold", "Extreme OS"),
                     c("#1B5E20", "#4CAF50", "#F5F5F5", "#FF8A65", "#C62828")
                 ),
                 color = styleEqual(
@@ -3423,11 +3626,12 @@ server <- function(input, output, session) {
                     c("white", "white")
                 )
             ) %>%
-            # Color code BB Signal (5 levels)
+            # Color code BB Signal (5 levels) - BOND PRICE PERSPECTIVE
+            # Above Upper (overbought yields) = Good for bonds, Below Lower (oversold yields) = Bad
             formatStyle(
                 "BB Signal",
                 backgroundColor = styleEqual(
-                    c("Below Lower", "Near Lower", "Within Bands", "Near Upper", "Above Upper"),
+                    c("Above Upper", "Near Upper", "Within Bands", "Near Lower", "Below Lower"),
                     c("#1B5E20", "#4CAF50", "#F5F5F5", "#FF8A65", "#C62828")
                 ),
                 color = styleEqual(
@@ -4945,16 +5149,106 @@ server <- function(input, output, session) {
     # --- Technical Analysis ---
 
 
+    # Download handler - USING MASTER REACTIVE FOR CONSISTENCY
     output$download_signal_matrix <- downloadHandler(
         filename = function() {
             paste0("trading_signal_matrix_", format(Sys.Date(), "%Y%m%d"), ".png")
         },
         content = function(file) {
-            req(filtered_data())
-            p <- generate_signal_matrix_heatmap(filtered_data_with_technicals())
-            if(!is.null(p)) {
-                ggsave(file, plot = p, width = 12, height = 8, dpi = 300, bg = "white")
+            req(technical_signals_master())
+
+            # Use the MASTER reactive for consistent signals
+            signal_data <- technical_signals_master()
+
+            if(nrow(signal_data) < 2) {
+                return(NULL)
             }
+
+            # Prepare data for matrix visualization (same as output)
+            matrix_data <- signal_data %>%
+                select(
+                    bond,
+                    RSI = rsi_signal_yield,
+                    BB = bb_signal_yield,
+                    MACD = macd_signal_yield,
+                    MOM = momentum_signal_yield,
+                    TOTAL = total_score
+                ) %>%
+                pivot_longer(
+                    cols = c(RSI, BB, MACD, MOM, TOTAL),
+                    names_to = "indicator",
+                    values_to = "score"
+                ) %>%
+                mutate(
+                    score = as.numeric(score),
+                    score = ifelse(is.na(score), 0, score),
+                    indicator = factor(indicator, levels = c("RSI", "BB", "MACD", "MOM", "TOTAL"))
+                )
+
+            bond_order <- signal_data %>%
+                arrange(desc(total_score)) %>%
+                pull(bond)
+
+            matrix_data <- matrix_data %>%
+                mutate(bond = factor(bond, levels = rev(bond_order)))
+
+            matrix_data <- matrix_data %>%
+                mutate(
+                    color_cat = case_when(
+                        indicator == "TOTAL" & score >= 4 ~ "strong_buy",
+                        indicator == "TOTAL" & score >= 2 ~ "buy",
+                        indicator == "TOTAL" & score >= -1 ~ "neutral",
+                        indicator == "TOTAL" & score >= -3 ~ "sell",
+                        indicator == "TOTAL" ~ "strong_sell",
+                        score == 2 ~ "strong_buy",
+                        score == 1 ~ "buy",
+                        score == 0 ~ "neutral",
+                        score == -1 ~ "sell",
+                        score == -2 ~ "strong_sell",
+                        TRUE ~ "neutral"
+                    ),
+                    color_cat = factor(color_cat,
+                        levels = c("strong_sell", "sell", "neutral", "buy", "strong_buy"))
+                )
+
+            p <- ggplot(matrix_data, aes(x = indicator, y = bond, fill = color_cat)) +
+                geom_tile(color = "white", linewidth = 1) +
+                geom_text(aes(label = score), size = 3.5, fontface = "bold",
+                    color = ifelse(matrix_data$color_cat %in% c("strong_buy", "strong_sell"),
+                                   "white", "gray20")) +
+                scale_fill_manual(
+                    values = c(
+                        "strong_sell" = "#B71C1C",
+                        "sell" = "#E57373",
+                        "neutral" = "#9E9E9E",
+                        "buy" = "#81C784",
+                        "strong_buy" = "#1B5E20"
+                    ),
+                    name = "Signal",
+                    labels = c("Strong Sell", "Sell", "Neutral", "Buy", "Strong Buy"),
+                    drop = FALSE
+                ) +
+                scale_x_discrete(expand = c(0, 0)) +
+                scale_y_discrete(expand = c(0, 0)) +
+                labs(
+                    title = "Trading Signal Matrix",
+                    subtitle = "Sorted by total score (strongest buy at top) | Bond Price Perspective",
+                    x = "", y = "",
+                    caption = "+2 = Strong Buy (good for prices) | -2 = Strong Sell (bad for prices)"
+                ) +
+                theme_minimal() +
+                theme(
+                    plot.title = element_text(face = "bold", color = "#1B3A6B", size = 14),
+                    plot.subtitle = element_text(color = "#666666", size = 10),
+                    plot.caption = element_text(color = "#888888", size = 8),
+                    axis.text.x = element_text(angle = 0, hjust = 0.5, face = "bold", size = 10),
+                    axis.text.y = element_text(face = "bold", size = 9),
+                    panel.grid = element_blank(),
+                    panel.border = element_rect(fill = NA, color = "#666666", linewidth = 1),
+                    legend.position = "bottom"
+                )
+
+            ggsave(file, plot = p, width = 12, height = 8, dpi = 300, bg = "white")
         }
     )
 
