@@ -1303,6 +1303,19 @@ ui <- dashboardPage(
                                                       style = "margin-top: 15px;",
                                                       h6("Quick Metrics", style = "color: #1B3A6B;"),
                                                       uiOutput("carry_roll_summary")
+                                                  ),
+
+                                                  hr(),
+
+                                                  # FIX 4: Bond decomposition selector
+                                                  tags$div(
+                                                      style = "margin-top: 15px;",
+                                                      h6("Return Decomposition", style = "color: #1B3A6B;"),
+                                                      selectInput("selected_carry_bond",
+                                                                  "Select Bond:",
+                                                                  choices = NULL,
+                                                                  selected = NULL),
+                                                      uiOutput("carry_decomposition")
                                                   )
                                               )
                                        )
