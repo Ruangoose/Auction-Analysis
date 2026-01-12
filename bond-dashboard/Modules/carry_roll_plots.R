@@ -409,6 +409,12 @@ calculate_butterfly_spreads <- function(bond_data, lookback_days = 365) {
     message(sprintf("Columns: %s", paste(names(bond_data), collapse = ", ")))
     message(sprintf("Lookback days: %d", lookback_days))
 
+    # Check yield units (are they 9.75 or 0.0975?)
+    # If median yield > 1, yields are in percentage form (e.g., 9.75%)
+    sample_yield <- median(bond_data$yield_to_maturity, na.rm = TRUE)
+    yields_in_pct <- sample_yield > 1
+    message(sprintf("Yield unit check: median=%.4f, in_pct=%s", sample_yield, yields_in_pct))
+
     # Check for required columns
     required_cols <- c("date", "bond", "yield_to_maturity", "modified_duration")
     missing_cols <- setdiff(required_cols, names(bond_data))
@@ -538,14 +544,23 @@ calculate_butterfly_spreads <- function(bond_data, lookback_days = 365) {
                 current_spread <- tail(spread_ts$butterfly_spread, 1)
                 z_score <- (current_spread - spread_mean) / spread_sd
 
-                # ADF test for stationarity
+                # ADF test for stationarity with improved p-value handling
                 adf_result <- tryCatch({
-                    tseries::adf.test(spread_ts$butterfly_spread, alternative = "stationary")
+                    test_result <- tseries::adf.test(spread_ts$butterfly_spread, alternative = "stationary")
+
+                    # tseries::adf.test truncates p-values at 0.01 and 0.99
+                    # If p.value == 0.01, it's actually <= 0.01
+                    list(
+                        p.value = test_result$p.value,
+                        statistic = test_result$statistic,
+                        p_truncated = (test_result$p.value == 0.01)
+                    )
                 }, error = function(e) {
-                    list(p.value = NA)
+                    message(sprintf("ADF error for %s: %s", spread_name, e$message))
+                    list(p.value = NA, statistic = NA, p_truncated = FALSE)
                 })
 
-                # Store results
+                # Store results - spread is already in correct units (percentage points if yields are in %)
                 butterflies[[spread_name]] <- list(
                     name = spread_name,
                     short_wing = short_wing,
@@ -557,9 +572,12 @@ calculate_butterfly_spreads <- function(bond_data, lookback_days = 365) {
                     current = current_spread,
                     z_score = z_score,
                     adf_pvalue = adf_result$p.value,
+                    adf_statistic = adf_result$statistic,
+                    adf_p_truncated = adf_result$p_truncated,
                     is_stationary = !is.na(adf_result$p.value) && adf_result$p.value < 0.05,
                     diff_from_mean = current_spread - spread_mean,
-                    n_observations = nrow(spread_ts)
+                    n_observations = nrow(spread_ts),
+                    yields_in_pct = yields_in_pct  # Track yield units
                 )
             }
         }
@@ -582,12 +600,19 @@ calculate_butterfly_spreads <- function(bond_data, lookback_days = 365) {
 generate_butterfly_chart <- function(bf, zscore_threshold = 2.0) {
     if (is.null(bf)) return(NULL)
 
-    spread_ts <- bf$spread_ts %>%
-        mutate(butterfly_pct = butterfly_spread * 100)  # Convert to %
+    # Check if yields were in percentage form (spread already in % points)
+    yields_in_pct <- isTRUE(bf$yields_in_pct)
 
-    mean_pct <- bf$mean * 100
-    sd_pct <- bf$sd * 100
-    current_pct <- bf$current * 100
+    # If yields are in % form, spread is already in percentage points - don't multiply by 100
+    # If yields are in decimal form, multiply by 100 to convert to percentage points
+    conversion_factor <- if (yields_in_pct) 1 else 100
+
+    spread_ts <- bf$spread_ts %>%
+        mutate(butterfly_pct = butterfly_spread * conversion_factor)
+
+    mean_pct <- bf$mean * conversion_factor
+    sd_pct <- bf$sd * conversion_factor
+    current_pct <- bf$current * conversion_factor
 
     # Determine y-axis limits
     y_min <- min(spread_ts$butterfly_pct, mean_pct - 2.5 * sd_pct, na.rm = TRUE)
@@ -655,7 +680,7 @@ generate_butterfly_chart <- function(bf, zscore_threshold = 2.0) {
         labs(
             title = sprintf("Butterfly Spread: %s (Z-Score: %.2f)", bf$name, bf$z_score),
             subtitle = sprintf("Mean: %.3f%% | Current: %.3f%% | Diff: %+.3f%%",
-                               mean_pct, current_pct, (bf$diff_from_mean * 100)),
+                               mean_pct, current_pct, (bf$diff_from_mean * conversion_factor)),
             x = NULL,
             y = "Butterfly Spread (%)",
             caption = "Dashed = Mean | Dotted = +/-1 and +/-2 sigma | Shaded bands show standard deviation zones"
