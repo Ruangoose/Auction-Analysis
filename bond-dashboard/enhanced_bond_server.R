@@ -2608,10 +2608,28 @@ server <- function(input, output, session) {
                 )
             })
 
-            # Filter by stationarity if requested
-            if (input$stationarity_filter == "stationary") {
-                summary_df <- summary_df %>% filter(Is_Stationary == TRUE)
+            # DEBUG: Log stationarity distribution BEFORE filtering
+            message("=== SERVER STATIONARITY CHECK ===")
+            message(sprintf("Total butterflies in summary: %d", nrow(summary_df)))
+            if ("Is_Stationary" %in% names(summary_df)) {
+                message(sprintf("Is_Stationary distribution: TRUE=%d, FALSE=%d, NA=%d",
+                                sum(summary_df$Is_Stationary == TRUE, na.rm = TRUE),
+                                sum(summary_df$Is_Stationary == FALSE, na.rm = TRUE),
+                                sum(is.na(summary_df$Is_Stationary))))
+                if (all(summary_df$Is_Stationary == TRUE, na.rm = TRUE)) {
+                    message("WARNING: ALL butterflies marked as stationary!")
+                }
+                message(sprintf("ADF p-value range: %.4f to %.4f",
+                                min(summary_df$ADF_p, na.rm = TRUE),
+                                max(summary_df$ADF_p, na.rm = TRUE)))
+                message(sprintf("ADF stat range: %.4f to %.4f",
+                                min(summary_df$ADF_stat, na.rm = TRUE),
+                                max(summary_df$ADF_stat, na.rm = TRUE)))
             }
+            message("==================================")
+
+            # NOTE: Filter is now applied in butterfly_filtered() reactive, NOT here
+            # This allows the filter dropdown to work without regenerating butterflies
 
             # Rank by absolute Z-Score
             summary_df <- summary_df %>%
@@ -2631,11 +2649,68 @@ server <- function(input, output, session) {
         shinyjs::delay(1000, shinyjs::click("generate_butterflies"))
     })
 
+    # Filtered butterfly data - responds to stationarity_filter changes
+    # This is a separate reactive so filter changes don't require regenerating butterflies
+    butterfly_filtered <- reactive({
+        req(butterfly_data())
+        raw_df <- butterfly_data()$summary
+
+        if (nrow(raw_df) == 0) {
+            return(raw_df)
+        }
+
+        # Apply stationarity filter HERE (not in butterfly_data eventReactive)
+        filter_choice <- input$stationarity_filter
+        if (is.null(filter_choice)) filter_choice <- "all"
+
+        message(sprintf("[FILTER] Raw butterflies: %d, Filter: %s", nrow(raw_df), filter_choice))
+
+        filtered_df <- if (filter_choice == "stationary") {
+            raw_df %>% filter(Is_Stationary == TRUE)
+        } else {
+            raw_df
+        }
+
+        message(sprintf("[FILTER] After filter: %d butterflies", nrow(filtered_df)))
+
+        # Warn if filter had no effect
+        if (filter_choice == "stationary" && nrow(filtered_df) == nrow(raw_df)) {
+            message("[FILTER] WARNING: Stationarity filter had NO effect - all marked stationary!")
+        }
+
+        filtered_df
+    })
+
+    # Display stationarity counts for verification
+    output$stationarity_counts <- renderUI({
+        req(butterfly_data())
+        raw_df <- butterfly_data()$summary
+
+        if (nrow(raw_df) == 0) {
+            return(NULL)
+        }
+
+        stationary_count <- sum(raw_df$Is_Stationary == TRUE, na.rm = TRUE)
+        non_stationary_count <- sum(raw_df$Is_Stationary == FALSE, na.rm = TRUE)
+        total_count <- nrow(raw_df)
+
+        # Show warning if all are stationary
+        if (stationary_count == total_count) {
+            tags$span(
+                style = "color: #ff6600;",
+                sprintf("⚠ %d/%d stationary", stationary_count, total_count)
+            )
+        } else {
+            tags$span(sprintf("Stationary: %d/%d", stationary_count, total_count))
+        }
+    })
+
     # Butterfly table output
     output$butterfly_table <- DT::renderDataTable({
         req(butterfly_data())
 
-        df <- butterfly_data()$summary
+        # Use filtered reactive instead of raw butterfly_data
+        df <- butterfly_filtered()
 
         if (nrow(df) == 0) {
             return(DT::datatable(data.frame(Message = "No butterflies found. Try adjusting filters.")))
@@ -2722,22 +2797,26 @@ server <- function(input, output, session) {
 
     # Update selection when table row clicked
     observeEvent(input$butterfly_table_rows_selected, {
-        req(butterfly_data())
+        req(butterfly_filtered())
 
         row_idx <- input$butterfly_table_rows_selected
         if (length(row_idx) > 0) {
-            trade_name <- butterfly_data()$summary$Trade[row_idx]
-            # Extract spread name from "Butterfly: R209-R2040-R2048"
-            spread_name <- gsub("Butterfly: ", "", trade_name)
-            selected_butterfly(spread_name)
+            # Use filtered data to match table display
+            filtered_df <- butterfly_filtered()
+            if (row_idx <= nrow(filtered_df)) {
+                trade_name <- filtered_df$Trade[row_idx]
+                # Extract spread name from "Butterfly: R209-R2040-R2048"
+                spread_name <- gsub("Butterfly: ", "", trade_name)
+                selected_butterfly(spread_name)
+            }
         }
     })
 
     # Auto-select first butterfly if none selected
     observe({
-        req(butterfly_data())
-        if (is.null(selected_butterfly()) && nrow(butterfly_data()$summary) > 0) {
-            first_name <- gsub("Butterfly: ", "", butterfly_data()$summary$Trade[1])
+        req(butterfly_filtered())
+        if (is.null(selected_butterfly()) && nrow(butterfly_filtered()) > 0) {
+            first_name <- gsub("Butterfly: ", "", butterfly_filtered()$Trade[1])
             selected_butterfly(first_name)
         }
     })

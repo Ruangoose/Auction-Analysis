@@ -1457,7 +1457,9 @@ ui <- dashboardPage(
                                                   choices = c("Stationary Only (p<0.05)" = "stationary",
                                                               "All Butterflies" = "all"),
                                                   selected = "stationary"
-                                              )
+                                              ),
+                                              # Display stationarity counts for debugging/verification
+                                              tags$small(class = "text-muted", uiOutput("stationarity_counts"))
                                        ),
                                        column(3,
                                               actionButton(
