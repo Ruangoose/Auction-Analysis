@@ -2420,6 +2420,84 @@ server <- function(input, output, session) {
         }
     })
 
+    # Reactive to compute holding period metrics for the explainer
+    holding_period_metrics <- reactive({
+        req(carry_roll_data())
+        data <- carry_roll_data()
+
+        # Calculate metrics per holding period
+        metrics <- data %>%
+            filter(!is.na(holding_period), !is.na(net_return)) %>%
+            mutate(
+                holding_days = as.numeric(gsub("d$", "", holding_period))
+            ) %>%
+            group_by(holding_period, holding_days) %>%
+            summarise(
+                avg_return = mean(net_return, na.rm = TRUE),
+                return_volatility = sd(net_return, na.rm = TRUE),
+                .groups = "drop"
+            ) %>%
+            arrange(holding_days) %>%
+            mutate(
+                efficiency = avg_return / pmax(return_volatility, 0.1)
+            )
+
+        # Mark optimal
+        if(nrow(metrics) > 0) {
+            optimal_idx <- which.max(metrics$efficiency)
+            metrics$is_optimal <- FALSE
+            metrics$is_optimal[optimal_idx] <- TRUE
+        }
+
+        return(metrics)
+    })
+
+    # Explainer UI for Optimal Holding Period chart
+    output$holding_period_explainer <- renderUI({
+        req(holding_period_metrics())
+
+        metrics <- holding_period_metrics()
+        if(nrow(metrics) == 0) return(NULL)
+
+        optimal <- metrics %>% filter(is_optimal)
+        highest_return <- metrics %>% slice_max(avg_return, n = 1)
+
+        # Build the explanation items
+        explanation_items <- list(
+            tags$li(
+                tags$strong("Bubble Size: "),
+                "Larger = better risk-adjusted return (Efficiency = Return \u00f7 Volatility)"
+            ),
+            tags$li(
+                tags$strong("\u2605 OPTIMAL: "),
+                sprintf("%s has highest efficiency (%.2f), meaning best return per unit of risk",
+                        optimal$holding_period, optimal$efficiency)
+            )
+        )
+
+        # Add note if optimal is not the highest absolute return
+        if (optimal$holding_period != highest_return$holding_period) {
+            explanation_items <- c(explanation_items, list(
+                tags$li(
+                    tags$strong("Note: "),
+                    sprintf("%s has highest absolute return (%.2f%%), but lower efficiency due to higher volatility",
+                            highest_return$holding_period, highest_return$avg_return)
+                )
+            ))
+        }
+
+        tags$div(
+            class = "alert alert-info",
+            style = "padding: 10px; margin-top: 10px; font-size: 12px;",
+
+            tags$strong("How to Read This Chart:"),
+            tags$ul(
+                style = "margin: 5px 0;",
+                explanation_items
+            )
+        )
+    })
+
     output$forward_curve_plot <- renderPlot({
         req(processed_data())
         p <- generate_forward_curve_plot(processed_data(), list())

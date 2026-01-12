@@ -1498,6 +1498,18 @@ generate_scenario_analysis_plot <- function(data, params = list()) {
                    shape = 4,
                    stroke = 2) +
 
+        # Highlight best performing bond in each scenario at +100bps shock
+        geom_point(data = scenario_results %>%
+                       filter(shift == 100) %>%
+                       group_by(scenario) %>%
+                       slice_max(plot_return, n = 1) %>%
+                       ungroup(),
+                   aes(x = shift, y = plot_return),
+                   shape = 8,  # Star
+                   size = 4,
+                   color = "#1B5E20",
+                   stroke = 1.5) +
+
         # Facet by scenario
         facet_wrap(~scenario, ncol = 2, scales = "free_y") +
 
@@ -1532,9 +1544,9 @@ generate_scenario_analysis_plot <- function(data, params = list()) {
             x = "Yield Change",
             y = sprintf("%s Return (%%)", ifelse(show_total_return, "Total", "Price")),
             caption = paste(
-                "Scenarios: Parallel (uniform shift) | Flattening (short↑ long↓) | Steepening (short↓ long↑) | Butterfly (belly outperforms)",
+                "Scenarios: Parallel (uniform shift) | Flattening (short\u2191 long\u2193) | Steepening (short\u2193 long\u2191) | Butterfly (belly outperforms)",
                 sprintf("\n%d%% confidence bands based on bond-specific historical volatility", confidence_level * 100),
-                "\n× markers indicate breakeven points | ○ markers at -100, 0, +100 bps",
+                "\n\u00d7 = breakeven | \u25cb = key points (-100, 0, +100 bps) | \u2605 = best bond at +100bps",
                 sep = ""
             )
         ) +
