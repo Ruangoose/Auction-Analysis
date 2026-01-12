@@ -1404,13 +1404,13 @@ ui <- dashboardPage(
                                    )
                                ),
                                box(
-                                   title = "Optimal Holding Period Analysis",
+                                   title = "Annualized Return by Holding Period",
                                    status = "primary",
                                    solidHeader = TRUE,
                                    width = 6,
                                    plotOutput("optimal_holding_enhanced_plot", height = "400px"),
 
-                                   # Explainer box to clarify "Efficiency" metric
+                                   # Decision table with actionable guidance
                                    uiOutput("holding_period_explainer"),
 
                                    tags$div(
@@ -1916,7 +1916,7 @@ ui <- dashboardPage(
                                                               style = "margin-left: 20px; margin-top: 10px;",
                                                               checkboxInput("plot_carry_heatmap", "Carry & Roll Heatmap", value = TRUE),
                                                               checkboxInput("plot_scenario_analysis", "Scenario Analysis (Rate Shocks)", value = TRUE),
-                                                              checkboxInput("plot_optimal_holding", HTML("&#10024; Optimal Holding Period"), value = FALSE),
+                                                              checkboxInput("plot_optimal_holding", HTML("&#10024; Annualized Return Analysis"), value = FALSE),
                                                               checkboxInput("plot_forward_curve", HTML("&#10024; Forward Curve Analysis"), value = FALSE)
                                                           )
                                                       ),
