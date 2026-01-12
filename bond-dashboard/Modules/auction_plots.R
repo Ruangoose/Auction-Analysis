@@ -407,7 +407,7 @@ generate_auction_pattern_analysis <- function(data, params) {
 }
 
 #' @export
-# 14b. Auction forecast visualization
+# 14b. Auction forecast visualization - focuses on bonds WITH forecasts
 generate_auction_forecast_plot <- function(data, selected_bonds) {
     # CRITICAL FIX: Ensure date columns are Date objects
     data <- ensure_date_columns(data)
@@ -416,9 +416,38 @@ generate_auction_forecast_plot <- function(data, selected_bonds) {
         return(NULL)
     }
 
+    # First pass: identify bonds with sufficient data for forecasts
+    bonds_with_data <- sapply(selected_bonds, function(bond) {
+        n <- data %>%
+            filter(bond == !!bond, !is.na(bid_to_cover)) %>%
+            nrow()
+        n > 5  # Need at least 6 data points for forecast
+    })
+
+    # Focus on bonds with forecasts only
+    forecast_bonds <- selected_bonds[bonds_with_data]
+
+    # Limit to max 6 bonds for readability
+    if (length(forecast_bonds) > 6) {
+        # Prioritize by number of data points
+        bond_counts <- sapply(forecast_bonds, function(bond) {
+            data %>%
+                filter(bond == !!bond, !is.na(bid_to_cover)) %>%
+                nrow()
+        })
+        forecast_bonds <- forecast_bonds[order(bond_counts, decreasing = TRUE)][1:6]
+        message(sprintf("[CHART] Limiting to 6 bonds (from %d) for readability", length(selected_bonds)))
+    }
+
+    # If no bonds have forecasts, show message and return NULL
+    if (length(forecast_bonds) == 0) {
+        message("[CHART] No bonds with sufficient data for forecasts")
+        return(NULL)
+    }
+
     forecast_data <- data.frame()
 
-    for(bond in selected_bonds) {
+    for(bond in forecast_bonds) {
         hist_data <- data %>%
             filter(bond == !!bond, !is.na(bid_to_cover)) %>%
             arrange(date)
@@ -426,8 +455,16 @@ generate_auction_forecast_plot <- function(data, selected_bonds) {
         if(nrow(hist_data) > 5) {
             # Generate forecast
             ts_data <- ts(hist_data$bid_to_cover, frequency = 12)
-            model <- auto.arima(ts_data, seasonal = TRUE, stepwise = FALSE,
-                                approximation = FALSE, trace = FALSE)
+            model <- tryCatch({
+                auto.arima(ts_data, seasonal = TRUE, stepwise = FALSE,
+                           approximation = FALSE, trace = FALSE)
+            }, error = function(e) {
+                message(sprintf("[CHART ERROR] ARIMA failed for %s: %s", bond, e$message))
+                NULL
+            })
+
+            if (is.null(model)) next
+
             fc <- forecast(model, h = 3, level = c(80, 95))
 
             # Combine historical and forecast
