@@ -2420,12 +2420,12 @@ server <- function(input, output, session) {
         }
     })
 
-    # Reactive to compute holding period metrics for the explainer
+    # Reactive to compute holding period metrics with ANNUALIZED calculations
     holding_period_metrics <- reactive({
         req(carry_roll_data())
         data <- carry_roll_data()
 
-        # Calculate metrics per holding period
+        # Calculate ANNUALIZED metrics per holding period
         metrics <- data %>%
             filter(!is.na(holding_period), !is.na(net_return)) %>%
             mutate(
@@ -2433,67 +2433,116 @@ server <- function(input, output, session) {
             ) %>%
             group_by(holding_period, holding_days) %>%
             summarise(
-                avg_return = mean(net_return, na.rm = TRUE),
-                return_volatility = sd(net_return, na.rm = TRUE),
+                period_return = mean(net_return, na.rm = TRUE),
+                return_std = sd(net_return, na.rm = TRUE),
+                min_return = min(net_return, na.rm = TRUE),
+                max_return = max(net_return, na.rm = TRUE),
+                avg_duration = mean(modified_duration, na.rm = TRUE),
+                n_bonds = n(),
                 .groups = "drop"
             ) %>%
             arrange(holding_days) %>%
             mutate(
-                efficiency = avg_return / pmax(return_volatility, 0.1)
+                # Annualize metrics
+                periods_per_year = 365 / holding_days,
+                annualized_return = period_return * periods_per_year,
+                annualized_vol = return_std * sqrt(periods_per_year),
+
+                # Risk-free rate (SA T-bill proxy)
+                risk_free = 7.5,
+
+                # Sharpe Ratio (properly annualized)
+                sharpe = (annualized_return - risk_free) / pmax(annualized_vol, 0.5),
+
+                # Breakeven yield move (bps)
+                breakeven_bps = round((period_return / 100) / pmax(avg_duration, 0.1) * 10000),
+
+                # Return range formatted
+                return_range = sprintf("%.2f%% - %.2f%%", min_return, max_return)
             )
 
-        # Mark optimal
+        # Mark optimal by Sharpe ratio
         if(nrow(metrics) > 0) {
-            optimal_idx <- which.max(metrics$efficiency)
-            metrics$is_optimal <- FALSE
-            metrics$is_optimal[optimal_idx] <- TRUE
+            metrics$is_optimal <- metrics$sharpe == max(metrics$sharpe, na.rm = TRUE)
         }
 
         return(metrics)
     })
 
-    # Explainer UI for Optimal Holding Period chart
+    # Decision Table UI for Holding Period Analysis
     output$holding_period_explainer <- renderUI({
         req(holding_period_metrics())
 
         metrics <- holding_period_metrics()
         if(nrow(metrics) == 0) return(NULL)
 
-        optimal <- metrics %>% filter(is_optimal)
-        highest_return <- metrics %>% slice_max(avg_return, n = 1)
-
-        # Build the explanation items
-        explanation_items <- list(
-            tags$li(
-                tags$strong("Bubble Size: "),
-                "Larger = better risk-adjusted return (Efficiency = Return \u00f7 Volatility)"
-            ),
-            tags$li(
-                tags$strong("\u2605 OPTIMAL: "),
-                sprintf("%s has highest efficiency (%.2f), meaning best return per unit of risk",
-                        optimal$holding_period, optimal$efficiency)
-            )
-        )
-
-        # Add note if optimal is not the highest absolute return
-        if (optimal$holding_period != highest_return$holding_period) {
-            explanation_items <- c(explanation_items, list(
-                tags$li(
-                    tags$strong("Note: "),
-                    sprintf("%s has highest absolute return (%.2f%%), but lower efficiency due to higher volatility",
-                            highest_return$holding_period, highest_return$avg_return)
+        # Determine recommendations
+        metrics <- metrics %>%
+            mutate(
+                recommendation = case_when(
+                    annualized_return == max(annualized_return) & sharpe == max(sharpe) ~ "\u2605 BEST OVERALL",
+                    annualized_return == max(annualized_return) ~ "\u2605 BEST ANNUALIZED",
+                    period_return == max(period_return) ~ "\u2605 BEST BUY-AND-HOLD",
+                    breakeven_bps == max(breakeven_bps) ~ "\u2605 MOST DEFENSIVE",
+                    TRUE ~ ""
                 )
-            ))
-        }
+            )
+
+        # Build table rows
+        table_rows <- lapply(1:nrow(metrics), function(i) {
+            row <- metrics[i, ]
+            is_best <- row$is_optimal
+
+            tags$tr(
+                style = if(is_best) "background-color: #E8F5E9; font-weight: bold;" else "",
+                tags$td(tags$strong(row$holding_period)),
+                tags$td(sprintf("%.2f%%", row$period_return)),
+                tags$td(
+                    style = if(row$annualized_return == max(metrics$annualized_return))
+                        "color: #1B5E20; font-weight: bold;" else "",
+                    sprintf("%.1f%%", row$annualized_return)
+                ),
+                tags$td(sprintf("%.2f", row$sharpe)),
+                tags$td(sprintf("+%d bps", row$breakeven_bps)),
+                tags$td(
+                    style = "font-size: 11px; color: #1B5E20;",
+                    row$recommendation
+                )
+            )
+        })
 
         tags$div(
-            class = "alert alert-info",
-            style = "padding: 10px; margin-top: 10px; font-size: 12px;",
+            tags$h5("Holding Period Decision Guide", class = "text-primary",
+                    style = "margin-bottom: 10px; font-weight: bold;"),
 
-            tags$strong("How to Read This Chart:"),
-            tags$ul(
-                style = "margin: 5px 0;",
-                explanation_items
+            tags$table(
+                class = "table table-striped table-hover table-sm",
+                style = "font-size: 12px;",
+
+                tags$thead(
+                    tags$tr(
+                        tags$th("Period"),
+                        tags$th("Per-Period"),
+                        tags$th("Annualized"),
+                        tags$th("Sharpe"),
+                        tags$th("Breakeven"),
+                        tags$th("Best For")
+                    )
+                ),
+
+                tags$tbody(table_rows)
+            ),
+
+            tags$div(
+                class = "alert alert-info",
+                style = "margin-top: 10px; padding: 10px; font-size: 11px;",
+                tags$strong("Quick Guide:"),
+                tags$ul(
+                    style = "margin: 5px 0; padding-left: 20px;",
+                    tags$li(tags$strong("Active traders:"), " Choose highest ANNUALIZED return (roll frequently)"),
+                    tags$li(tags$strong("Buy-and-hold:"), " Choose highest per-period return"),
+                    tags$li(tags$strong("Risk-averse:"), " Choose highest BREAKEVEN (most cushion against yield rises)")
+                )
             )
         )
     })

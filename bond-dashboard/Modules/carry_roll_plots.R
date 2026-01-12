@@ -164,117 +164,98 @@ generate_optimal_holding_enhanced_plot <- function(data) {
         return(NULL)
     }
 
-    # Extract numeric holding period for proper ordering
-    frontier_data <- data %>%
+    # Extract numeric holding period and calculate ANNUALIZED metrics
+    metrics <- data %>%
         filter(!is.na(holding_period), !is.na(net_return)) %>%
         mutate(
-            # Extract numeric days from holding_period (e.g., "30d" -> 30)
             holding_days = as.numeric(gsub("d$", "", holding_period))
         ) %>%
         group_by(holding_period, holding_days) %>%
         summarise(
-            avg_return = mean(net_return, na.rm = TRUE),
-            # Risk metric: volatility of returns across bonds (cross-sectional dispersion)
-            return_volatility = sd(net_return, na.rm = TRUE),
+            period_return = mean(net_return, na.rm = TRUE),
+            return_std = sd(net_return, na.rm = TRUE),
             avg_duration = mean(modified_duration, na.rm = TRUE),
-            sharpe = mean(sharpe_estimate, na.rm = TRUE),
-            max_return = max(net_return, na.rm = TRUE),
-            min_return = min(net_return, na.rm = TRUE),
             n_bonds = n(),
             .groups = "drop"
         ) %>%
         arrange(holding_days) %>%
         mutate(
-            # Ensure reasonable Sharpe display values
-            sharpe_display = pmax(pmin(sharpe, 3), -3),
-            # Efficiency score: return per unit of volatility
-            efficiency = avg_return / pmax(return_volatility, 0.1)
+            # Annualize returns (how many times can you roll per year)
+            periods_per_year = 365 / holding_days,
+            annualized_return = period_return * periods_per_year,
+
+            # Annualize volatility (scales with sqrt of time)
+            annualized_vol = return_std * sqrt(periods_per_year),
+
+            # Risk-free rate (SA T-bill ~7-8%)
+            risk_free = 7.5,
+
+            # Sharpe Ratio (now should vary meaningfully!)
+            sharpe = (annualized_return - risk_free) / pmax(annualized_vol, 0.5),
+
+            # Period label with rolls info
+            period_label = paste0(holding_days, "d\n(", round(periods_per_year, 1), "x/yr)"),
+
+            # Determine optimal (highest Sharpe)
+            is_optimal = sharpe == max(sharpe, na.rm = TRUE)
         )
 
-    if(nrow(frontier_data) == 0) {
+    if(nrow(metrics) == 0) {
         return(NULL)
     }
 
-    # Find THE optimal period (highest efficiency) and mark it
-    optimal_idx <- which.max(frontier_data$efficiency)
-    frontier_data$is_optimal <- FALSE
-    frontier_data$is_optimal[optimal_idx] <- TRUE
+    # Get optimal period info
+    optimal <- metrics %>% filter(is_optimal) %>% slice(1)
+    risk_free_rate <- 7.5
 
-    # Get optimal period info for caption
-    optimal_period <- frontier_data[optimal_idx, ]
+    p <- ggplot(metrics, aes(x = factor(holding_days), y = annualized_return)) +
 
-    p <- ggplot(frontier_data, aes(x = holding_days, y = avg_return)) +
-
-        # Min/max range as lighter ribbon (draw first, behind std dev band)
-        geom_ribbon(
-            aes(ymin = min_return, ymax = max_return),
-            fill = "#E3F2FD",
-            alpha = 0.4
-        ) +
-
-        # Confidence band showing return dispersion across bonds (±1 std dev)
-        geom_ribbon(
-            aes(ymin = avg_return - return_volatility,
-                ymax = avg_return + return_volatility),
-            fill = "#90CAF9",
-            alpha = 0.5
-        ) +
-
-        # Trend line
-        geom_smooth(
-            method = "lm",
-            se = FALSE,
-            color = insele_palette$primary,
-            linetype = "dashed",
-            size = 0.8
-        ) +
-
-        # Connecting line
-        geom_line(
-            color = insele_palette$primary,
-            linewidth = 1.5,
-            alpha = 0.8
-        ) +
-
-        # Points sized by efficiency (Sharpe-like metric) - all bubbles
-        geom_point(
-            aes(size = abs(efficiency)),
-            color = insele_palette$accent,
+        # Bars for annualized return
+        geom_col(
+            aes(fill = is_optimal),
+            width = 0.6,
             alpha = 0.9
         ) +
 
-        # Highlight optimal period with ring
-        geom_point(
-            data = frontier_data %>% filter(is_optimal),
-            aes(x = holding_days, y = avg_return, size = abs(efficiency)),
-            shape = 21,
-            color = "#1B5E20",
-            fill = NA,
-            stroke = 3
+        # Risk-free line
+        geom_hline(
+            yintercept = risk_free_rate,
+            linetype = "dashed",
+            color = "#C62828",
+            linewidth = 1
+        ) +
+        annotate(
+            "text",
+            x = 0.6, y = risk_free_rate + 1.5,
+            label = sprintf("Risk-Free Rate (%.1f%%)", risk_free_rate),
+            hjust = 0,
+            color = "#C62828",
+            size = 3,
+            fontface = "italic"
         ) +
 
-        # Labels for each holding period
+        # Value labels on top of bars
         geom_text(
-            aes(label = holding_period),
-            vjust = -2,
-            size = 3.5,
+            aes(label = sprintf("%.1f%%", annualized_return)),
+            vjust = -0.5,
             fontface = "bold",
-            color = insele_palette$dark_gray
+            size = 4
         ) +
 
-        # Sharpe ratio labels (below points)
+        # Sharpe labels inside bars
         geom_text(
-            aes(label = sprintf("SR: %.2f", sharpe_display)),
-            vjust = 2.5,
-            size = 2.5,
-            color = "#666666"
+            aes(label = sprintf("SR: %.2f", sharpe),
+                y = pmax(annualized_return / 2, 1)),
+            color = "white",
+            fontface = "bold",
+            size = 3.5
         ) +
 
-        # OPTIMAL label - ONLY on the best period (using geom_label with filtered data)
+        # OPTIMAL label
         geom_label(
-            data = frontier_data %>% filter(is_optimal),
-            aes(x = holding_days, y = avg_return, label = "OPTIMAL"),
-            vjust = -3.5,
+            data = metrics %>% filter(is_optimal),
+            aes(y = annualized_return, label = "\u2605 OPTIMAL"),
+            vjust = -2,
             fill = "#1B5E20",
             color = "white",
             fontface = "bold",
@@ -282,32 +263,32 @@ generate_optimal_holding_enhanced_plot <- function(data) {
             label.padding = unit(0.2, "lines")
         ) +
 
-        # X-axis: Holding period in days
-        scale_x_continuous(
-            breaks = c(30, 90, 180, 360),
-            labels = c("30d", "90d", "180d", "360d"),
-            limits = c(min(frontier_data$holding_days) - 20,
-                       max(frontier_data$holding_days) + 40)
+        scale_fill_manual(
+            values = c("FALSE" = "#90CAF9", "TRUE" = "#1B5E20"),
+            guide = "none"
         ) +
 
-        # Y-axis formatting
+        scale_x_discrete(
+            labels = function(x) {
+                days <- as.numeric(x)
+                rolls <- round(365 / days, 1)
+                paste0(days, "d\n(", rolls, "x/yr)")
+            }
+        ) +
+
         scale_y_continuous(
-            labels = function(x) sprintf("%.1f%%", x)
-        ) +
-
-        scale_size_continuous(
-            range = c(8, 20),
-            guide = "none"  # Hide size legend for cleaner look
+            labels = function(x) sprintf("%.0f%%", x),
+            expand = expansion(mult = c(0, 0.15))
         ) +
 
         labs(
-            title = "Optimal Holding Period Analysis",
-            subtitle = "Net return by holding period | Bands show cross-bond variation",
-            x = "Holding Period",
-            y = "Average Net Return (%)",
+            title = "Annualized Return by Holding Period",
+            subtitle = "Which holding period generates highest annual return if repeatedly rolled?",
+            x = "Holding Period (Rolls per Year)",
+            y = "Annualized Net Return (%)",
             caption = sprintf(
-                "\u2605 Optimal: %s (Efficiency: %.2f) | Dark band: \u00b11\u03c3 | Light band: min-max | SR = Sharpe Ratio",
-                optimal_period$holding_period, optimal_period$efficiency
+                "Green = Optimal (%s, SR: %.2f) | Dashed line = Risk-free rate | SR = Sharpe Ratio",
+                optimal$holding_period, optimal$sharpe
             )
         ) +
 
@@ -315,13 +296,14 @@ generate_optimal_holding_enhanced_plot <- function(data) {
         theme(
             legend.position = "none",
             panel.grid.major.x = element_blank(),
-            panel.grid.minor.x = element_blank(),
             plot.title = element_text(face = "bold", color = insele_palette$primary),
-            plot.caption = element_text(size = 9, color = "#666666")
+            plot.subtitle = element_text(color = "#666666", size = 10),
+            plot.caption = element_text(size = 9, color = "#666666"),
+            axis.text.x = element_text(size = 10)
         )
 
-    # Add metrics as attribute for the explainer panel
-    attr(p, "metrics") <- frontier_data
+    # Add metrics as attribute for the decision table
+    attr(p, "metrics") <- metrics
 
     return(p)
 }
