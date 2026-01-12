@@ -3918,12 +3918,53 @@ server <- function(input, output, session) {
                 )
             ),
 
-            # FIX 6: Average Yield Breakeven
+            # Note: Risk metrics moved to separate panel
+            NULL
+        )
+    })
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # RISK METRICS PANEL (Separated for Option C layout)
+    # ═══════════════════════════════════════════════════════════════════════
+    output$risk_metrics_panel <- renderUI({
+        req(carry_roll_data())
+
+        data_90d <- carry_roll_data() %>%
+            filter(holding_period == "90d")
+
+        if(nrow(data_90d) == 0) {
+            return(tags$p("No 90-day data available"))
+        }
+
+        # Calculate risk-adjusted average
+        avg_risk_adj <- if("return_per_unit_risk" %in% names(data_90d)) {
+            mean(data_90d$return_per_unit_risk, na.rm = TRUE)
+        } else {
+            NA
+        }
+
+        # Calculate average breakeven yield move
+        data_90d_breakeven <- data_90d %>%
+            filter(!is.na(modified_duration), modified_duration > 0) %>%
+            mutate(
+                breakeven_bps = (net_return / 100) / modified_duration * 10000
+            )
+        avg_breakeven <- mean(data_90d_breakeven$breakeven_bps, na.rm = TRUE)
+
+        # Calculate max drawdown equivalent
+        min_breakeven <- min(data_90d_breakeven$breakeven_bps, na.rm = TRUE)
+
+        tagList(
+            # Section title
+            tags$small(class = "text-muted", "Based on 90-day holding period"),
+            tags$hr(style = "margin: 8px 0;"),
+
+            # Average Yield Breakeven
             tags$div(
-                style = "margin-bottom: 12px;",
+                style = "margin-bottom: 15px;",
                 tags$div(class = "text-muted", style = "font-size: 11px;", "Avg Yield Breakeven:"),
                 tags$div(
-                    style = "font-size: 14px; font-weight: bold;",
+                    style = "font-size: 22px; font-weight: bold; color: #1B5E20;",
                     sprintf("+%.0f bps", avg_breakeven)
                 ),
                 tags$small(
@@ -3933,13 +3974,30 @@ server <- function(input, output, session) {
                 )
             ),
 
+            # Minimum Breakeven (worst case)
+            tags$div(
+                style = "margin-bottom: 15px;",
+                tags$div(class = "text-muted", style = "font-size: 11px;", "Min Breakeven (Most Sensitive):"),
+                tags$div(
+                    style = sprintf("font-size: 16px; font-weight: bold; color: %s;",
+                                    ifelse(min_breakeven > 5, "#689F38", "#FF9800")),
+                    sprintf("+%.0f bps", min_breakeven)
+                )
+            ),
+
             # Risk-Adjusted Return (if available)
             if(!is.na(avg_risk_adj)) {
                 tags$div(
+                    style = "margin-bottom: 15px;",
                     tags$div(class = "text-muted", style = "font-size: 11px;", "Avg Risk-Adjusted Return:"),
                     tags$div(
-                        style = "font-size: 12px;",
-                        sprintf("%.2f%% per year of duration", avg_risk_adj)
+                        style = "font-size: 16px; font-weight: bold;",
+                        sprintf("%.2f%%", avg_risk_adj)
+                    ),
+                    tags$small(
+                        class = "text-muted",
+                        style = "font-size: 10px;",
+                        "per year of duration"
                     )
                 )
             }

@@ -1260,93 +1260,129 @@ ui <- dashboardPage(
                                    width = 12,
                                    collapsible = TRUE,
 
+                                   # ROW 1: Compact control bar
                                    fluidRow(
-                                       column(8,
-                                              plotOutput("enhanced_carry_roll_heatmap", height = "450px")
-                                       ),
-                                       column(4,
+                                       column(12,
                                               tags$div(
-                                                  style = "background: #f8f9fa; border-radius: 8px; padding: 15px;",
-                                                  h5("Optimization Parameters", style = "color: #1B3A6B; margin-top: 0;"),
+                                                  style = "display: flex; align-items: center; flex-wrap: wrap; gap: 20px; padding: 12px 15px;
+                                                           background: #F8F9FA; border-radius: 6px; margin-bottom: 15px;",
 
-                                                  # Funding rate input with helper text
+                                                  # Funding Rate
                                                   tags$div(
-                                                      sliderInput("funding_rate", "Funding Rate:",
-                                                                  min = 5, max = 12, value = 8.25,
-                                                                  step = 0.25, post = "%"),
-                                                      tags$small("Current repo rate: ~8.25%",
-                                                                 style = "color: #666; display: block; margin-top: -10px; margin-bottom: 15px;")
-                                                  ),
-
-                                                  # Return type selector with descriptions
-                                                  tags$div(
-                                                      radioButtons("return_type", "Return Type:",
-                                                                   choices = list(
-                                                                       "Gross Return" = "gross",
-                                                                       "Net Return" = "net",
-                                                                       "Risk-Adjusted" = "risk_adj"
-                                                                   ),
-                                                                   selected = "net"),
-                                                      tags$small("Net return is most realistic for trading decisions",
-                                                                 style = "color: #666; display: block; margin-top: -10px; margin-bottom: 15px;")
-                                                  ),
-
-                                                  # Recalculate button
-                                                  actionButton("recalculate_carry", "Recalculate",
-                                                               class = "btn-primary btn-block",
-                                                               icon = icon("refresh")),
-
-                                                  hr(),
-
-                                                  # Quick summary metrics
-                                                  tags$div(
-                                                      style = "margin-top: 15px;",
-                                                      h6("Quick Metrics", style = "color: #1B3A6B;"),
-                                                      uiOutput("carry_roll_summary")
-                                                  ),
-
-                                                  hr(),
-
-                                                  # FIX 4: Bond decomposition selector with period
-                                                  tags$div(
-                                                      style = "margin-top: 15px;",
-                                                      h6("Return Decomposition", style = "color: #1B3A6B;"),
-                                                      fluidRow(
-                                                          column(6,
-                                                              selectInput("selected_carry_bond",
-                                                                          "Select Bond:",
-                                                                          choices = NULL,
-                                                                          selected = NULL,
-                                                                          width = "100%")
-                                                          ),
-                                                          column(6,
-                                                              selectInput("decomp_period",
-                                                                          "Holding Period:",
-                                                                          choices = c("30 days" = "30d",
-                                                                                      "90 days" = "90d",
-                                                                                      "180 days" = "180d",
-                                                                                      "360 days" = "360d"),
-                                                                          selected = "90d",
-                                                                          width = "100%")
+                                                      style = "flex: 0 0 280px;",
+                                                      tags$div(
+                                                          style = "display: flex; align-items: center; gap: 10px;",
+                                                          tags$label("Funding Rate:", style = "margin: 0; white-space: nowrap; font-weight: 500;"),
+                                                          tags$div(
+                                                              style = "flex: 1; min-width: 150px;",
+                                                              sliderInput("funding_rate", NULL, min = 5, max = 12, value = 8.25,
+                                                                          step = 0.25, post = "%", width = "100%")
                                                           )
-                                                      ),
-                                                      uiOutput("carry_decomposition")
+                                                      )
+                                                  ),
+
+                                                  # Return Type
+                                                  tags$div(
+                                                      style = "flex: 0 0 auto;",
+                                                      radioButtons("return_type", NULL,
+                                                                   choices = c("Gross" = "gross", "Net" = "net", "Risk-Adj" = "risk_adj"),
+                                                                   selected = "net", inline = TRUE)
+                                                  ),
+
+                                                  # Recalculate Button
+                                                  actionButton("recalculate_carry", "Recalculate",
+                                                               icon = icon("sync"), class = "btn-primary btn-sm"),
+
+                                                  # Spacer
+                                                  tags$div(style = "flex: 1;"),
+
+                                                  # Download and Methodology buttons
+                                                  tags$div(
+                                                      style = "display: flex; gap: 8px;",
+                                                      downloadButton("download_carry_roll", "Download", class = "btn-sm btn-outline-secondary"),
+                                                      actionButton("show_carry_methodology", "Methodology",
+                                                                   icon = icon("info-circle"), class = "btn-sm btn-outline-info")
                                                   )
                                               )
                                        )
                                    ),
 
-                                   # Download button
+                                   # ROW 2: Full-width heatmap
                                    fluidRow(
                                        column(12,
+                                              plotOutput("enhanced_carry_roll_heatmap", height = "450px")
+                                       )
+                                   ),
+
+                                   tags$hr(style = "margin: 20px 0;"),
+
+                                   # ROW 3: Three cards below
+                                   fluidRow(
+                                       # Card 1: Quick Metrics
+                                       column(4,
                                               tags$div(
-                                                  style = "margin-top: 15px;",
-                                                  downloadButton("download_carry_roll", "Download Chart",
-                                                                 class = "btn-sm btn-primary"),
-                                                  actionButton("show_carry_methodology", "View Methodology",
-                                                               class = "btn-sm btn-info",
-                                                               icon = icon("info-circle"),
-                                                               style = "margin-left: 10px;")
+                                                  class = "panel panel-default",
+                                                  style = "height: 100%; margin-bottom: 0;",
+                                                  tags$div(
+                                                      class = "panel-heading",
+                                                      style = "background: #1B3A6B; color: white; padding: 10px 15px; font-weight: 500;",
+                                                      "Quick Metrics"
+                                                  ),
+                                                  tags$div(
+                                                      class = "panel-body",
+                                                      style = "padding: 15px;",
+                                                      uiOutput("carry_roll_summary")
+                                                  )
+                                              )
+                                       ),
+
+                                       # Card 2: Risk Metrics
+                                       column(4,
+                                              tags$div(
+                                                  class = "panel panel-default",
+                                                  style = "height: 100%; margin-bottom: 0;",
+                                                  tags$div(
+                                                      class = "panel-heading",
+                                                      style = "background: #455A64; color: white; padding: 10px 15px; font-weight: 500;",
+                                                      "Risk Metrics"
+                                                  ),
+                                                  tags$div(
+                                                      class = "panel-body",
+                                                      style = "padding: 15px;",
+                                                      uiOutput("risk_metrics_panel")
+                                                  )
+                                              )
+                                       ),
+
+                                       # Card 3: Return Decomposition
+                                       column(4,
+                                              tags$div(
+                                                  class = "panel panel-default",
+                                                  style = "height: 100%; margin-bottom: 0;",
+                                                  tags$div(
+                                                      class = "panel-heading",
+                                                      style = "background: #37474F; color: white; padding: 10px 15px; font-weight: 500;",
+                                                      "Return Decomposition"
+                                                  ),
+                                                  tags$div(
+                                                      class = "panel-body",
+                                                      style = "padding: 15px;",
+
+                                                      fluidRow(
+                                                          column(6,
+                                                              selectInput("selected_carry_bond", "Bond:",
+                                                                          choices = NULL, width = "100%")
+                                                          ),
+                                                          column(6,
+                                                              selectInput("decomp_period", "Period:",
+                                                                          choices = c("30d" = "30d", "90d" = "90d",
+                                                                                      "180d" = "180d", "360d" = "360d"),
+                                                                          selected = "90d", width = "100%")
+                                                          )
+                                                      ),
+
+                                                      uiOutput("carry_decomposition")
+                                                  )
                                               )
                                        )
                                    )
