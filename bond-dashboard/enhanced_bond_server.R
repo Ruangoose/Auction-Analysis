@@ -1200,11 +1200,47 @@ server <- function(input, output, session) {
             8.25
         }
 
-        calculate_advanced_carry_roll(
+        result <- calculate_advanced_carry_roll(
             processed_data(),
             holding_periods = c(30, 90, 180, 360),
             funding_rate = funding_rate_value
         )
+
+        # ═══════════════════════════════════════════════════════════════════════
+        # DIAGNOSTIC: Check for identical returns (bug detection)
+        # ═══════════════════════════════════════════════════════════════════════
+        if(nrow(result) > 0) {
+            # Check 90-day returns for uniqueness
+            gross_90 <- result %>%
+                filter(holding_period == "90d") %>%
+                select(bond, any_of(c("coupon_standardized", "yield_to_maturity",
+                                      "modified_duration", "carry_income",
+                                      "roll_return", "gross_return", "net_return")))
+
+            n_unique_gross <- n_distinct(gross_90$gross_return)
+            n_unique_carry <- n_distinct(gross_90$carry_income)
+            n_unique_roll <- n_distinct(gross_90$roll_return)
+            n_bonds <- nrow(gross_90)
+
+            message("=== CARRY & ROLL DIAGNOSTIC ===")
+            message(sprintf("Total bonds: %d", n_bonds))
+            message(sprintf("Unique gross returns: %d", n_unique_gross))
+            message(sprintf("Unique carry incomes: %d", n_unique_carry))
+            message(sprintf("Unique roll returns: %d", n_unique_roll))
+
+            # Warn if returns are suspiciously uniform
+            if(n_unique_gross < min(5, n_bonds) && n_bonds > 1) {
+                warning(sprintf("⚠ LOW VARIATION: Only %d unique gross returns for %d bonds - calculation may be incorrect",
+                                n_unique_gross, n_bonds))
+
+                # Log first few rows for debugging
+                message("Sample data (first 5 bonds):")
+                print(head(gross_90, 5))
+            }
+            message("================================")
+        }
+
+        return(result)
     })
 
     # Advanced insights generation
@@ -1271,8 +1307,20 @@ server <- function(input, output, session) {
 
     # Add this observer in the server function
     observeEvent(input$recalculate_carry, {
+        # Clear the memoise cache to force fresh calculation
+        tryCatch({
+            if(exists("calculate_advanced_carry_roll") && is.function(calculate_advanced_carry_roll)) {
+                memoise::forget(calculate_advanced_carry_roll)
+                message("✓ Cleared carry & roll calculation cache")
+            }
+        }, error = function(e) {
+            message("Note: Could not clear cache - ", e$message)
+        })
+
         # Force recalculation
-        values$carry_refresh <- runif(1)  # Add this to reactive values at the top
+        values$carry_refresh <- runif(1)
+
+        showNotification("Recalculating carry & roll analysis...", type = "message", duration = 2)
     })
 
     # FIX 4: Update carry bond selector when data changes
@@ -3797,15 +3845,29 @@ server <- function(input, output, session) {
                 )
             ),
 
-            # Worst Performer (with bond name)
+            # Lowest Return (with bond name) - Color based on return sign
             tags$div(
                 style = "margin-bottom: 12px;",
-                tags$div(class = "text-muted", style = "font-size: 11px;", "Worst Performer:"),
+                tags$div(class = "text-muted", style = "font-size: 11px;",
+                         ifelse(worst_bond$net_return >= 0, "Lowest Return:", "Negative Return:")),
                 tags$div(
                     style = sprintf("font-size: 14px; font-weight: bold; color: %s;",
-                                    ifelse(worst_bond$net_return > 0, "#FF9800", "#C62828")),
+                                    # Use green for positive returns, orange for low positive, red for negative
+                                    case_when(
+                                        worst_bond$net_return < 0 ~ "#C62828",      # Red for negative
+                                        worst_bond$net_return < 0.5 ~ "#FF9800",    # Orange for low positive (< 0.5%)
+                                        TRUE ~ "#689F38"                             # Light green for decent positive
+                                    )),
                     sprintf("%s: %.2f%%", worst_bond$bond, worst_bond$net_return)
-                )
+                ),
+                # Add context note if still positive
+                if(worst_bond$net_return > 0) {
+                    tags$small(
+                        class = "text-muted",
+                        style = "font-size: 10px;",
+                        "(still positive carry)"
+                    )
+                }
             ),
 
             # Positive Carry Count with Progress Bar
@@ -3855,13 +3917,16 @@ server <- function(input, output, session) {
     })
 
     # ═══════════════════════════════════════════════════════════════════════
-    # FIX 4: COMPONENT BREAKDOWN VIEW (Return Decomposition)
+    # FIX 4: COMPONENT BREAKDOWN VIEW (Return Decomposition) - DYNAMIC PERIOD
     # ═══════════════════════════════════════════════════════════════════════
     output$carry_decomposition <- renderUI({
         req(carry_roll_data(), input$selected_carry_bond)
 
+        # Use selected period or default to 90d
+        selected_period <- if(!is.null(input$decomp_period)) input$decomp_period else "90d"
+
         data <- carry_roll_data() %>%
-            filter(bond == input$selected_carry_bond, holding_period == "90d")
+            filter(bond == input$selected_carry_bond, holding_period == selected_period)
 
         if(nrow(data) == 0) {
             return(tags$p("Select a bond to see decomposition"))
@@ -3873,13 +3938,29 @@ server <- function(input, output, session) {
         funding_val <- if("funding_cost" %in% names(data)) data$funding_cost[1] else NA
         net_val <- data$net_return[1]
 
+        # Period label for display
+        period_label <- switch(selected_period,
+                               "30d" = "30-day",
+                               "90d" = "90-day",
+                               "180d" = "180-day",
+                               "360d" = "360-day",
+                               "90-day")
+
+        # Context text based on period
+        period_context <- switch(selected_period,
+                                 "30d" = "Short-term trade: Minimal roll-down benefit",
+                                 "90d" = "Typical trading horizon for carry strategies",
+                                 "180d" = "Medium-term: Significant roll-down accumulation",
+                                 "360d" = "Full year: Maximum carry and roll benefits",
+                                 "")
+
         tags$div(
             class = "panel panel-default",
             style = "margin-top: 15px;",
             tags$div(
                 class = "panel-heading",
                 style = "background: #1B3A6B; color: white; padding: 8px 12px;",
-                sprintf("Return Decomposition: %s (90-day)", input$selected_carry_bond)
+                sprintf("Return Decomposition: %s (%s)", input$selected_carry_bond, period_label)
             ),
             tags$div(
                 class = "panel-body",
@@ -3928,7 +4009,14 @@ server <- function(input, output, session) {
                             )
                         )
                     )
-                )
+                ),
+                # Period context
+                if(nchar(period_context) > 0) {
+                    tags$div(
+                        style = "margin-top: 10px; font-size: 11px; color: #666; font-style: italic;",
+                        period_context
+                    )
+                }
             )
         )
     })
