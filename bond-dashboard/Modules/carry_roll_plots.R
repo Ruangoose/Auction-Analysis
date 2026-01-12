@@ -391,3 +391,204 @@ generate_forward_curve_plot <- function(data, params) {
 
     return(p)
 }
+
+
+# ================================================================================
+# BUTTERFLY SPREAD ANALYZER FUNCTIONS
+# ================================================================================
+
+#' Calculate all possible butterfly spreads from bond data
+#' @param bond_data Data frame with bond yield data
+#' @param lookback_days Number of days to look back for calculations
+#' @return List of butterfly spreads with statistics
+#' @export
+calculate_butterfly_spreads <- function(bond_data, lookback_days = 365) {
+
+    # Get unique bonds sorted by duration
+    bonds_by_duration <- bond_data %>%
+        group_by(bond) %>%
+        summarise(
+            avg_duration = mean(modified_duration, na.rm = TRUE),
+            .groups = "drop"
+        ) %>%
+        arrange(avg_duration) %>%
+        pull(bond)
+
+    # Need at least 3 bonds
+    if (length(bonds_by_duration) < 3) {
+        return(NULL)
+    }
+
+    # Filter to lookback period
+    cutoff_date <- max(bond_data$date) - lubridate::days(lookback_days)
+    filtered_data <- bond_data %>%
+        filter(date >= cutoff_date) %>%
+        select(date, bond, yield_to_maturity)
+
+    # Pivot to wide format
+    yields_wide <- filtered_data %>%
+        tidyr::pivot_wider(
+            names_from = bond,
+            values_from = yield_to_maturity
+        ) %>%
+        arrange(date)
+
+    # Generate all valid butterfly combinations
+    # Short wing (shortest) - 2×Body (middle) + Long wing (longest)
+    n_bonds <- length(bonds_by_duration)
+    butterflies <- list()
+
+    for (i in 1:(n_bonds - 2)) {
+        for (j in (i + 1):(n_bonds - 1)) {
+            for (k in (j + 1):n_bonds) {
+
+                short_wing <- bonds_by_duration[i]
+                body <- bonds_by_duration[j]
+                long_wing <- bonds_by_duration[k]
+
+                # Calculate butterfly spread time series
+                spread_name <- sprintf("%s-%s-%s", short_wing, body, long_wing)
+
+                spread_ts <- yields_wide %>%
+                    mutate(
+                        butterfly_spread = .data[[short_wing]] - 2 * .data[[body]] + .data[[long_wing]]
+                    ) %>%
+                    filter(!is.na(butterfly_spread)) %>%
+                    select(date, butterfly_spread)
+
+                # Need sufficient data
+                if (nrow(spread_ts) < 60) next
+
+                # Calculate statistics
+                spread_mean <- mean(spread_ts$butterfly_spread, na.rm = TRUE)
+                spread_sd <- sd(spread_ts$butterfly_spread, na.rm = TRUE)
+                current_spread <- tail(spread_ts$butterfly_spread, 1)
+                z_score <- (current_spread - spread_mean) / spread_sd
+
+                # ADF test for stationarity
+                adf_result <- tryCatch({
+                    tseries::adf.test(spread_ts$butterfly_spread, alternative = "stationary")
+                }, error = function(e) {
+                    list(p.value = NA)
+                })
+
+                # Store results
+                butterflies[[spread_name]] <- list(
+                    name = spread_name,
+                    short_wing = short_wing,
+                    body = body,
+                    long_wing = long_wing,
+                    spread_ts = spread_ts,
+                    mean = spread_mean,
+                    sd = spread_sd,
+                    current = current_spread,
+                    z_score = z_score,
+                    adf_pvalue = adf_result$p.value,
+                    is_stationary = !is.na(adf_result$p.value) && adf_result$p.value < 0.05,
+                    diff_from_mean = current_spread - spread_mean
+                )
+            }
+        }
+    }
+
+    return(butterflies)
+}
+
+
+#' Generate butterfly spread chart with mean reversion bands
+#' @param bf Butterfly spread object from calculate_butterfly_spreads
+#' @param zscore_threshold Threshold for trade signals
+#' @return ggplot object
+#' @export
+generate_butterfly_chart <- function(bf, zscore_threshold = 2.0) {
+    if (is.null(bf)) return(NULL)
+
+    spread_ts <- bf$spread_ts %>%
+        mutate(butterfly_pct = butterfly_spread * 100)  # Convert to %
+
+    mean_pct <- bf$mean * 100
+    sd_pct <- bf$sd * 100
+    current_pct <- bf$current * 100
+
+    # Determine y-axis limits
+    y_min <- min(spread_ts$butterfly_pct, mean_pct - 2.5 * sd_pct, na.rm = TRUE)
+    y_max <- max(spread_ts$butterfly_pct, mean_pct + 2.5 * sd_pct, na.rm = TRUE)
+
+    p <- ggplot(spread_ts, aes(x = date, y = butterfly_pct)) +
+
+        # ±2 Std Dev band (outer)
+        geom_ribbon(
+            aes(ymin = mean_pct - 2 * sd_pct, ymax = mean_pct + 2 * sd_pct),
+            fill = "#E3F2FD",
+            alpha = 0.5
+        ) +
+
+        # ±1 Std Dev band (inner)
+        geom_ribbon(
+            aes(ymin = mean_pct - 1 * sd_pct, ymax = mean_pct + 1 * sd_pct),
+            fill = "#BBDEFB",
+            alpha = 0.5
+        ) +
+
+        # Mean line
+        geom_hline(yintercept = mean_pct, linetype = "dashed", color = "#1B3A6B", linewidth = 1) +
+
+        # ±1 Std Dev lines
+        geom_hline(yintercept = mean_pct + sd_pct, linetype = "dotted", color = "#90A4AE") +
+        geom_hline(yintercept = mean_pct - sd_pct, linetype = "dotted", color = "#90A4AE") +
+
+        # ±2 Std Dev lines
+        geom_hline(yintercept = mean_pct + 2 * sd_pct, linetype = "dotted", color = "#78909C") +
+        geom_hline(yintercept = mean_pct - 2 * sd_pct, linetype = "dotted", color = "#78909C") +
+
+        # Spread line
+        geom_line(color = "#1976D2", linewidth = 0.8) +
+
+        # Current point
+        geom_point(
+            data = tail(spread_ts, 1),
+            aes(x = date, y = butterfly_pct),
+            color = ifelse(abs(bf$z_score) > 2, "#C62828", "#FF9800"),
+            size = 4
+        ) +
+
+        # Current value annotation
+        annotate(
+            "label",
+            x = max(spread_ts$date),
+            y = current_pct,
+            label = sprintf("%.3f%%\nZ: %.2f", current_pct, bf$z_score),
+            hjust = -0.1,
+            fill = ifelse(abs(bf$z_score) > 2, "#FFCDD2", "#FFF9C4"),
+            size = 3
+        ) +
+
+        # Axis formatting
+        scale_y_continuous(
+            labels = function(x) sprintf("%.2f%%", x),
+            limits = c(y_min * 0.95, y_max * 1.05)
+        ) +
+        scale_x_date(
+            date_breaks = "3 months",
+            date_labels = "%b-%Y"
+        ) +
+
+        labs(
+            title = sprintf("Butterfly Spread: %s (Z-Score: %.2f)", bf$name, bf$z_score),
+            subtitle = sprintf("Mean: %.3f%% | Current: %.3f%% | Diff: %+.3f%%",
+                               mean_pct, current_pct, (bf$diff_from_mean * 100)),
+            x = NULL,
+            y = "Butterfly Spread (%)",
+            caption = "Dashed = Mean | Dotted = +/-1 and +/-2 sigma | Shaded bands show standard deviation zones"
+        ) +
+
+        create_insele_theme() +
+        theme(
+            plot.title = element_text(face = "bold", color = "#1B3A6B"),
+            plot.subtitle = element_text(color = "#666666"),
+            panel.grid.minor = element_blank(),
+            axis.text.x = element_text(angle = 45, hjust = 1)
+        )
+
+    return(p)
+}
