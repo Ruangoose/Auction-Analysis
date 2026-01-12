@@ -2555,16 +2555,28 @@ server <- function(input, output, session) {
     selected_butterfly <- reactiveVal(NULL)
 
     # Calculate butterflies reactively
+    # NOTE: Uses filtered_data() which has FULL historical data, not processed_data() which only has latest snapshot
     butterfly_data <- eventReactive(input$generate_butterflies, {
-        req(processed_data())
+        req(filtered_data())
 
         withProgress(message = "Calculating butterfly spreads...", {
+
+            # Get full historical data for butterfly calculations
+            historical_data <- filtered_data()
+
+            message(sprintf("=== BUTTERFLY DEBUG ==="))
+            message(sprintf("Using filtered_data: %d rows, %d bonds",
+                           nrow(historical_data),
+                           dplyr::n_distinct(historical_data$bond)))
+            message(sprintf("Date range: %s to %s",
+                           min(historical_data$date, na.rm = TRUE),
+                           max(historical_data$date, na.rm = TRUE)))
 
             lookback <- as.numeric(input$butterfly_lookback)
             if (lookback == 9999) lookback <- 3650  # ~10 years for "all"
 
             butterflies <- calculate_butterfly_spreads(
-                processed_data(),
+                historical_data,
                 lookback_days = lookback
             )
 
@@ -2608,7 +2620,7 @@ server <- function(input, output, session) {
     # Initialize on load
     observe({
         # Trigger initial calculation when data is ready
-        req(processed_data())
+        req(filtered_data())  # Use filtered_data which has full historical data
         shinyjs::delay(1000, shinyjs::click("generate_butterflies"))
     })
 
