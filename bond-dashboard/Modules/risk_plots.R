@@ -1263,7 +1263,7 @@ generate_scenario_analysis_plot <- function(data, params = list()) {
     horizon_days <- params$horizon_days %||% 90  # 3-month default
     confidence_level <- params$confidence_level %||% 0.95
     show_total_return <- params$show_total_return %||% FALSE
-    max_bonds <- params$max_bonds %||% 10
+    max_bonds <- params$max_bonds %||% 5  # FIXED: Reduced from 10 to 5 for better readability
     shift_range <- params$shift_range %||% c(-200, 200)
     shift_increment <- params$shift_increment %||% 25
 
@@ -1280,17 +1280,40 @@ generate_scenario_analysis_plot <- function(data, params = list()) {
         filter(date == max(date)) %>%
         ungroup()
 
-    # Limit bonds if too many (select by duration diversification)
+    # IMPROVED: Select representative bonds across duration spectrum
+    # This ensures we get short, medium, and long duration bonds for comparison
     if (n_distinct(latest_data$bond) > max_bonds) {
-        selected_bonds <- latest_data %>%
-            mutate(duration_bucket = cut(modified_duration, breaks = 5)) %>%
-            group_by(duration_bucket) %>%
-            slice_sample(n = ceiling(max_bonds/5)) %>%
-            pull(bond) %>%
-            unique() %>%
-            head(max_bonds)
+        # Sort by duration
+        duration_ranked <- latest_data %>%
+            arrange(modified_duration) %>%
+            mutate(row_num = row_number(), total_bonds = n())
+
+        # Select evenly spaced bonds across the duration range
+        # Including first (shortest), last (longest), and evenly spaced middle bonds
+        n_bonds <- nrow(duration_ranked)
+        selected_indices <- unique(round(seq(1, n_bonds, length.out = max_bonds)))
+
+        selected_bonds <- duration_ranked %>%
+            filter(row_num %in% selected_indices) %>%
+            pull(bond)
 
         latest_data <- filter(latest_data, bond %in% selected_bonds)
+    }
+
+    # Colorblind-friendly palette for scenario analysis (5 distinct colors)
+    scenario_colors <- c(
+        "#1B3A6B",  # Dark blue (short duration)
+        "#E53935",  # Red
+        "#43A047",  # Green
+        "#FF9800",  # Orange
+        "#8E24AA"   # Purple (long duration)
+    )
+    # Extend palette if needed
+    if (n_distinct(latest_data$bond) > 5) {
+        scenario_colors <- c(scenario_colors,
+                             "#00ACC1",  # Cyan
+                             "#795548",  # Brown
+                             "#607D8B")  # Blue-gray
     }
 
     # Calculate historical volatility for confidence bands
@@ -1478,10 +1501,10 @@ generate_scenario_analysis_plot <- function(data, params = list()) {
         # Facet by scenario
         facet_wrap(~scenario, ncol = 2, scales = "free_y") +
 
-        # Color and fill scales
-        scale_color_manual(values = insele_palette$categorical,
+        # Color and fill scales (using distinct colorblind-friendly palette)
+        scale_color_manual(values = scenario_colors,
                            name = "Bond") +
-        scale_fill_manual(values = insele_palette$categorical,
+        scale_fill_manual(values = scenario_colors,
                           guide = "none") +
 
         # X-axis formatting

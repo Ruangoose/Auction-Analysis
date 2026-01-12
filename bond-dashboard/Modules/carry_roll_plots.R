@@ -164,69 +164,155 @@ generate_optimal_holding_enhanced_plot <- function(data) {
         return(NULL)
     }
 
-    # Calculate efficient frontier
+    # Extract numeric holding period for proper ordering
     frontier_data <- data %>%
         filter(!is.na(holding_period), !is.na(net_return)) %>%
-        group_by(holding_period) %>%
+        mutate(
+            # Extract numeric days from holding_period (e.g., "30d" -> 30)
+            holding_days = as.numeric(gsub("d$", "", holding_period))
+        ) %>%
+        group_by(holding_period, holding_days) %>%
         summarise(
             avg_return = mean(net_return, na.rm = TRUE),
-            avg_risk = mean(modified_duration, na.rm = TRUE),
+            # Risk metric: volatility of returns across bonds (cross-sectional dispersion)
+            return_volatility = sd(net_return, na.rm = TRUE),
+            avg_duration = mean(modified_duration, na.rm = TRUE),
             sharpe = mean(sharpe_estimate, na.rm = TRUE),
             max_return = max(net_return, na.rm = TRUE),
             min_return = min(net_return, na.rm = TRUE),
-            return_dispersion = sd(net_return, na.rm = TRUE),
+            n_bonds = n(),
             .groups = "drop"
+        ) %>%
+        arrange(holding_days) %>%
+        mutate(
+            # Ensure reasonable Sharpe display values
+            sharpe_display = pmax(pmin(sharpe, 3), -3),
+            # Efficiency score: return per unit of volatility
+            efficiency = avg_return / pmax(return_volatility, 0.1)
         )
 
     if(nrow(frontier_data) == 0) {
         return(NULL)
     }
 
-    p <- ggplot(frontier_data, aes(x = avg_risk, y = avg_return)) +
+    # Find optimal holding period (highest efficiency)
+    optimal_period <- frontier_data %>% slice_max(efficiency, n = 1)
 
-        # Add min/max range as ribbon
-        geom_ribbon(aes(ymin = min_return, ymax = max_return),
-                    alpha = 0.1, fill = insele_palette$primary) +
+    p <- ggplot(frontier_data, aes(x = holding_days, y = avg_return)) +
 
-        geom_line(color = insele_palette$primary,
-                  linewidth = 2,
-                  alpha = 0.8) +
+        # Confidence band showing return dispersion across bonds
+        geom_ribbon(
+            aes(ymin = avg_return - return_volatility,
+                ymax = avg_return + return_volatility),
+            alpha = 0.15,
+            fill = insele_palette$primary
+        ) +
 
-        geom_point(aes(size = sharpe),
-                   shape = 21,
-                   fill = insele_palette$accent,
-                   color = "white",
-                   stroke = 2) +
+        # Min/max range as lighter ribbon
+        geom_ribbon(
+            aes(ymin = min_return, ymax = max_return),
+            alpha = 0.08,
+            fill = insele_palette$accent
+        ) +
 
-        ggrepel::geom_label_repel(
-            data = smart_label(frontier_data, "holding_period", "sharpe", max_labels = 4),
+        # Connecting line
+        geom_line(
+            color = insele_palette$primary,
+            linewidth = 1.5,
+            alpha = 0.8
+        ) +
+
+        # Points sized by efficiency (Sharpe-like metric)
+        geom_point(
+            aes(size = abs(efficiency)),
+            shape = 21,
+            fill = insele_palette$accent,
+            color = "white",
+            stroke = 2
+        ) +
+
+        # Highlight optimal period
+        geom_point(
+            data = optimal_period,
+            aes(x = holding_days, y = avg_return),
+            shape = 21,
+            size = 12,
+            color = "#1B5E20",
+            fill = NA,
+            stroke = 2
+        ) +
+
+        # Labels for each holding period
+        geom_text(
             aes(label = holding_period),
+            vjust = -2,
             size = 3.5,
-            max.overlaps = 10,
-            box.padding = 0.5,
-            fill = "white",
+            fontface = "bold",
             color = insele_palette$dark_gray
         ) +
 
-        scale_size_continuous(
-            range = c(5, 15),
-            name = "Sharpe\nRatio"
+        # Return value labels
+        geom_text(
+            aes(label = sprintf("%.2f%%", avg_return)),
+            vjust = 2.5,
+            size = 3,
+            color = "#666666"
         ) +
 
+        # Sharpe ratio annotations
+        geom_text(
+            aes(label = sprintf("SR: %.2f", sharpe_display)),
+            vjust = 4,
+            size = 2.5,
+            color = "#999999"
+        ) +
+
+        # Optimal period annotation
+        annotate(
+            "text",
+            x = optimal_period$holding_days,
+            y = optimal_period$avg_return + (optimal_period$return_volatility * 1.5),
+            label = "OPTIMAL",
+            color = "#1B5E20",
+            fontface = "bold",
+            size = 3.5
+        ) +
+
+        # X-axis: Holding period in days
+        scale_x_continuous(
+            breaks = frontier_data$holding_days,
+            labels = frontier_data$holding_period,
+            limits = c(min(frontier_data$holding_days) - 20,
+                       max(frontier_data$holding_days) + 40)
+        ) +
+
+        # Y-axis formatting
         scale_y_continuous(
-            labels = function(x) paste0(x, "%")
+            labels = function(x) paste0(sprintf("%.1f", x), "%")
+        ) +
+
+        scale_size_continuous(
+            range = c(6, 14),
+            guide = "none"  # Hide size legend for cleaner look
         ) +
 
         labs(
             title = "Optimal Holding Period Analysis",
-            subtitle = "Risk-return tradeoff with confidence bands",
-            x = "Average Risk (Modified Duration)",
-            y = "Average Net Return",
-            caption = "Shaded area shows min/max range | Bubble size = Sharpe ratio"
+            subtitle = "Net return by holding period | Bands show cross-bond variation",
+            x = "Holding Period",
+            y = "Average Net Return (%)",
+            caption = sprintf(
+                "Optimal period: %s (efficiency: %.2f) | Dark band: ±1 std dev | Light band: min-max range | SR = Sharpe Ratio",
+                optimal_period$holding_period, optimal_period$efficiency
+            )
         ) +
 
         create_insele_theme() +
-        theme(legend.position = "right")
+        theme(
+            legend.position = "none",
+            panel.grid.major.x = element_blank(),
+            panel.grid.minor.x = element_blank()
+        )
 
     return(p)
 }
