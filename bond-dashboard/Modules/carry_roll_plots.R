@@ -398,70 +398,143 @@ generate_forward_curve_plot <- function(data, params) {
 # ================================================================================
 
 #' Calculate all possible butterfly spreads from bond data
-#' @param bond_data Data frame with bond yield data
+#' @param bond_data Data frame with bond yield data (requires FULL historical data, not just latest snapshot)
 #' @param lookback_days Number of days to look back for calculations
 #' @return List of butterfly spreads with statistics
 #' @export
 calculate_butterfly_spreads <- function(bond_data, lookback_days = 365) {
+
+    message("=== BUTTERFLY SPREAD CALCULATION START ===")
+    message(sprintf("Input data: %d rows, %d cols", nrow(bond_data), ncol(bond_data)))
+    message(sprintf("Columns: %s", paste(names(bond_data), collapse = ", ")))
+    message(sprintf("Lookback days: %d", lookback_days))
+
+    # Check for required columns
+    required_cols <- c("date", "bond", "yield_to_maturity", "modified_duration")
+    missing_cols <- setdiff(required_cols, names(bond_data))
+    if (length(missing_cols) > 0) {
+        message(sprintf("ERROR: Missing required columns: %s", paste(missing_cols, collapse = ", ")))
+        return(NULL)
+    }
+
+    # Check date range
+    date_range <- range(bond_data$date, na.rm = TRUE)
+    message(sprintf("Date range: %s to %s", date_range[1], date_range[2]))
 
     # Get unique bonds sorted by duration
     bonds_by_duration <- bond_data %>%
         group_by(bond) %>%
         summarise(
             avg_duration = mean(modified_duration, na.rm = TRUE),
+            n_obs = n(),
             .groups = "drop"
         ) %>%
-        arrange(avg_duration) %>%
-        pull(bond)
+        filter(!is.na(avg_duration)) %>%
+        arrange(avg_duration)
+
+    message(sprintf("Bonds by duration: %d bonds", nrow(bonds_by_duration)))
 
     # Need at least 3 bonds
-    if (length(bonds_by_duration) < 3) {
+    if (nrow(bonds_by_duration) < 3) {
+        message("ERROR: Need at least 3 bonds with duration data")
         return(NULL)
     }
 
+    bond_names <- bonds_by_duration$bond
+
     # Filter to lookback period
-    cutoff_date <- max(bond_data$date) - lubridate::days(lookback_days)
+    max_date <- max(bond_data$date, na.rm = TRUE)
+    cutoff_date <- max_date - lubridate::days(lookback_days)
+    message(sprintf("Cutoff date: %s (max date: %s)", cutoff_date, max_date))
+
     filtered_data <- bond_data %>%
         filter(date >= cutoff_date) %>%
-        select(date, bond, yield_to_maturity)
+        select(date, bond, yield_to_maturity) %>%
+        filter(!is.na(yield_to_maturity))
+
+    message(sprintf("Filtered data: %d rows", nrow(filtered_data)))
+
+    if (nrow(filtered_data) == 0) {
+        message("ERROR: No data after filtering to lookback period")
+        return(NULL)
+    }
+
+    # Check data per bond
+    data_per_bond <- filtered_data %>%
+        group_by(bond) %>%
+        summarise(n = n(), .groups = "drop")
+    message(sprintf("Observations per bond (avg): %.1f", mean(data_per_bond$n)))
 
     # Pivot to wide format
+    message("Pivoting to wide format...")
     yields_wide <- filtered_data %>%
         tidyr::pivot_wider(
             names_from = bond,
-            values_from = yield_to_maturity
+            values_from = yield_to_maturity,
+            values_fn = mean  # Handle duplicates by averaging
         ) %>%
         arrange(date)
 
+    message(sprintf("Wide data: %d rows (unique dates), %d cols", nrow(yields_wide), ncol(yields_wide)))
+
+    if (nrow(yields_wide) < 60) {
+        message(sprintf("WARNING: Only %d observations (need 60+ for reliable stats)", nrow(yields_wide)))
+    }
+
     # Generate all valid butterfly combinations
     # Short wing (shortest) - 2×Body (middle) + Long wing (longest)
-    n_bonds <- length(bonds_by_duration)
+    n_bonds <- length(bond_names)
+    message(sprintf("Generating butterflies from %d bonds...", n_bonds))
+
     butterflies <- list()
+    combos_checked <- 0
+    combos_valid <- 0
 
     for (i in 1:(n_bonds - 2)) {
         for (j in (i + 1):(n_bonds - 1)) {
             for (k in (j + 1):n_bonds) {
 
-                short_wing <- bonds_by_duration[i]
-                body <- bonds_by_duration[j]
-                long_wing <- bonds_by_duration[k]
+                combos_checked <- combos_checked + 1
+
+                short_wing <- bond_names[i]
+                body <- bond_names[j]
+                long_wing <- bond_names[k]
+
+                # Check if all three bonds exist in wide data
+                if (!all(c(short_wing, body, long_wing) %in% names(yields_wide))) {
+                    next
+                }
 
                 # Calculate butterfly spread time series
                 spread_name <- sprintf("%s-%s-%s", short_wing, body, long_wing)
 
-                spread_ts <- yields_wide %>%
-                    mutate(
-                        butterfly_spread = .data[[short_wing]] - 2 * .data[[body]] + .data[[long_wing]]
-                    ) %>%
-                    filter(!is.na(butterfly_spread)) %>%
-                    select(date, butterfly_spread)
+                spread_ts <- tryCatch({
+                    yields_wide %>%
+                        mutate(
+                            butterfly_spread = .data[[short_wing]] - 2 * .data[[body]] + .data[[long_wing]]
+                        ) %>%
+                        filter(!is.na(butterfly_spread)) %>%
+                        select(date, butterfly_spread)
+                }, error = function(e) {
+                    message(sprintf("Error calculating %s: %s", spread_name, e$message))
+                    NULL
+                })
 
-                # Need sufficient data
-                if (nrow(spread_ts) < 60) next
+                if (is.null(spread_ts) || nrow(spread_ts) < 60) {
+                    next
+                }
+
+                combos_valid <- combos_valid + 1
 
                 # Calculate statistics
                 spread_mean <- mean(spread_ts$butterfly_spread, na.rm = TRUE)
                 spread_sd <- sd(spread_ts$butterfly_spread, na.rm = TRUE)
+
+                if (is.na(spread_sd) || spread_sd == 0) {
+                    message(sprintf("WARNING: %s has zero/NA std dev, skipping", spread_name))
+                    next
+                }
+
                 current_spread <- tail(spread_ts$butterfly_spread, 1)
                 z_score <- (current_spread - spread_mean) / spread_sd
 
@@ -485,11 +558,17 @@ calculate_butterfly_spreads <- function(bond_data, lookback_days = 365) {
                     z_score = z_score,
                     adf_pvalue = adf_result$p.value,
                     is_stationary = !is.na(adf_result$p.value) && adf_result$p.value < 0.05,
-                    diff_from_mean = current_spread - spread_mean
+                    diff_from_mean = current_spread - spread_mean,
+                    n_observations = nrow(spread_ts)
                 )
             }
         }
     }
+
+    message(sprintf("Combinations checked: %d", combos_checked))
+    message(sprintf("Valid butterflies (60+ obs): %d", combos_valid))
+    message(sprintf("Final butterflies: %d", length(butterflies)))
+    message("=== BUTTERFLY SPREAD CALCULATION END ===")
 
     return(butterflies)
 }
