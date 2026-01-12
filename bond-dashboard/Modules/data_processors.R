@@ -2526,25 +2526,23 @@ calculate_advanced_carry_roll <- memoise(function(data,
                     funding_cost = (funding_rate_std / 100) * period_years * 100,
 
                     # ═══════════════════════════════════════════════════════════
-                    # TOTAL RETURNS (with sanity caps)
+                    # TOTAL RETURNS (NO ARTIFICIAL CAP)
                     # ═══════════════════════════════════════════════════════════
                     # All values are in PERCENTAGE format (e.g., 2.56 = 2.56%)
-                    gross_return_uncapped = carry_income + roll_return,
+                    # FIX: Removed artificial 4% cap that was flattening all returns
 
-                    # Apply sanity caps based on holding period
-                    # 360-day cap: 4% net return
-                    # Pro-rata for shorter periods
-                    max_reasonable_net_return = 4.0 * (period / 360),
+                    gross_return = carry_income + roll_return,
 
-                    # Cap gross return to prevent anomalies
-                    gross_return = pmin(gross_return_uncapped,
-                                        max_reasonable_net_return + funding_cost),
-
-                    net_return_uncapped = gross_return_uncapped - funding_cost,
+                    # Net return = Gross - Funding (no cap applied)
                     net_return = gross_return - funding_cost,
 
-                    # Flag if capping was applied
-                    return_capped = gross_return != gross_return_uncapped,
+                    # Warning threshold for unusually high returns (for logging only)
+                    # 15% annual is very high but possible for high-coupon bonds
+                    max_reasonable_annual_return = 15.0,
+                    max_reasonable_period_return = max_reasonable_annual_return * period_years,
+
+                    # Flag extreme returns for investigation (but don't cap)
+                    return_extreme = abs(net_return) > max_reasonable_period_return,
 
                     # ═══════════════════════════════════════════════════════════
                     # RISK-ADJUSTED METRICS
@@ -2599,23 +2597,18 @@ calculate_advanced_carry_roll <- memoise(function(data,
                     ),
 
                     # Validate net return
-                    # Realistic range for 360 days: -2% to +4% for SA govt bonds
-                    # (Carry ~9%, Funding ~8%, Net carry ~1%, Roll up to ~3%)
+                    # Updated: Removed artificial 4% cap - now just flags extreme returns
+                    # Realistic range for 360 days: -5% to +10% for SA govt bonds
+                    # (High coupon bonds can have net returns > 5%)
                     net_return_validation_flag = case_when(
                         is.na(net_return) ~ "ERROR: Net return is NA",
-                        return_capped ~
-                            paste0("WARNING: Return capped (uncapped=", round(net_return_uncapped, 2),
-                                   "% → capped=", round(net_return, 2),
+                        return_extreme ~
+                            paste0("INFO: High return (", round(net_return, 2),
+                                   "%, threshold=", round(max_reasonable_period_return, 2),
                                    "%, carry=", round(carry_income, 2),
                                    "%, roll=", round(roll_return, 2),
                                    "%, funding=", round(funding_cost, 2), "%)"),
-                        net_return > max_reasonable_net_return ~
-                            paste0("WARNING: Net return above expected range (", round(net_return, 2),
-                                   "%, max expected=", round(max_reasonable_net_return, 2),
-                                   "%, carry=", round(carry_income, 2),
-                                   "%, roll=", round(roll_return, 2),
-                                   "%, funding=", round(funding_cost, 2), "%)"),
-                        net_return < -3 ~
+                        net_return < -5 ~
                             paste0("WARNING: Large negative return (", round(net_return, 2), "%)"),
                         TRUE ~ NA_character_
                     ),
