@@ -5331,105 +5331,148 @@ server <- function(input, output, session) {
 
             tags$div(
                 style = "margin-top: 8px; font-size: 10px; color: #888; text-align: center;",
-                sprintf("Based on %d bond(s) backtesting", backtest_results$n_backtest)
+                sprintf("Based on %.0f bond(s) backtesting", backtest_results$n_backtest)
             )
         )
     })
 
     # Market Outlook Summary (replaces empty cards with gradient banner)
     output$market_outlook_summary <- renderUI({
-        req(auction_predictions_data())
 
-        preds <- auction_predictions_data()
+        # Wrap everything in tryCatch to prevent errors from showing to users
+        tryCatch({
+            req(auction_predictions_data())
 
-        # Skip if no valid predictions
-        valid_preds <- preds %>% filter(!is.na(forecast))
+            preds <- auction_predictions_data()
 
-        if(nrow(valid_preds) == 0) {
-            return(tags$div(
-                class = "alert alert-warning",
-                style = "margin-bottom: 0;",
-                tags$strong(icon("exclamation-triangle"), " No Valid Predictions"),
-                tags$p(style = "margin: 5px 0 0 0; font-size: 12px;",
-                       "Select bonds with sufficient auction history (minimum 10 auctions)")
-            ))
-        }
+            # Validate data
+            if (is.null(preds) || nrow(preds) == 0) {
+                return(tags$div(
+                    class = "alert alert-warning",
+                    style = "margin: 0;",
+                    icon("exclamation-triangle"),
+                    " Select bonds and click 'Update Predictions' to see forecasts"
+                ))
+            }
 
-        # Calculate summary metrics
-        avg_forecast <- mean(valid_preds$forecast, na.rm = TRUE)
-        avg_historical <- mean(valid_preds$historical_avg, na.rm = TRUE)
-        diff_from_avg <- avg_forecast - avg_historical
+            # Filter valid predictions
+            valid_preds <- preds %>% filter(!is.na(forecast))
+            n_total <- nrow(preds)
+            n_valid <- nrow(valid_preds)
 
-        # Determine overall outlook
-        outlook <- if(avg_forecast > 3.0) {
-            list(label = "STRONG DEMAND", color = "#1B5E20", color_light = "#C8E6C9", icon = "arrow-up")
-        } else if(avg_forecast > 2.5) {
-            list(label = "HEALTHY DEMAND", color = "#4CAF50", color_light = "#E8F5E9", icon = "check")
-        } else if(avg_forecast > 2.0) {
-            list(label = "MODERATE DEMAND", color = "#FF9800", color_light = "#FFF3E0", icon = "minus")
-        } else if(avg_forecast > 1.5) {
-            list(label = "WEAK DEMAND", color = "#F44336", color_light = "#FFEBEE", icon = "arrow-down")
-        } else {
-            list(label = "POOR DEMAND", color = "#B71C1C", color_light = "#FFCDD2", icon = "exclamation-triangle")
-        }
-
-        # Build visual summary with gradient
-        tags$div(
-            style = sprintf("background: linear-gradient(135deg, %s 0%%, %s 100%%);
-                           color: white; padding: 15px; border-radius: 8px;",
-                           outlook$color, adjustcolor(outlook$color, alpha.f = 0.7)),
-
-            fluidRow(
-                column(7,
-                    tags$div(
-                        style = "font-size: 11px; opacity: 0.9; text-transform: uppercase;",
-                        "Market Outlook"
-                    ),
-                    tags$div(
-                        style = "font-size: 22px; font-weight: bold; margin: 3px 0;",
-                        icon(outlook$icon), " ", outlook$label
-                    ),
-                    tags$div(
-                        style = "font-size: 13px;",
-                        sprintf("Avg Forecast: %.2fx", avg_forecast),
-                        tags$span(
-                            style = sprintf("margin-left: 8px; padding: 2px 6px; border-radius: 3px; background: %s;",
-                                           ifelse(diff_from_avg >= 0, "rgba(255,255,255,0.3)", "rgba(0,0,0,0.2)")),
-                            sprintf("%+.2f vs hist", diff_from_avg)
-                        )
+            if (n_valid == 0) {
+                return(tags$div(
+                    class = "alert alert-info",
+                    style = "margin: 0;",
+                    tags$strong("No Valid Predictions"),
+                    tags$br(),
+                    tags$small(
+                        sprintf("%.0f bonds selected, but none have sufficient auction history (10+ auctions needed)",
+                                n_total)
                     )
-                ),
-                column(5,
-                    # Mini forecast bars
-                    tags$div(
-                        style = "text-align: right;",
-                        lapply(1:min(5, nrow(valid_preds)), function(i) {
-                            row <- valid_preds[i, ]
-                            bar_width <- min(80, (row$forecast / 4) * 80)
-                            signal_color <- if(row$forecast > row$historical_avg + 0.3) {
-                                "#C8E6C9"
-                            } else if(row$forecast < row$historical_avg - 0.3) {
-                                "#FFCDD2"
-                            } else {
-                                "#E0E0E0"
-                            }
-                            tags$div(
-                                style = "margin: 2px 0; display: flex; align-items: center; justify-content: flex-end;",
-                                tags$span(style = "font-size: 10px; width: 45px; text-align: left; opacity: 0.9;",
-                                         row$bond_name),
-                                tags$div(
-                                    style = sprintf("height: 10px; width: %dpx;
-                                                   background: %s; border-radius: 2px; margin: 0 4px;",
-                                                   bar_width, signal_color)
-                                ),
-                                tags$span(style = "font-size: 10px; width: 30px; text-align: right;",
-                                         sprintf("%.1fx", row$forecast))
+                ))
+            }
+
+            # Calculate summary metrics
+            avg_forecast <- mean(valid_preds$forecast, na.rm = TRUE)
+            avg_historical <- mean(valid_preds$historical_avg, na.rm = TRUE)
+            diff_from_avg <- avg_forecast - avg_historical
+
+            # Determine overall outlook
+            outlook_label <- case_when(
+                avg_forecast > 3.0 ~ "STRONG DEMAND",
+                avg_forecast > 2.5 ~ "HEALTHY DEMAND",
+                avg_forecast > 2.0 ~ "MODERATE DEMAND",
+                avg_forecast > 1.5 ~ "WEAK DEMAND",
+                TRUE ~ "POOR DEMAND"
+            )
+
+            outlook_color <- case_when(
+                avg_forecast > 3.0 ~ "#1B5E20",
+                avg_forecast > 2.5 ~ "#4CAF50",
+                avg_forecast > 2.0 ~ "#FF9800",
+                avg_forecast > 1.5 ~ "#F44336",
+                TRUE ~ "#B71C1C"
+            )
+
+            outlook_icon <- case_when(
+                avg_forecast > 2.5 ~ "arrow-up",
+                avg_forecast > 2.0 ~ "minus",
+                TRUE ~ "arrow-down"
+            )
+
+            # Build visual summary
+            tags$div(
+                class = "well",
+                style = sprintf("background: linear-gradient(135deg, %s 0%%, %s 100%%);
+                                 color: white; padding: 15px; border-radius: 4px; margin: 0;",
+                                outlook_color, adjustcolor(outlook_color, alpha.f = 0.7)),
+
+                fluidRow(
+                    column(8,
+                        tags$div(
+                            style = "font-size: 11px; opacity: 0.9; text-transform: uppercase;",
+                            "Market Outlook"
+                        ),
+                        tags$div(
+                            style = "font-size: 22px; font-weight: bold; margin: 5px 0;",
+                            icon(outlook_icon),
+                            " ",
+                            outlook_label
+                        ),
+                        tags$div(
+                            style = "font-size: 13px;",
+                            sprintf("Avg Forecast: %.2fx", avg_forecast),
+                            tags$span(
+                                style = sprintf("margin-left: 10px; padding: 2px 6px; border-radius: 3px; background: %s;",
+                                               ifelse(diff_from_avg >= 0, "rgba(255,255,255,0.3)", "rgba(0,0,0,0.2)")),
+                                sprintf("%+.2f vs hist", diff_from_avg)
                             )
-                        })
+                        ),
+                        tags$div(
+                            style = "font-size: 11px; margin-top: 8px; opacity: 0.8;",
+                            sprintf("%.0f of %.0f bonds with forecasts", n_valid, n_total)
+                        )
+                    ),
+                    column(4,
+                        # Mini forecast indicators
+                        tags$div(
+                            style = "text-align: right;",
+                            lapply(seq_len(min(5, nrow(valid_preds))), function(i) {
+                                row <- valid_preds[i, ]
+                                bar_pct <- min(100, (row$forecast / 4) * 100)
+                                signal_bg <- case_when(
+                                    row$forecast > row$historical_avg + 0.3 ~ "rgba(200,230,201,0.8)",
+                                    row$forecast < row$historical_avg - 0.3 ~ "rgba(255,205,210,0.8)",
+                                    TRUE ~ "rgba(255,255,255,0.5)"
+                                )
+                                tags$div(
+                                    style = "margin: 2px 0; display: flex; align-items: center; justify-content: flex-end;",
+                                    tags$span(style = "font-size: 10px; width: 45px; text-align: left;",
+                                             row$bond_name),
+                                    tags$div(
+                                        style = sprintf("height: 10px; width: %.0fpx; background: %s; border-radius: 2px; margin: 0 5px;",
+                                                       bar_pct, signal_bg)
+                                    ),
+                                    tags$span(style = "font-size: 10px; width: 35px; text-align: right;",
+                                             sprintf("%.1fx", row$forecast))
+                                )
+                            })
+                        )
                     )
                 )
             )
-        )
+
+        }, error = function(e) {
+            # Return graceful error message instead of crashing
+            tags$div(
+                class = "alert alert-danger",
+                style = "margin: 0;",
+                tags$strong("Unable to generate outlook"),
+                tags$br(),
+                tags$small("Please try selecting different bonds or refreshing the page")
+            )
+        })
     })
 
     # Compact Forecast Table (replaces vertical cards)
@@ -5508,7 +5551,7 @@ server <- function(input, output, session) {
                 style = "padding: 10px; text-align: center; background: #f8f9fa; border-radius: 8px;",
                 tags$h6("Market Sentiment", style = "color: #1B3A6B; margin: 0 0 5px 0;"),
                 tags$p(style = "color: #999; font-size: 11px; margin: 0;",
-                       sprintf("Insufficient data (%d auctions, need 5+)", recent$n_auctions))
+                       sprintf("Insufficient data (%.0f auctions, need 5+)", recent$n_auctions))
             ))
         }
 
@@ -5572,7 +5615,7 @@ server <- function(input, output, session) {
                         border-radius: 8px; margin: 8px 0;",
                 # Pointer
                 tags$div(
-                    style = sprintf("position: absolute; left: %d%%; top: -4px; transform: translateX(-50%%);",
+                    style = sprintf("position: absolute; left: %.0f%%; top: -4px; transform: translateX(-50%%);",
                                    round((sentiment_score + 1) / 2 * 100)),
                     tags$div(style = "width: 0; height: 0;
                             border-left: 6px solid transparent;
