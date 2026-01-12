@@ -1680,7 +1680,17 @@ ui <- dashboardPage(
                                               # Detailed Forecast Table (replaces vertical cards)
                                               tags$div(
                                                   style = "margin-top: 12px;",
-                                                  tags$h5("Detailed Forecasts", style = "color: #1B3A6B; font-weight: bold; margin-bottom: 10px;"),
+                                                  # Table header with filter toggle
+                                                  tags$div(
+                                                      style = "display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;",
+                                                      tags$h5("Detailed Forecasts", class = "text-primary", style = "margin: 0; color: #1B3A6B; font-weight: bold;"),
+                                                      checkboxInput(
+                                                          "show_all_bonds",
+                                                          "Show bonds without forecasts",
+                                                          value = TRUE,
+                                                          width = "auto"
+                                                      )
+                                                  ),
                                                   DT::dataTableOutput("auction_forecast_table", height = "auto")
                                               ),
 
