@@ -4740,76 +4740,96 @@ server <- function(input, output, session) {
         # Calculate forward rates between different tenor points
         forward_rates <- data.frame()
 
-        # Define standard forward rate periods
+        # Define standard forward rate periods: XyYy = Y-year rate starting X years from now
+        # start_year = when forward period begins, tenor_years = length of forward period
         periods <- data.frame(
-            from_tenor = c(0, 1, 2, 3, 5, 7, 10),
-            to_tenor = c(1, 2, 3, 5, 7, 10, 15),
-            label = c("0y1y", "1y1y", "2y1y", "3y2y", "5y2y", "7y3y", "10y5y")
+            start_year = c(0, 1, 2, 3, 5, 7, 10),
+            tenor_years = c(1, 1, 1, 2, 2, 3, 5),
+            label = c("0y1y", "1y1y", "2y1y", "3y2y", "5y2y", "7y3y", "10y5y"),
+            stringsAsFactors = FALSE
+        )
+        periods$end_year <- periods$start_year + periods$tenor_years
+
+        # Create yield curve interpolation function for getting rates at any tenor
+        yield_curve_func <- approxfun(
+            x = curve_data$modified_duration,
+            y = curve_data$yield_to_maturity,
+            rule = 2  # Extrapolate using nearest value
         )
 
         for(i in 1:nrow(periods)) {
-            from_dur <- periods$from_tenor[i]
-            to_dur <- periods$to_tenor[i]
+            t1 <- periods$start_year[i]   # Start of forward period
+            t2 <- periods$end_year[i]     # End of forward period
+            tenor <- periods$tenor_years[i]  # Length of forward period
 
-            # Find closest bonds to these durations
+            # Get interpolated spot rates (in percentage form)
+            r_t1_pct <- yield_curve_func(t1)
+            r_t2_pct <- yield_curve_func(t2)
+            r_tenor_pct <- yield_curve_func(tenor)  # Current spot for same tenor as forward
+
+            # Convert to decimal for calculation
+            r_t1 <- r_t1_pct / 100
+            r_t2 <- r_t2_pct / 100
+            r_tenor <- r_tenor_pct / 100
+
+            # Calculate forward rate using: f = [(1 + r_t2)^t2 / (1 + r_t1)^t1]^(1/(t2-t1)) - 1
+            if(t1 == 0) {
+                # For 0yXy, forward rate equals the spot rate at tenor X
+                forward_rate <- r_t2
+            } else if(t2 > t1) {
+                forward_rate <- ((1 + r_t2)^t2 / (1 + r_t1)^t1)^(1/tenor) - 1
+            } else {
+                forward_rate <- NA
+            }
+
+            # Convert forward rate to percentage
+            forward_rate_pct <- forward_rate * 100
+
+            # SPREAD: Forward rate vs Current spot for SAME tenor (in basis points)
+            # This is the key fix - compare forward Y-year rate to current Y-year spot rate
+            spread_bps <- (forward_rate_pct - r_tenor_pct) * 100
+
+            # Find reference bonds closest to t1 and t2 for display
             from_bond <- curve_data %>%
-                mutate(dur_diff = abs(modified_duration - from_dur)) %>%
+                mutate(dur_diff = abs(modified_duration - t1)) %>%
                 arrange(dur_diff) %>%
                 head(1)
 
             to_bond <- curve_data %>%
-                mutate(dur_diff = abs(modified_duration - to_dur)) %>%
+                mutate(dur_diff = abs(modified_duration - t2)) %>%
                 arrange(dur_diff) %>%
                 head(1)
 
-            if(nrow(from_bond) > 0 && nrow(to_bond) > 0) {
-                # Calculate forward rate using the formula:
-                # Forward Rate = [(1 + Rlong)^Tlong / (1 + Rshort)^Tshort]^(1/(Tlong-Tshort)) - 1
-
-                r_short <- from_bond$yield_to_maturity / 100
-                r_long <- to_bond$yield_to_maturity / 100
-                t_short <- from_bond$modified_duration
-                t_long <- to_bond$modified_duration
-
-                if(t_long > t_short && from_dur == 0) {
-                    # For spot to forward calculation
-                    forward_rate <- r_long
-                } else if(t_long > t_short) {
-                    # Standard forward rate calculation
-                    forward_rate <- ((1 + r_long)^t_long / (1 + r_short)^t_short)^(1/(t_long - t_short)) - 1
-                } else {
-                    forward_rate <- NA
-                }
-
-                forward_rates <- rbind(forward_rates, data.frame(
-                    Period = periods$label[i],
-                    From_Tenor = from_dur,
-                    To_Tenor = to_dur,
-                    Spot_Rate_Start = r_short * 100,
-                    Spot_Rate_End = r_long * 100,
-                    Forward_Rate = forward_rate * 100,
-                    Spread_to_Spot = (forward_rate - r_long) * 100,
-                    From_Bond = from_bond$bond,
-                    To_Bond = to_bond$bond,
-                    stringsAsFactors = FALSE
-                ))
-            }
+            forward_rates <- rbind(forward_rates, data.frame(
+                Period = periods$label[i],
+                Start_Year = t1,
+                End_Year = t2,
+                Tenor_Years = tenor,
+                Spot_at_Start = r_t1_pct,
+                Spot_at_End = r_t2_pct,
+                Current_Spot_Tenor = r_tenor_pct,  # Current spot for same tenor as forward
+                Forward_Rate = forward_rate_pct,
+                Spread_bps = spread_bps,
+                From_Bond = if(nrow(from_bond) > 0) from_bond$bond else NA,
+                To_Bond = if(nrow(to_bond) > 0) to_bond$bond else NA,
+                stringsAsFactors = FALSE
+            ))
         }
 
-        # Add market implied expectations
+        # Add market implied expectations based on spread in bps
         forward_rates <- forward_rates %>%
             mutate(
                 Market_View = case_when(
-                    Spread_to_Spot > 50 ~ "Expects Rising Rates",
-                    Spread_to_Spot > 20 ~ "Mildly Hawkish",
-                    Spread_to_Spot < -50 ~ "Expects Falling Rates",
-                    Spread_to_Spot < -20 ~ "Mildly Dovish",
-                    TRUE ~ "Neutral"
+                    Spread_bps > 75 ~ "Rates Rising",
+                    Spread_bps > 30 ~ "Slightly Bearish",
+                    Spread_bps > -30 ~ "Neutral",
+                    Spread_bps > -75 ~ "Slightly Bullish",
+                    TRUE ~ "Rates Falling"
                 ),
                 Signal_Strength = case_when(
-                    abs(Spread_to_Spot) > 100 ~ "Strong",
-                    abs(Spread_to_Spot) > 50 ~ "Moderate",
-                    abs(Spread_to_Spot) > 20 ~ "Weak",
+                    abs(Spread_bps) > 100 ~ "Strong",
+                    abs(Spread_bps) > 50 ~ "Moderate",
+                    abs(Spread_bps) > 25 ~ "Weak",
                     TRUE ~ "None"
                 )
             )
@@ -4818,13 +4838,13 @@ server <- function(input, output, session) {
         display_table <- forward_rates %>%
             filter(!is.na(Forward_Rate)) %>%
             mutate(
-                Spot_Rate_Start = sprintf("%.2f%%", Spot_Rate_Start),
-                Spot_Rate_End = sprintf("%.2f%%", Spot_Rate_End),
-                Forward_Rate = sprintf("%.2f%%", Forward_Rate),
-                Spread_to_Spot = sprintf("%+.0f bps", Spread_to_Spot),
+                Forward_Rate_Fmt = sprintf("%.2f%%", Forward_Rate),
+                Current_Spot_Fmt = sprintf("%.2f%% (%dy)", Current_Spot_Tenor, Tenor_Years),
+                Spread_Fmt = sprintf("%+.0f bps", Spread_bps),
+                Period_Desc = sprintf("Yr %d → %d", Start_Year, End_Year),
                 Bonds_Used = paste(From_Bond, "→", To_Bond)
             ) %>%
-            select(Period, Forward_Rate, Spot_Rate_End, Spread_to_Spot,
+            select(Period, Forward_Rate_Fmt, Current_Spot_Fmt, Spread_Fmt,
                    Market_View, Signal_Strength, Bonds_Used)
 
         # Create enhanced datatable
@@ -4840,8 +4860,8 @@ server <- function(input, output, session) {
                 ),
                 initComplete = JS(
                     "function(settings, json) {",
-                    "  $('td:contains(\"Expects Rising Rates\")').css('color', '#dc3545');",
-                    "  $('td:contains(\"Expects Falling Rates\")').css('color', '#28a745');",
+                    "  $('td:contains(\"Rates Rising\")').css('color', '#dc3545');",
+                    "  $('td:contains(\"Rates Falling\")').css('color', '#28a745');",
                     "  $('td:contains(\"Strong\")').css('font-weight', 'bold');",
                     "}"
                 )
@@ -4863,10 +4883,13 @@ server <- function(input, output, session) {
                     style = 'padding: 10px; background: #e8f4f8; border-radius: 5px; margin-bottom: 10px;',
                     htmltools::tags$strong("Forward Rate Analysis"),
                     htmltools::tags$p(
-                        style = 'margin-top: 10px; margin-bottom: 0;',
-                        "This table shows implied forward rates derived from the current yield curve. ",
-                        "Forward rates indicate market expectations for future interest rates. ",
-                        "Positive spreads suggest the market expects rates to rise; negative spreads suggest rate cuts."
+                        style = 'margin-top: 10px; margin-bottom: 5px;',
+                        htmltools::tags$strong("Notation:"), " XyYy = Y-year rate starting X years from now (e.g., 3y2y = 2-year rate, 3 years forward)"
+                    ),
+                    htmltools::tags$p(
+                        style = 'margin-top: 5px; margin-bottom: 0;',
+                        "Spread compares the implied forward rate to the current spot rate for the same tenor. ",
+                        "Positive spread = market expects rates to rise; Negative spread = expects rates to fall."
                     )
                 )
             )
@@ -4874,9 +4897,9 @@ server <- function(input, output, session) {
             formatStyle(
                 "Market_View",
                 backgroundColor = styleEqual(
-                    c("Expects Rising Rates", "Mildly Hawkish", "Neutral",
-                      "Mildly Dovish", "Expects Falling Rates"),
-                    c("#FFE5E5", "#FFF0E5", "#F0F0F0", "#E5F0FF", "#E5FFE5")
+                    c("Rates Rising", "Slightly Bearish", "Neutral",
+                      "Slightly Bullish", "Rates Falling"),
+                    c("#FFCDD2", "#FFE0B2", "#E0E0E0", "#DCEDC8", "#C8E6C9")
                 )
             ) %>%
             formatStyle(
