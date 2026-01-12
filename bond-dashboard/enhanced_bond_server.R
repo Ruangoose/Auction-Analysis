@@ -2585,7 +2585,12 @@ server <- function(input, output, session) {
             }
 
             # Convert to summary data frame
+            # Check if yields are in percentage form (spread already in % points)
             summary_df <- purrr::map_dfr(butterflies, function(bf) {
+                # If yields are in % form, spread is already in percentage points - don't multiply by 100
+                yields_in_pct <- isTRUE(bf$yields_in_pct)
+                conversion_factor <- if (yields_in_pct) 1 else 100
+
                 data.frame(
                     Trade = paste0("Butterfly: ", bf$name),
                     Short_Wing = bf$short_wing,
@@ -2593,9 +2598,11 @@ server <- function(input, output, session) {
                     Long_Wing = bf$long_wing,
                     Z_Score = bf$z_score,
                     ADF_p = bf$adf_pvalue,
-                    Mean = bf$mean * 100,  # Convert to percentage
-                    Current = bf$current * 100,
-                    Diff = bf$diff_from_mean * 100,
+                    ADF_stat = if (!is.null(bf$adf_statistic)) bf$adf_statistic else NA,
+                    ADF_p_truncated = isTRUE(bf$adf_p_truncated),
+                    Mean = bf$mean * conversion_factor,
+                    Current = bf$current * conversion_factor,
+                    Diff = bf$diff_from_mean * conversion_factor,
                     Is_Stationary = bf$is_stationary,
                     stringsAsFactors = FALSE
                 )
@@ -2640,10 +2647,16 @@ server <- function(input, output, session) {
             mutate(
                 # Format for display
                 Z_Score_Display = sprintf("%.2f", Z_Score),
-                ADF_p_Display = sprintf("%.4f", ADF_p),
-                Mean_Display = sprintf("%.3f%%", Mean),
-                Current_Display = sprintf("%.3f%%", Current),
-                Diff_Display = sprintf("%+.3f%%", Diff),
+                # Show "<0.01" for truncated p-values, otherwise show actual value
+                ADF_p_Display = case_when(
+                    is.na(ADF_p) ~ "N/A",
+                    ADF_p_truncated ~ "<0.01",
+                    TRUE ~ sprintf("%.3f", ADF_p)
+                ),
+                ADF_stat_Display = ifelse(is.na(ADF_stat), "N/A", sprintf("%.2f", ADF_stat)),
+                Mean_Display = sprintf("%.2f%%", Mean),
+                Current_Display = sprintf("%.2f%%", Current),
+                Diff_Display = sprintf("%+.2f%%", Diff),
 
                 # Signal based on Z-Score
                 Signal = case_when(
@@ -2655,6 +2668,7 @@ server <- function(input, output, session) {
             select(
                 Trade,
                 `Z-Score` = Z_Score_Display,
+                `ADF stat` = ADF_stat_Display,
                 `ADF p` = ADF_p_Display,
                 Avg = Mean_Display,
                 Current = Current_Display,
@@ -2681,10 +2695,19 @@ server <- function(input, output, session) {
                 fontWeight = 'bold'
             ) %>%
             DT::formatStyle(
+                'ADF stat',
+                # More negative = more stationary. Highlight statistically significant values.
+                # Typical 5% critical value for ADF is around -2.86
+                color = DT::styleInterval(
+                    c(-3.5, -2.86),
+                    c('#1B5E20', '#4CAF50', '#F44336')
+                )
+            ) %>%
+            DT::formatStyle(
                 'ADF p',
-                backgroundColor = DT::styleInterval(
-                    c(0.05, 0.10),
-                    c('#C8E6C9', '#FFF9C4', '#FFCDD2')
+                backgroundColor = DT::styleEqual(
+                    c('<0.01', 'N/A'),
+                    c('#A5D6A7', '#EEEEEE')
                 )
             ) %>%
             DT::formatStyle(
@@ -2740,6 +2763,10 @@ server <- function(input, output, session) {
             TRUE ~ "#666666"
         )
 
+        # Apply conversion factor based on yield units
+        yields_in_pct <- isTRUE(bf$yields_in_pct)
+        cf <- if (yields_in_pct) 1 else 100
+
         tags$div(
             class = "well well-sm",
             style = "padding: 10px; margin-bottom: 10px;",
@@ -2758,11 +2785,11 @@ server <- function(input, output, session) {
                 ),
                 column(2,
                        tags$div(class = "text-muted small", "Current"),
-                       tags$div(style = "font-weight: bold;", sprintf("%.3f%%", bf$current * 100))
+                       tags$div(style = "font-weight: bold;", sprintf("%.2f%%", bf$current * cf))
                 ),
                 column(2,
                        tags$div(class = "text-muted small", "Mean"),
-                       tags$div(sprintf("%.3f%%", bf$mean * 100))
+                       tags$div(sprintf("%.2f%%", bf$mean * cf))
                 ),
                 column(3,
                        tags$div(class = "text-muted small", "Signal"),
@@ -2841,26 +2868,54 @@ server <- function(input, output, session) {
 
                        tags$h5("Rationale", style = "margin-top: 15px;"),
                        tags$p(rationale),
-                       tags$p(
-                           sprintf("Current spread (%.3f%%) is %.2f standard deviations from mean (%.3f%%).",
-                                   bf$current * 100, bf$z_score, bf$mean * 100)
-                       )
+                       {
+                           # Apply conversion factor based on yield units
+                           yields_in_pct <- isTRUE(bf$yields_in_pct)
+                           cf <- if (yields_in_pct) 1 else 100
+                           tags$p(
+                               sprintf("Current spread (%.2f%%) is %.2f standard deviations from mean (%.2f%%).",
+                                       bf$current * cf, bf$z_score, bf$mean * cf)
+                           )
+                       }
                 ),
 
                 column(6,
                        tags$h5("Statistics"),
-                       tags$table(
-                           class = "table table-condensed",
-                           tags$tbody(
-                               tags$tr(tags$td("Z-Score:"), tags$td(sprintf("%.2f", bf$z_score))),
-                               tags$tr(tags$td("ADF p-value:"), tags$td(sprintf("%.4f", bf$adf_pvalue))),
-                               tags$tr(tags$td("Stationary:"), tags$td(ifelse(bf$is_stationary, "Yes (valid)", "No (caution)"))),
-                               tags$tr(tags$td("Mean:"), tags$td(sprintf("%.3f%%", bf$mean * 100))),
-                               tags$tr(tags$td("Std Dev:"), tags$td(sprintf("%.3f%%", bf$sd * 100))),
-                               tags$tr(tags$td("Current:"), tags$td(sprintf("%.3f%%", bf$current * 100))),
-                               tags$tr(tags$td("Diff from Mean:"), tags$td(sprintf("%+.3f%%", bf$diff_from_mean * 100)))
+                       {
+                           # Apply conversion factor based on yield units
+                           yields_in_pct <- isTRUE(bf$yields_in_pct)
+                           cf <- if (yields_in_pct) 1 else 100
+
+                           # Format ADF p-value properly
+                           adf_p_display <- if (is.na(bf$adf_pvalue)) {
+                               "N/A"
+                           } else if (isTRUE(bf$adf_p_truncated)) {
+                               "<0.01"
+                           } else {
+                               sprintf("%.3f", bf$adf_pvalue)
+                           }
+
+                           # Format ADF statistic
+                           adf_stat_display <- if (!is.null(bf$adf_statistic) && !is.na(bf$adf_statistic)) {
+                               sprintf("%.2f", bf$adf_statistic)
+                           } else {
+                               "N/A"
+                           }
+
+                           tags$table(
+                               class = "table table-condensed",
+                               tags$tbody(
+                                   tags$tr(tags$td("Z-Score:"), tags$td(sprintf("%.2f", bf$z_score))),
+                                   tags$tr(tags$td("ADF statistic:"), tags$td(adf_stat_display)),
+                                   tags$tr(tags$td("ADF p-value:"), tags$td(adf_p_display)),
+                                   tags$tr(tags$td("Stationary:"), tags$td(ifelse(bf$is_stationary, "Yes (valid)", "No (caution)"))),
+                                   tags$tr(tags$td("Mean:"), tags$td(sprintf("%.2f%%", bf$mean * cf))),
+                                   tags$tr(tags$td("Std Dev:"), tags$td(sprintf("%.2f%%", bf$sd * cf))),
+                                   tags$tr(tags$td("Current:"), tags$td(sprintf("%.2f%%", bf$current * cf))),
+                                   tags$tr(tags$td("Diff from Mean:"), tags$td(sprintf("%+.2f%%", bf$diff_from_mean * cf)))
+                               )
                            )
-                       ),
+                       },
 
                        tags$h5("Risk Warning", style = "margin-top: 15px;"),
                        tags$div(
