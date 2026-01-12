@@ -1307,14 +1307,29 @@ ui <- dashboardPage(
 
                                                   hr(),
 
-                                                  # FIX 4: Bond decomposition selector
+                                                  # FIX 4: Bond decomposition selector with period
                                                   tags$div(
                                                       style = "margin-top: 15px;",
                                                       h6("Return Decomposition", style = "color: #1B3A6B;"),
-                                                      selectInput("selected_carry_bond",
-                                                                  "Select Bond:",
-                                                                  choices = NULL,
-                                                                  selected = NULL),
+                                                      fluidRow(
+                                                          column(6,
+                                                              selectInput("selected_carry_bond",
+                                                                          "Select Bond:",
+                                                                          choices = NULL,
+                                                                          selected = NULL,
+                                                                          width = "100%")
+                                                          ),
+                                                          column(6,
+                                                              selectInput("decomp_period",
+                                                                          "Holding Period:",
+                                                                          choices = c("30 days" = "30d",
+                                                                                      "90 days" = "90d",
+                                                                                      "180 days" = "180d",
+                                                                                      "360 days" = "360d"),
+                                                                          selected = "90d",
+                                                                          width = "100%")
+                                                          )
+                                                      ),
                                                       uiOutput("carry_decomposition")
                                                   )
                                               )

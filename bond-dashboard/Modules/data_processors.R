@@ -2436,19 +2436,31 @@ calculate_advanced_carry_roll <- memoise(function(data,
             ) %>%
             ungroup()
 
-        # Report curve slope summary
+        # Report curve slope summary with uniqueness check
         slope_summary <- latest_data %>%
             summarise(
                 min_slope = min(curve_slope_bps, na.rm = TRUE),
                 median_slope = median(curve_slope_bps, na.rm = TRUE),
                 max_slope = max(curve_slope_bps, na.rm = TRUE),
+                n_unique_slopes = n_distinct(round(curve_slope_bps, 2)),
                 n_local_regression = sum(curve_slope_method == "local_regression"),
                 n_fixed_assumption = sum(grepl("fixed_assumption", curve_slope_method))
             )
 
-        message(sprintf("Curve slope estimation: %.1f to %.1f bps/year (median: %.1f) | %d local, %d fixed",
+        message(sprintf("Curve slope estimation: %.1f to %.1f bps/year (median: %.1f) | %d unique slopes | %d local, %d fixed",
                         slope_summary$min_slope, slope_summary$max_slope, slope_summary$median_slope,
+                        slope_summary$n_unique_slopes,
                         slope_summary$n_local_regression, slope_summary$n_fixed_assumption))
+
+        # Coupon uniqueness check
+        n_unique_coupons <- n_distinct(round(latest_data$coupon_standardized, 2))
+        coupon_range <- range(latest_data$coupon_standardized, na.rm = TRUE)
+        message(sprintf("Coupon values: %.2f%% to %.2f%% | %d unique coupons for %d bonds",
+                        coupon_range[1], coupon_range[2], n_unique_coupons, nrow(latest_data)))
+
+        if(n_unique_coupons < min(3, nrow(latest_data))) {
+            warning(sprintf("⚠ LOW COUPON VARIATION: Only %d unique coupons - check data!", n_unique_coupons))
+        }
 
         # ═══════════════════════════════════════════════════════════════════════
         # PHASE 6: CALCULATE CARRY & ROLL FOR EACH HOLDING PERIOD
@@ -2721,6 +2733,38 @@ calculate_advanced_carry_roll <- memoise(function(data,
                 if(nrow(issues) > 3) {
                     warning(sprintf("  ... and %d more (check full results)", nrow(issues) - 3))
                 }
+            }
+
+            # ═══════════════════════════════════════════════════════════════════
+            # CRITICAL VALIDATION: Check for identical returns (bug detection)
+            # ═══════════════════════════════════════════════════════════════════
+            gross_returns_90d <- combined %>%
+                filter(holding_period == "90d") %>%
+                pull(gross_return)
+
+            n_unique_gross <- n_distinct(round(gross_returns_90d, 4))
+            n_bonds <- length(gross_returns_90d)
+
+            if(n_unique_gross < min(5, n_bonds) && n_bonds > 1) {
+                warning("═══════════════════════════════════════════════════════════════════")
+                warning(sprintf("⚠ CRITICAL: Only %d unique gross returns for %d bonds!", n_unique_gross, n_bonds))
+                warning("This indicates identical calculations - likely a bug in:")
+                warning("  1. Coupon values all being the same")
+                warning("  2. Curve slope estimation returning same value for all bonds")
+                warning("  3. Data processing not preserving bond-specific values")
+                warning("═══════════════════════════════════════════════════════════════════")
+
+                # Log sample data for debugging
+                sample_data <- combined %>%
+                    filter(holding_period == "90d") %>%
+                    select(bond, coupon_standardized, yield_to_maturity, modified_duration,
+                           curve_slope_bps, carry_income, roll_return, gross_return) %>%
+                    head(5)
+
+                message("Sample calculation data (90d, first 5 bonds):")
+                print(sample_data)
+            } else {
+                message(sprintf("✓ Return variation check passed: %d unique returns for %d bonds", n_unique_gross, n_bonds))
             }
 
             return(combined)
