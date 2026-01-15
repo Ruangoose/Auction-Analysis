@@ -178,6 +178,108 @@ debug_bond_values <- function(df, stage_name) {
   return(invisible(NULL))
 }
 
+
+# ==============================================================================
+# MATURITY DATE LOADING FROM DEDICATED SHEET
+# Added 2026-01-15 to fix incorrect maturity inference from auction data
+# ==============================================================================
+
+#' Load maturity dates from dedicated maturity_date sheet
+#'
+#' This function reads maturity dates from a dedicated Excel sheet, which is
+#' the authoritative source for bond maturity information. Falls back gracefully
+#' if the sheet doesn't exist.
+#'
+#' The maturity_date sheet can be in either format:
+#' - Long format: columns (bond, maturity_date)
+#' - Wide format: columns (date, bond1, bond2, ...) with maturity dates as values
+#'
+#' @param excel_path Path to the Excel file
+#' @return Tibble with columns (bond, maturity_date) or NULL if sheet unavailable
+#' @export
+load_maturity_dates <- function(excel_path) {
+  tryCatch({
+    # Check if sheet exists
+    available_sheets <- readxl::excel_sheets(excel_path)
+
+    if (!"maturity_date" %in% available_sheets) {
+      message("  INFO: maturity_date sheet not found in Excel file")
+      message("        Available sheets: ", paste(available_sheets, collapse = ", "))
+      return(NULL)
+    }
+
+    mat_df <- readxl::read_excel(excel_path, sheet = "maturity_date",
+                                  na = c("", "NA", "#N/A", "N/A", "#VALUE!", "#REF!"))
+
+    if (is.null(mat_df) || nrow(mat_df) == 0) {
+      message("  WARNING: maturity_date sheet is empty")
+      return(NULL)
+    }
+
+    # Determine format and convert to lookup table
+    if ("bond" %in% names(mat_df) && "maturity_date" %in% names(mat_df)) {
+      # Long format: direct use
+      maturity_lookup <- mat_df %>%
+        dplyr::select(bond, maturity_date) %>%
+        dplyr::mutate(
+          maturity_date = lubridate::as_date(maturity_date)
+        ) %>%
+        dplyr::filter(!is.na(maturity_date)) %>%
+        dplyr::distinct(bond, .keep_all = TRUE)
+
+    } else if ("date" %in% names(mat_df)) {
+      # Wide format with date column - pivot to long
+      bond_cols <- setdiff(names(mat_df), "date")
+
+      maturity_lookup <- mat_df %>%
+        tidyr::pivot_longer(
+          cols = dplyr::all_of(bond_cols),
+          names_to = "bond",
+          values_to = "maturity_date"
+        ) %>%
+        dplyr::mutate(
+          maturity_date = lubridate::as_date(maturity_date)
+        ) %>%
+        dplyr::filter(!is.na(maturity_date)) %>%
+        dplyr::group_by(bond) %>%
+        dplyr::summarise(
+          maturity_date = dplyr::first(stats::na.omit(maturity_date)),
+          .groups = "drop"
+        )
+
+    } else {
+      # Try to interpret as wide format without date column
+      # Assume all columns are bond names with maturity date values
+      maturity_lookup <- mat_df %>%
+        tidyr::pivot_longer(
+          cols = dplyr::everything(),
+          names_to = "bond",
+          values_to = "maturity_date"
+        ) %>%
+        dplyr::mutate(
+          maturity_date = lubridate::as_date(maturity_date)
+        ) %>%
+        dplyr::filter(!is.na(maturity_date)) %>%
+        dplyr::distinct(bond, .keep_all = TRUE)
+    }
+
+    if (nrow(maturity_lookup) == 0) {
+      message("  WARNING: No valid maturity dates found in maturity_date sheet")
+      return(NULL)
+    }
+
+    message(sprintf("  Loaded maturity dates from maturity_date sheet: %d bonds", nrow(maturity_lookup)))
+    message(sprintf("    Bonds: %s", paste(sort(maturity_lookup$bond), collapse = ", ")))
+
+    return(maturity_lookup)
+
+  }, error = function(e) {
+    warning("Could not load maturity_date sheet: ", e$message)
+    return(NULL)
+  })
+}
+
+
 #' Load and process bond data from Excel file (ROBUST VERSION)
 #'
 #' This function implements comprehensive fixes for:
@@ -197,10 +299,11 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
   message("Reference date: ", reference_date)
 
   # --------------------------------------------------------------------------
-  # STEP 1: Build Maturity Lookup from Auctions Sheet
+  # STEP 1: Build Maturity Lookup (PRIMARY: maturity_date sheet, FALLBACK: auctions)
   # --------------------------------------------------------------------------
   message("\n[1/6] Building maturity lookup...")
 
+  # Load auction data (needed for other metrics even if not used for maturity)
   auction_raw <- tryCatch({
     readxl::read_excel(file_path, sheet = "auctions",
                        na = c("", "NA", "#N/A", "N/A", "#VALUE!", "#REF!")) %>%
@@ -209,30 +312,81 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
         offer_date = lubridate::as_date(offer_date)
       )
   }, error = function(e) {
-    stop("Failed to read auctions sheet: ", e$message)
+    warning("Failed to read auctions sheet: ", e$message)
+    NULL
   })
 
-  # Create single maturity per bond (use most recent auction's maturity)
-  maturity_lookup <- auction_raw %>%
-    dplyr::filter(!is.na(mat_date)) %>%
-    dplyr::group_by(bond) %>%
-    dplyr::summarise(
-      maturity_date = dplyr::first(mat_date),  # All auctions for same bond have same maturity
-      first_auction = min(offer_date, na.rm = TRUE),
-      last_auction = max(offer_date, na.rm = TRUE),
-      total_auctions = dplyr::n(),
-      .groups = "drop"
-    ) %>%
-    dplyr::mutate(
-      is_matured = maturity_date < reference_date,
-      days_to_maturity = as.numeric(maturity_date - reference_date)
-    )
+  # ═══════════════════════════════════════════════════════════════════════════
+  # PRIMARY SOURCE: Load maturity dates from dedicated maturity_date sheet
+  # This is the authoritative source - auction data inference is FALLBACK only
+  # ═══════════════════════════════════════════════════════════════════════════
+  message("  Checking for maturity_date sheet (PRIMARY SOURCE)...")
+  maturity_from_sheet <- load_maturity_dates(file_path)
+
+  if (!is.null(maturity_from_sheet) && nrow(maturity_from_sheet) > 0) {
+    message("  Using maturity dates from maturity_date sheet (PRIMARY SOURCE)")
+
+    maturity_lookup <- maturity_from_sheet %>%
+      dplyr::mutate(
+        is_matured = maturity_date < reference_date,
+        days_to_maturity = as.numeric(maturity_date - reference_date)
+      )
+
+    # Add auction info if available
+    if (!is.null(auction_raw)) {
+      auction_info <- auction_raw %>%
+        dplyr::group_by(bond) %>%
+        dplyr::summarise(
+          first_auction = min(offer_date, na.rm = TRUE),
+          last_auction = max(offer_date, na.rm = TRUE),
+          total_auctions = dplyr::n(),
+          .groups = "drop"
+        )
+
+      maturity_lookup <- maturity_lookup %>%
+        dplyr::left_join(auction_info, by = "bond")
+    }
+
+  } else {
+    # ═══════════════════════════════════════════════════════════════════════════
+    # FALLBACK: Infer maturity from auction data (less reliable)
+    # ═══════════════════════════════════════════════════════════════════════════
+    message("  maturity_date sheet not available - falling back to auction data inference")
+    warning("Using auction data for maturity inference - consider adding a maturity_date sheet for accuracy")
+
+    if (!is.null(auction_raw)) {
+      # Create single maturity per bond (use most recent auction's maturity)
+      maturity_lookup <- auction_raw %>%
+        dplyr::filter(!is.na(mat_date)) %>%
+        dplyr::group_by(bond) %>%
+        dplyr::summarise(
+          maturity_date = dplyr::first(mat_date),  # All auctions for same bond have same maturity
+          first_auction = min(offer_date, na.rm = TRUE),
+          last_auction = max(offer_date, na.rm = TRUE),
+          total_auctions = dplyr::n(),
+          .groups = "drop"
+        ) %>%
+        dplyr::mutate(
+          is_matured = maturity_date < reference_date,
+          days_to_maturity = as.numeric(maturity_date - reference_date)
+        )
+    } else {
+      # No maturity info available at all - create empty lookup
+      message("  WARNING: No maturity data available - all bonds will be treated as active")
+      maturity_lookup <- tibble::tibble(
+        bond = character(),
+        maturity_date = as.Date(character()),
+        is_matured = logical(),
+        days_to_maturity = numeric()
+      )
+    }
+  }
 
   # Report maturity status
   matured_bonds <- maturity_lookup %>% dplyr::filter(is_matured) %>% dplyr::pull(bond)
   active_bonds <- maturity_lookup %>% dplyr::filter(!is_matured) %>% dplyr::pull(bond)
 
-  message("  - Total bonds in auctions: ", nrow(maturity_lookup))
+  message("  - Total bonds with maturity info: ", nrow(maturity_lookup))
   message("  - Matured bonds (will be filtered out): ", paste(sort(matured_bonds), collapse = ", "))
   message("  - Active bonds: ", paste(sort(active_bonds), collapse = ", "))
 
@@ -768,20 +922,57 @@ load_auction_data <- function(excel_path) {
 #' Create comprehensive bond maturity lookup table
 #'
 #' Creates a lookup table with one row per bond containing the maturity date.
-#' This solves the problem of mature_date only appearing on auction dates.
-#' Also includes manual maturity dates for bonds without auction history.
+#' Priority order for maturity date sources:
+#' 1. PRIMARY: Dedicated maturity_date sheet in Excel (authoritative source)
+#' 2. FALLBACK: Auction data mat_date column (if maturity_date sheet unavailable)
 #'
-#' @param auction_df Auction dataframe with mat_date/mature_date column
+#' Note: Manual/hardcoded maturity entries have been removed to prevent conflicts.
+#' All maturity dates should come from the Excel file.
+#'
+#' @param auction_df Auction dataframe with mat_date/mature_date column (optional, used as fallback)
+#' @param excel_path Path to Excel file to read maturity_date sheet (optional but recommended)
 #' @return Tibble with one row per bond containing: bond, mature_date, maturity_source
 #' @export
-create_bond_maturity_lookup <- function(auction_df) {
+create_bond_maturity_lookup <- function(auction_df = NULL, excel_path = NULL) {
     message("\n╔════════════════════════════════════════════════════════╗")
     message("║        CREATING BOND MATURITY LOOKUP                   ║")
     message("╚════════════════════════════════════════════════════════╝")
 
     # ═══════════════════════════════════════════════════════════════════════
-    # SOURCE 1: Extract maturity dates from auction data
+    # PRIMARY SOURCE: Dedicated maturity_date sheet
+    # This is the authoritative source for bond maturity dates
     # ═══════════════════════════════════════════════════════════════════════
+    maturity_from_sheet <- NULL
+
+    if (!is.null(excel_path)) {
+        message("  [1] Checking for maturity_date sheet (PRIMARY SOURCE)...")
+        maturity_from_sheet <- load_maturity_dates(excel_path)
+
+        if (!is.null(maturity_from_sheet) && nrow(maturity_from_sheet) > 0) {
+            message("  Using maturity dates from maturity_date sheet (PRIMARY SOURCE)")
+
+            # Convert to standard format
+            combined <- maturity_from_sheet %>%
+                dplyr::rename(mature_date = maturity_date) %>%
+                dplyr::mutate(maturity_source = "maturity_date_sheet")
+
+            # Summary
+            message(sprintf("\n  Bond maturity lookup created: %d bonds total", nrow(combined)))
+            message(sprintf("    - From maturity_date sheet: %d", nrow(combined)))
+            message(sprintf("    Bonds: %s", paste(sort(combined$bond), collapse = ", ")))
+
+            message("╚════════════════════════════════════════════════════════╝\n")
+            return(combined)
+        }
+    }
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # FALLBACK: Extract maturity dates from auction data
+    # Only used if maturity_date sheet is unavailable
+    # ═══════════════════════════════════════════════════════════════════════
+    message("  [2] maturity_date sheet not available - falling back to auction data...")
+    warning("maturity_date sheet not available - using auction data for maturity inference (less reliable)")
+
     auction_maturities <- tibble::tibble(bond = character(), mature_date = as.Date(character()), maturity_source = character())
 
     if (!is.null(auction_df) && "mature_date" %in% names(auction_df)) {
@@ -790,7 +981,7 @@ create_bond_maturity_lookup <- function(auction_df) {
             dplyr::group_by(bond) %>%
             dplyr::summarise(
                 mature_date = max(mature_date, na.rm = TRUE),
-                maturity_source = "auction_data",
+                maturity_source = "auction_data_fallback",
                 .groups = "drop"
             )
         message(sprintf("  Maturity dates from auction data: %d bonds", nrow(auction_maturities)))
@@ -798,53 +989,20 @@ create_bond_maturity_lookup <- function(auction_df) {
         message("  WARNING: No mature_date column found in auction data!")
     }
 
-    # ═══════════════════════════════════════════════════════════════════════
-    # SOURCE 2: Manual maturity dates for bonds NOT in auctions
-    # These are SA Government bonds that don't appear in auction data
-    # IMPORTANT: Verify these dates from official SARB/JSE sources
-    # ═══════════════════════════════════════════════════════════════════════
-    manual_maturities <- tibble::tribble(
-        ~bond,   ~mature_date,           ~maturity_source,
-        # Historical/matured bonds
-        "R157",  as.Date("2014-09-15"),  "manual_historical",
-        "R197",  as.Date("2015-12-15"),  "manual_historical",
-        "R211",  as.Date("2017-02-28"),  "manual_historical",
-        "R212",  as.Date("2022-02-28"),  "manual_historical",
-        # Inflation-linked bonds (ILBs)
-        "R202",  as.Date("2033-01-31"),  "manual_ilb",
-        "R210",  as.Date("2028-03-31"),  "manual_ilb",
-        # Near-term maturity bonds - VERIFY THESE DATES
-        "R187",  as.Date("2027-05-15"),  "manual_estimate",
-        "R188",  as.Date("2027-12-21"),  "manual_estimate"
-    )
+    # Note: Manual/hardcoded maturity entries have been REMOVED
+    # All maturity data should come from the Excel file (either maturity_date sheet or auctions sheet)
+    # This prevents conflicts and ensures a single source of truth
 
-    message(sprintf("  Manual maturity entries available: %d bonds", nrow(manual_maturities)))
-
-    # ═══════════════════════════════════════════════════════════════════════
-    # COMBINE: Auction data takes precedence over manual entries
-    # ═══════════════════════════════════════════════════════════════════════
-    # Get bonds that are in manual but NOT in auction data
-    manual_only <- manual_maturities %>%
-        dplyr::filter(!bond %in% auction_maturities$bond)
-
-    combined <- dplyr::bind_rows(auction_maturities, manual_only)
+    combined <- auction_maturities
 
     # Summary
-    n_auction <- sum(combined$maturity_source == "auction_data")
-    n_manual <- sum(combined$maturity_source != "auction_data")
     message(sprintf("\n  Bond maturity lookup created: %d bonds total", nrow(combined)))
-    message(sprintf("    - From auction data: %d", n_auction))
-    message(sprintf("    - From manual entries: %d", n_manual))
+    message(sprintf("    - From auction data (fallback): %d", nrow(combined)))
 
-    if (n_manual > 0) {
-        manual_bonds <- combined %>% dplyr::filter(maturity_source != "auction_data")
-        message("  Manual maturity bonds:")
-        for (i in 1:nrow(manual_bonds)) {
-            message(sprintf("    - %s: %s (%s)",
-                           manual_bonds$bond[i],
-                           format(manual_bonds$mature_date[i], "%Y-%m-%d"),
-                           manual_bonds$maturity_source[i]))
-        }
+    if (nrow(combined) > 0) {
+        message(sprintf("    Bonds: %s", paste(sort(combined$bond), collapse = ", ")))
+    } else {
+        message("    WARNING: No maturity dates available - bonds with unknown maturity will be assumed ACTIVE")
     }
 
     message("╚════════════════════════════════════════════════════════╝\n")
@@ -1016,8 +1174,8 @@ load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
     if (!is.null(auction_df)) {
         message("\n  Applying maturity date fix (join by bond only)...")
 
-        # Step 1: Create maturity lookup table
-        bond_maturity_lookup <- create_bond_maturity_lookup(auction_df)
+        # Step 1: Create maturity lookup table (uses maturity_date sheet as PRIMARY source)
+        bond_maturity_lookup <- create_bond_maturity_lookup(auction_df, excel_path)
 
         # Step 2: Join MATURITY DATES by BOND ONLY (propagates to all dates!)
         full_df <- full_df %>%
@@ -1550,14 +1708,17 @@ diagnose_bond_data_loading <- function(excel_path) {
 
 #' Create bond metadata table with maturity dates from auction data ONLY
 #'
-#' IMPORTANT: Maturity dates are ONLY sourced from auction data (mature_date column).
+#' IMPORTANT: Maturity dates are sourced from:
+#' 1. PRIMARY: maturity_date sheet in Excel (if excel_path provided)
+#' 2. FALLBACK: auction data (mature_date column)
 #' SA Government Bond naming conventions do NOT indicate maturity year!
 #' Bonds with unknown maturity are assumed ACTIVE.
 #'
 #' @param full_df Data frame with all bond time series data
 #' @param auction_df Optional data frame with auction data including mature_date
+#' @param excel_path Optional path to Excel file to read maturity_date sheet
 #' @return Tibble with bond metadata including maturity dates and status
-create_bond_metadata <- function(full_df, auction_df = NULL) {
+create_bond_metadata <- function(full_df, auction_df = NULL, excel_path = NULL) {
     message("\n╔════════════════════════════════════════════════════════╗")
     message("║        CREATING BOND METADATA TABLE                    ║")
     message("╚════════════════════════════════════════════════════════╝")
@@ -1565,19 +1726,41 @@ create_bond_metadata <- function(full_df, auction_df = NULL) {
     # Get all unique bonds from the data
     all_bonds <- sort(unique(full_df$bond))
 
-    # METHOD 1: Extract maturity dates from auction data - THIS IS THE ONLY RELIABLE SOURCE!
-    if (!is.null(auction_df) && "mature_date" %in% names(auction_df)) {
-        maturity_from_data <- auction_df %>%
-            dplyr::filter(!is.na(mature_date)) %>%
-            dplyr::group_by(bond) %>%
-            dplyr::summarise(
-                maturity_date = max(mature_date, na.rm = TRUE),
-                .groups = "drop"
-            )
-        message(sprintf("  Maturity dates from auction data: %d bonds", nrow(maturity_from_data)))
-    } else {
-        maturity_from_data <- tibble::tibble(bond = character(), maturity_date = as.Date(character()))
-        message("  WARNING: No auction maturity data available!")
+    # ═══════════════════════════════════════════════════════════════════════════
+    # PRIMARY SOURCE: Maturity dates from dedicated maturity_date sheet
+    # ═══════════════════════════════════════════════════════════════════════════
+    maturity_from_data <- NULL
+    maturity_source_name <- "unknown"
+
+    if (!is.null(excel_path)) {
+        message("  Checking for maturity_date sheet (PRIMARY SOURCE)...")
+        maturity_from_sheet <- load_maturity_dates(excel_path)
+
+        if (!is.null(maturity_from_sheet) && nrow(maturity_from_sheet) > 0) {
+            maturity_from_data <- maturity_from_sheet
+            maturity_source_name <- "maturity_date_sheet"
+            message(sprintf("  Using maturity_date sheet: %d bonds", nrow(maturity_from_data)))
+        }
+    }
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # FALLBACK: Extract maturity dates from auction data
+    # ═══════════════════════════════════════════════════════════════════════════
+    if (is.null(maturity_from_data) || nrow(maturity_from_data) == 0) {
+        if (!is.null(auction_df) && "mature_date" %in% names(auction_df)) {
+            maturity_from_data <- auction_df %>%
+                dplyr::filter(!is.na(mature_date)) %>%
+                dplyr::group_by(bond) %>%
+                dplyr::summarise(
+                    maturity_date = max(mature_date, na.rm = TRUE),
+                    .groups = "drop"
+                )
+            maturity_source_name <- "auction_data_fallback"
+            message(sprintf("  Maturity dates from auction data (fallback): %d bonds", nrow(maturity_from_data)))
+        } else {
+            maturity_from_data <- tibble::tibble(bond = character(), maturity_date = as.Date(character()))
+            message("  WARNING: No maturity data available!")
+        }
     }
 
     # METHOD 2: Get last available data date for each bond (informational only, NOT for filtering)
@@ -1600,9 +1783,9 @@ create_bond_metadata <- function(full_df, auction_df = NULL) {
             # DO NOT INFER FROM BOND NAME! SA bond naming does not encode maturity!
             final_maturity_date = maturity_date,
 
-            # Source of maturity info
+            # Source of maturity info (uses variable from outer scope)
             maturity_source = dplyr::case_when(
-                !is.na(maturity_date) ~ "auction_data",
+                !is.na(maturity_date) ~ maturity_source_name,
                 TRUE ~ "unknown"
             ),
 
@@ -1644,7 +1827,7 @@ create_bond_metadata <- function(full_df, auction_df = NULL) {
         dplyr::arrange(final_maturity_date)
 
     if (nrow(matured_bonds) > 0) {
-        message("\n  Matured bonds (confirmed from auction data):")
+        message(sprintf("\n  Matured bonds (confirmed from %s):", maturity_source_name))
         for (i in seq_len(min(15, nrow(matured_bonds)))) {
             message(sprintf("    - %s: matured %s",
                            matured_bonds$bond[i],
