@@ -190,8 +190,9 @@ debug_bond_values <- function(df, stage_name) {
 #' the authoritative source for bond maturity information. Falls back gracefully
 #' if the sheet doesn't exist.
 #'
-#' The maturity_date sheet can be in either format:
-#' - Long format: columns (bond, maturity_date)
+#' The maturity_date sheet can be in any of these formats:
+#' - Long format: columns (bond, mat_date) - preferred format
+#' - Long format: columns (bond, maturity_date) - alternative
 #' - Wide format: columns (date, bond1, bond2, ...) with maturity dates as values
 #'
 #' @param excel_path Path to the Excel file
@@ -216,19 +217,43 @@ load_maturity_dates <- function(excel_path) {
       return(NULL)
     }
 
-    # Determine format and convert to lookup table
-    if ("bond" %in% names(mat_df) && "maturity_date" %in% names(mat_df)) {
-      # Long format: direct use
+    # Debug output
+    message("  maturity_date sheet columns: ", paste(names(mat_df), collapse = ", "))
+    message("  maturity_date sheet rows: ", nrow(mat_df))
+
+    # CASE 1: Long format with mat_date column (bond, mat_date) - use directly
+    if ("bond" %in% names(mat_df) && "mat_date" %in% names(mat_df)) {
+      message("  ✓ maturity_date sheet is in LONG format (bond, mat_date) - using directly")
+
       maturity_lookup <- mat_df %>%
-        dplyr::select(bond, maturity_date) %>%
-        dplyr::mutate(
-          maturity_date = lubridate::as_date(maturity_date)
-        ) %>%
-        dplyr::filter(!is.na(maturity_date)) %>%
+        dplyr::select(bond, mat_date) %>%
+        dplyr::rename(maturity_date = mat_date) %>%
+        dplyr::mutate(maturity_date = as.Date(maturity_date)) %>%
+        dplyr::filter(!is.na(maturity_date) & !is.na(bond)) %>%
         dplyr::distinct(bond, .keep_all = TRUE)
 
-    } else if ("date" %in% names(mat_df)) {
-      # Wide format with date column - pivot to long
+      message("  ✓ Loaded ", nrow(maturity_lookup), " bonds from maturity_date sheet")
+      return(maturity_lookup)
+    }
+
+    # CASE 2: Long format with maturity_date column (bond, maturity_date) - use directly
+    if ("bond" %in% names(mat_df) && "maturity_date" %in% names(mat_df)) {
+      message("  ✓ maturity_date sheet is in LONG format (bond, maturity_date) - using directly")
+
+      maturity_lookup <- mat_df %>%
+        dplyr::select(bond, maturity_date) %>%
+        dplyr::mutate(maturity_date = as.Date(maturity_date)) %>%
+        dplyr::filter(!is.na(maturity_date) & !is.na(bond)) %>%
+        dplyr::distinct(bond, .keep_all = TRUE)
+
+      message("  ✓ Loaded ", nrow(maturity_lookup), " bonds from maturity_date sheet")
+      return(maturity_lookup)
+    }
+
+    # CASE 3: Wide format (date column + bond columns) - pivot to long
+    if ("date" %in% names(mat_df)) {
+      message("  maturity_date sheet is in WIDE format - pivoting")
+
       bond_cols <- setdiff(names(mat_df), "date")
 
       maturity_lookup <- mat_df %>%
@@ -237,9 +262,7 @@ load_maturity_dates <- function(excel_path) {
           names_to = "bond",
           values_to = "maturity_date"
         ) %>%
-        dplyr::mutate(
-          maturity_date = lubridate::as_date(maturity_date)
-        ) %>%
+        dplyr::mutate(maturity_date = as.Date(maturity_date)) %>%
         dplyr::filter(!is.na(maturity_date)) %>%
         dplyr::group_by(bond) %>%
         dplyr::summarise(
@@ -247,31 +270,11 @@ load_maturity_dates <- function(excel_path) {
           .groups = "drop"
         )
 
-    } else {
-      # Try to interpret as wide format without date column
-      # Assume all columns are bond names with maturity date values
-      maturity_lookup <- mat_df %>%
-        tidyr::pivot_longer(
-          cols = dplyr::everything(),
-          names_to = "bond",
-          values_to = "maturity_date"
-        ) %>%
-        dplyr::mutate(
-          maturity_date = lubridate::as_date(maturity_date)
-        ) %>%
-        dplyr::filter(!is.na(maturity_date)) %>%
-        dplyr::distinct(bond, .keep_all = TRUE)
+      message("  ✓ Loaded ", nrow(maturity_lookup), " bonds from maturity_date sheet")
+      return(maturity_lookup)
     }
 
-    if (nrow(maturity_lookup) == 0) {
-      message("  WARNING: No valid maturity dates found in maturity_date sheet")
-      return(NULL)
-    }
-
-    message(sprintf("  Loaded maturity dates from maturity_date sheet: %d bonds", nrow(maturity_lookup)))
-    message(sprintf("    Bonds: %s", paste(sort(maturity_lookup$bond), collapse = ", ")))
-
-    return(maturity_lookup)
+    stop("maturity_date sheet has unexpected format. Expected columns: (bond, mat_date) or (bond, maturity_date) or (date, bond1, bond2, ...)")
 
   }, error = function(e) {
     warning("Could not load maturity_date sheet: ", e$message)
