@@ -198,6 +198,99 @@ load_auction_data <- function(excel_path) {
 }
 
 
+# ================================================================================
+# BOND MATURITY LOOKUP - COMPREHENSIVE MATURITY DATE MANAGEMENT
+# Fixes Problem 1 & 2: Ensures all bonds have proper maturity dates
+# ================================================================================
+
+#' Create comprehensive bond maturity lookup table
+#'
+#' Creates a lookup table with one row per bond containing the maturity date.
+#' This solves the problem of mature_date only appearing on auction dates.
+#' Also includes manual maturity dates for bonds without auction history.
+#'
+#' @param auction_df Auction dataframe with mat_date/mature_date column
+#' @return Tibble with one row per bond containing: bond, mature_date, maturity_source
+#' @export
+create_bond_maturity_lookup <- function(auction_df) {
+    message("\n╔════════════════════════════════════════════════════════╗")
+    message("║        CREATING BOND MATURITY LOOKUP                   ║")
+    message("╚════════════════════════════════════════════════════════╝")
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # SOURCE 1: Extract maturity dates from auction data
+    # ═══════════════════════════════════════════════════════════════════════
+    auction_maturities <- tibble::tibble(bond = character(), mature_date = as.Date(character()), maturity_source = character())
+
+    if (!is.null(auction_df) && "mature_date" %in% names(auction_df)) {
+        auction_maturities <- auction_df %>%
+            dplyr::filter(!is.na(mature_date)) %>%
+            dplyr::group_by(bond) %>%
+            dplyr::summarise(
+                mature_date = max(mature_date, na.rm = TRUE),
+                maturity_source = "auction_data",
+                .groups = "drop"
+            )
+        message(sprintf("  Maturity dates from auction data: %d bonds", nrow(auction_maturities)))
+    } else {
+        message("  WARNING: No mature_date column found in auction data!")
+    }
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # SOURCE 2: Manual maturity dates for bonds NOT in auctions
+    # These are SA Government bonds that don't appear in auction data
+    # IMPORTANT: Verify these dates from official SARB/JSE sources
+    # ═══════════════════════════════════════════════════════════════════════
+    manual_maturities <- tibble::tribble(
+        ~bond,   ~mature_date,           ~maturity_source,
+        # Historical/matured bonds
+        "R157",  as.Date("2014-09-15"),  "manual_historical",
+        "R197",  as.Date("2015-12-15"),  "manual_historical",
+        "R211",  as.Date("2017-02-28"),  "manual_historical",
+        "R212",  as.Date("2022-02-28"),  "manual_historical",
+        # Inflation-linked bonds (ILBs)
+        "R202",  as.Date("2033-01-31"),  "manual_ilb",
+        "R210",  as.Date("2028-03-31"),  "manual_ilb",
+        # Near-term maturity bonds - VERIFY THESE DATES
+        "R187",  as.Date("2027-05-15"),  "manual_estimate",
+        "R188",  as.Date("2027-12-21"),  "manual_estimate"
+    )
+
+    message(sprintf("  Manual maturity entries available: %d bonds", nrow(manual_maturities)))
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # COMBINE: Auction data takes precedence over manual entries
+    # ═══════════════════════════════════════════════════════════════════════
+    # Get bonds that are in manual but NOT in auction data
+    manual_only <- manual_maturities %>%
+        dplyr::filter(!bond %in% auction_maturities$bond)
+
+    combined <- dplyr::bind_rows(auction_maturities, manual_only)
+
+    # Summary
+    n_auction <- sum(combined$maturity_source == "auction_data")
+    n_manual <- sum(combined$maturity_source != "auction_data")
+    message(sprintf("\n  Bond maturity lookup created: %d bonds total", nrow(combined)))
+    message(sprintf("    - From auction data: %d", n_auction))
+    message(sprintf("    - From manual entries: %d", n_manual))
+
+    if (n_manual > 0) {
+        manual_bonds <- combined %>% dplyr::filter(maturity_source != "auction_data")
+        message("  Manual maturity bonds:")
+        for (i in 1:nrow(manual_bonds)) {
+            message(sprintf("    - %s: %s (%s)",
+                           manual_bonds$bond[i],
+                           format(manual_bonds$mature_date[i], "%Y-%m-%d"),
+                           manual_bonds$maturity_source[i]))
+        }
+    }
+
+    message("╚════════════════════════════════════════════════════════╝\n")
+
+    return(combined)
+}
+
+
 #' Load all bond data from Excel file
 #'
 #' @param excel_path Path to the Excel file
@@ -312,10 +405,90 @@ load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
             dplyr::left_join(cpn_df, by = "bond")
     }
 
-    # Join auction data
+    # ═══════════════════════════════════════════════════════════════════════════
+    # FIX: PROPER MATURITY DATE HANDLING
+    # Problem: Previously joined auction_df by (date, bond), so mature_date
+    # only appeared on auction dates (sparse). Now we:
+    # 1. Create a maturity LOOKUP table (one row per bond)
+    # 2. Join maturity dates by BOND ONLY (propagates to all dates)
+    # 3. Join auction METRICS by date+bond (for date-specific data like bid_to_cover)
+    # ═══════════════════════════════════════════════════════════════════════════
+
     if (!is.null(auction_df)) {
+        message("\n  Applying maturity date fix (join by bond only)...")
+
+        # Step 1: Create maturity lookup table
+        bond_maturity_lookup <- create_bond_maturity_lookup(auction_df)
+
+        # Step 2: Join MATURITY DATES by BOND ONLY (propagates to all dates!)
         full_df <- full_df %>%
-            dplyr::left_join(auction_df, by = c("date", "bond"))
+            dplyr::left_join(
+                bond_maturity_lookup %>% dplyr::select(bond, mature_date),
+                by = "bond"
+            )
+
+        # Check maturity coverage
+        n_with_maturity <- sum(!is.na(full_df$mature_date))
+        n_total <- nrow(full_df)
+        pct_coverage <- round(100 * n_with_maturity / n_total, 1)
+        message(sprintf("  ✓ Maturity date coverage: %d/%d rows (%.1f%%)",
+                       n_with_maturity, n_total, pct_coverage))
+
+        # Step 3: Join AUCTION METRICS by date+bond (for date-specific data)
+        # These columns are only relevant on auction dates
+        auction_metrics <- auction_df %>%
+            dplyr::select(
+                date, bond,
+                # Keep these from original - date-specific metrics
+                dplyr::any_of(c(
+                    "offer_amount", "allocation", "bids_received", "bid_to_cover",
+                    "offer_date", "announcement_date", "settle_date",
+                    "bond_coupon", "clearing_yield", "non_comps",
+                    "number_bids_received", "best_bid", "worst_bid", "auction_tail"
+                ))
+            ) %>%
+            # Remove mature_date from this join (already joined above)
+            dplyr::select(-dplyr::any_of("mature_date"))
+
+        full_df <- full_df %>%
+            dplyr::left_join(auction_metrics, by = c("date", "bond"))
+
+        message("  ✓ Auction metrics joined by (date, bond)")
+
+    } else {
+        message("  ⚠ No auction data - maturity dates will be NA")
+    }
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Calculate time_to_maturity now that mature_date is properly populated
+    # ═══════════════════════════════════════════════════════════════════════════
+    full_df <- full_df %>%
+        dplyr::mutate(
+            time_to_maturity = dplyr::case_when(
+                !is.na(mature_date) ~ as.numeric(difftime(mature_date, date, units = "days")) / 365.25,
+                TRUE ~ NA_real_
+            ),
+            maturity_bucket = dplyr::case_when(
+                is.na(time_to_maturity) ~ "Unknown",
+                time_to_maturity <= 0 ~ "Matured",
+                time_to_maturity <= 3 ~ "Short (0-3y)",
+                time_to_maturity <= 7 ~ "Medium (3-7y)",
+                time_to_maturity <= 12 ~ "Long (7-12y)",
+                time_to_maturity > 12 ~ "Ultra-Long (12y+)",
+                TRUE ~ "Unknown"
+            )
+        )
+
+    # Log maturity bucket distribution
+    if (run_diagnostics) {
+        bucket_dist <- full_df %>%
+            dplyr::filter(date == max(date, na.rm = TRUE)) %>%
+            dplyr::count(maturity_bucket) %>%
+            dplyr::arrange(dplyr::desc(n))
+        message("\n  Maturity bucket distribution (latest date):")
+        for (i in 1:nrow(bucket_dist)) {
+            message(sprintf("    %s: %d bonds", bucket_dist$maturity_bucket[i], bucket_dist$n[i]))
+        }
     }
 
     rows_after <- nrow(full_df)

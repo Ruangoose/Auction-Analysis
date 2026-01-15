@@ -61,14 +61,18 @@ calculate_conviction_score <- function(spread_bps, zscore, bid_to_cover = NA_rea
 }
 
 #' @export
+#' @title Calculate Relative Value Metrics
+#' @description Calculates z-scores and percentile ranks for bond spreads.
+#'   IMPORTANT FIX: No longer uses placeholder values (1.0) that mask missing data.
+#'   Instead, uses NA for insufficient data and adds quality flags.
 calculate_relative_value <- function(data, lookback = NULL) {
     # Set default lookback if NULL or invalid
     if(is.null(lookback) || length(lookback) == 0 || is.na(lookback) || lookback <= 0) {
         lookback <- 60
     }
 
-    # Ensure we have minimum data points
-    lookback <- min(lookback, 30)  # At least 30 days for meaningful statistics
+    # Ensure minimum lookback for meaningful statistics
+    lookback <- max(lookback, 20)  # At least 20 days for meaningful statistics
 
     # Check if spread_to_curve exists
     if(!"spread_to_curve" %in% names(data)) {
@@ -86,9 +90,13 @@ calculate_relative_value <- function(data, lookback = NULL) {
 
         n_obs <- nrow(bond_data)
 
-        if(n_obs >= 2) {
-            # Calculate rolling statistics with minimum window
-            window_size <- min(lookback, n_obs, 20)  # At least 20 days
+        # ═══════════════════════════════════════════════════════════════════════
+        # FIX: Use actual standard deviation, don't mask with placeholder values
+        # Minimum SD is set to 0.1 bps (not 1 bp) to allow meaningful z-scores
+        # ═══════════════════════════════════════════════════════════════════════
+
+        if(n_obs >= 5) {  # Need at least 5 observations for meaningful statistics
+            window_size <- min(lookback, n_obs)
 
             bond_data$hist_mean_spread <- zoo::rollmean(
                 bond_data$spread_to_curve,
@@ -98,28 +106,52 @@ calculate_relative_value <- function(data, lookback = NULL) {
                 partial = TRUE
             )
 
+            # FIX: Use 0.1 bps minimum, not 1 bp - allows meaningful z-scores
             bond_data$hist_sd_spread <- zoo::rollapply(
                 bond_data$spread_to_curve,
                 width = window_size,
                 FUN = function(x) {
                     s <- sd(x, na.rm = TRUE)
-                    ifelse(is.na(s) || s < 1, 1, s)  # Minimum 1bp standard deviation
+                    # Use NA if truly no variation, otherwise use actual SD (min 0.1 bps)
+                    if(is.na(s) || s < 0.01) {
+                        return(NA_real_)
+                    }
+                    return(max(s, 0.1))  # 0.1 bps minimum, not 1 bp
                 },
-                fill = sd(bond_data$spread_to_curve, na.rm = TRUE),
+                fill = NA_real_,
                 align = "right",
                 partial = TRUE
             )
 
+            # Add data quality flag
+            bond_data$rv_data_quality <- "Good"
+
+        } else if(n_obs >= 2) {
+            # Limited data - calculate but flag as low quality
+            bond_data$hist_mean_spread <- mean(bond_data$spread_to_curve, na.rm = TRUE)
+            overall_sd <- sd(bond_data$spread_to_curve, na.rm = TRUE)
+            # Use actual SD if meaningful, NA otherwise
+            bond_data$hist_sd_spread <- if(!is.na(overall_sd) && overall_sd >= 0.1) overall_sd else NA_real_
+            bond_data$rv_data_quality <- "Low"
+
         } else {
+            # Single observation - cannot calculate meaningful z-score
             bond_data$hist_mean_spread <- bond_data$spread_to_curve
-            bond_data$hist_sd_spread <- 10  # Default 10bp standard deviation
+            bond_data$hist_sd_spread <- NA_real_  # FIX: NA instead of 10
+            bond_data$rv_data_quality <- "Insufficient"
         }
 
-        # Calculate z-score with floor on standard deviation
-        bond_data$z_score <- (bond_data$spread_to_curve - bond_data$hist_mean_spread) /
-            pmax(bond_data$hist_sd_spread, 1)
+        # ═══════════════════════════════════════════════════════════════════════
+        # Calculate z-score - only when we have valid SD
+        # FIX: Don't floor SD at 1, use actual value or NA
+        # ═══════════════════════════════════════════════════════════════════════
+        bond_data$z_score <- dplyr::case_when(
+            is.na(bond_data$hist_sd_spread) ~ NA_real_,
+            bond_data$hist_sd_spread < 0.1 ~ NA_real_,  # SD too small for meaningful z-score
+            TRUE ~ (bond_data$spread_to_curve - bond_data$hist_mean_spread) / bond_data$hist_sd_spread
+        )
 
-        # Cap z-scores at reasonable levels
+        # Cap z-scores at reasonable levels (if not NA)
         bond_data$z_score <- pmin(pmax(bond_data$z_score, -5), 5)
 
         # Calculate percentile rank
@@ -131,9 +163,21 @@ calculate_relative_value <- function(data, lookback = NULL) {
     # Combine results
     result <- bind_rows(result_list)
 
-    # Fill any remaining NAs
-    result$z_score[is.na(result$z_score)] <- 0
-    result$percentile_rank[is.na(result$percentile_rank)] <- 0.5
+    # ═══════════════════════════════════════════════════════════════════════════
+    # FIX: Do NOT fill NA z-scores with 0 - this masks missing data!
+    # Let downstream code handle NAs appropriately (filter or show as "N/A")
+    # ═══════════════════════════════════════════════════════════════════════════
+    # OLD (BAD): result$z_score[is.na(result$z_score)] <- 0
+    # OLD (BAD): result$percentile_rank[is.na(result$percentile_rank)] <- 0.5
+
+    # Add summary logging
+    n_good <- sum(result$rv_data_quality == "Good", na.rm = TRUE)
+    n_low <- sum(result$rv_data_quality == "Low", na.rm = TRUE)
+    n_insufficient <- sum(result$rv_data_quality == "Insufficient", na.rm = TRUE)
+    n_na_zscore <- sum(is.na(result$z_score))
+
+    message(sprintf("  Relative value calculation: Good=%d, Low=%d, Insufficient=%d, NA z-scores=%d",
+                   n_good, n_low, n_insufficient, n_na_zscore))
 
     return(result)
 }
