@@ -168,10 +168,10 @@ server <- function(input, output, session) {
 
             # Try multiple possible Excel file locations
             excel_paths <- c(
-                "data/Siyanda Bonds.xlsx",                 # Standard location
-                "Siyanda Bonds.xlsx",                      # Same directory
-                "../data/Siyanda Bonds.xlsx",              # Parent data directory
-                "bond-dashboard/data/Siyanda Bonds.xlsx"   # Old structure
+                "data/Insele Bonds Data File.xlsx",                 # Standard location
+                "Insele Bonds Data File.xlsx",                      # Same directory
+                "../data/Insele Bonds Data File.xlsx",              # Parent data directory
+                "bond-dashboard/data/Insele Bonds Data File.xlsx"   # Old structure
             )
 
             # Try multiple possible cache file locations
