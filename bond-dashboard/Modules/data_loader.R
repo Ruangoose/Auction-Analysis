@@ -8,6 +8,176 @@
 # Fixes: Corrupt placeholders, matured bond contamination, #N/A handling
 # ==============================================================================
 
+# ==============================================================================
+# CORRUPTION DETECTION AND VALIDATION FUNCTIONS
+# Added 2026-01-15 to fix bond data corruption (YTM=1.0%, ModDur=1.0)
+# ==============================================================================
+
+#' Check if cache data is corrupted
+#'
+#' Detects corruption signatures: YTM=1.0%, ModDur=1.0 or ModDur=0.0
+#' SA Government bonds should never have these exact values
+#'
+#' @param cache_data Data frame to check for corruption
+#' @return TRUE if data is corrupted, FALSE if clean
+is_cache_corrupted <- function(cache_data) {
+  if (is.null(cache_data) || nrow(cache_data) == 0) {
+    return(TRUE)  # Empty data is considered corrupted
+  }
+
+  # Check for corruption signatures
+  has_placeholder_ytm <- any(
+    abs(cache_data$yield_to_maturity - 1.0) < 0.01,
+    na.rm = TRUE
+  )
+
+  has_placeholder_dur <- any(
+    abs(cache_data$modified_duration - 1.0) < 0.01 |
+    abs(cache_data$modified_duration) < 0.01,
+    na.rm = TRUE
+  )
+
+  # Check for unrealistic YTM range (SA bonds should be 5-15%)
+  ytm_out_of_range <- any(
+    cache_data$yield_to_maturity < 2 | cache_data$yield_to_maturity > 20,
+    na.rm = TRUE
+  )
+
+  is_corrupted <- has_placeholder_ytm || has_placeholder_dur
+
+  if (is_corrupted) {
+    message("  Corruption signatures detected:")
+    if (has_placeholder_ytm) {
+      bad_bonds <- unique(cache_data$bond[abs(cache_data$yield_to_maturity - 1.0) < 0.01])
+      message("    - Placeholder YTM (1.0%): ", paste(bad_bonds, collapse = ", "))
+    }
+    if (has_placeholder_dur) {
+      bad_bonds_dur <- unique(cache_data$bond[
+        abs(cache_data$modified_duration - 1.0) < 0.01 |
+        abs(cache_data$modified_duration) < 0.01
+      ])
+      message("    - Placeholder ModDur (0.0 or 1.0): ", paste(bad_bonds_dur, collapse = ", "))
+    }
+  }
+
+  return(is_corrupted)
+}
+
+
+#' Validate bond data before caching
+#'
+#' Comprehensive validation to prevent corrupted data from being saved to cache
+#' Checks for placeholder values, valid ranges, and data variation
+#'
+#' @param df Data frame with bond data
+#' @return TRUE if data is valid, throws error if corrupted
+#' @export
+validate_data_before_cache <- function(df) {
+  message("\n  Validating data before caching...")
+
+  if (is.null(df) || nrow(df) == 0) {
+    stop("DATA VALIDATION FAILED - Empty dataframe")
+  }
+
+  # Build list of validation checks
+  checks <- list()
+
+  # Check 1: No placeholder YTM values (exactly 1.0)
+  placeholder_ytm_count <- sum(abs(df$yield_to_maturity - 1.0) < 0.01, na.rm = TRUE)
+  checks$no_placeholder_ytm <- placeholder_ytm_count == 0
+
+  # Check 2: No placeholder duration values (exactly 1.0 or 0.0)
+  placeholder_dur_count <- sum(
+    abs(df$modified_duration - 1.0) < 0.01 |
+    abs(df$modified_duration) < 0.01,
+    na.rm = TRUE
+  )
+  checks$no_placeholder_dur <- placeholder_dur_count == 0
+
+  # Check 3: YTM in reasonable range (2% to 20% for SA bonds)
+  checks$ytm_in_range <- all(
+    df$yield_to_maturity > 2 & df$yield_to_maturity < 20,
+    na.rm = TRUE
+  )
+
+  # Check 4: Duration in reasonable range (0.1 to 30 years)
+  checks$dur_in_range <- all(
+    df$modified_duration > 0.1 & df$modified_duration < 30,
+    na.rm = TRUE
+  )
+
+  # Check 5: Sufficient YTM variation (should have many unique values)
+  unique_ytm <- length(unique(round(df$yield_to_maturity, 2)))
+  checks$ytm_has_variation <- unique_ytm > 5
+
+  # Check 6: No NA values in critical columns
+  checks$no_na_ytm <- sum(is.na(df$yield_to_maturity)) == 0
+  checks$no_na_dur <- sum(is.na(df$modified_duration)) == 0
+
+  # Report results
+  failed_checks <- names(checks)[!unlist(checks)]
+
+  if (length(failed_checks) > 0) {
+    message("  VALIDATION FAILED:")
+    for (check in failed_checks) {
+      message("    - ", check)
+    }
+
+    # Detailed report for debugging
+    if (!checks$no_placeholder_ytm) {
+      bad <- unique(df$bond[abs(df$yield_to_maturity - 1.0) < 0.01])
+      message("    Bonds with YTM=1.0%: ", paste(bad, collapse = ", "))
+    }
+    if (!checks$no_placeholder_dur) {
+      bad <- unique(df$bond[abs(df$modified_duration - 1.0) < 0.01 | abs(df$modified_duration) < 0.01])
+      message("    Bonds with ModDur=0 or 1: ", paste(bad, collapse = ", "))
+    }
+
+    stop(paste0(
+      "DATA VALIDATION FAILED - REFUSING TO CACHE CORRUPTED DATA\n",
+      "Failed checks: ", paste(failed_checks, collapse = ", "), "\n",
+      "This prevents corruption from being persisted."
+    ))
+  }
+
+  message("  All validation checks PASSED")
+  return(TRUE)
+}
+
+
+#' Debug helper: Track bond values through processing pipeline
+#'
+#' Logs bonds with suspicious values at each processing stage
+#'
+#' @param df Data frame to check
+#' @param stage_name Name of the processing stage for logging
+#' @return Invisible NULL (for side effects only)
+debug_bond_values <- function(df, stage_name) {
+  if (is.null(df) || nrow(df) == 0) {
+    message(sprintf("  [%s] Empty dataframe!", stage_name))
+    return(invisible(NULL))
+  }
+
+  suspect_bonds <- df %>%
+    dplyr::filter(
+      (abs(yield_to_maturity - 1.0) < 0.01) |
+      (abs(modified_duration - 1.0) < 0.01) |
+      (abs(modified_duration) < 0.01)
+    ) %>%
+    dplyr::distinct(bond) %>%
+    dplyr::pull(bond)
+
+  if (length(suspect_bonds) > 0) {
+    message(sprintf("  [%s] SUSPICIOUS VALUES DETECTED in bonds: %s",
+                    stage_name,
+                    paste(suspect_bonds, collapse = ", ")))
+  } else {
+    message(sprintf("  [%s] All bonds have valid values", stage_name))
+  }
+
+  return(invisible(NULL))
+}
+
 #' Load and process bond data from Excel file (ROBUST VERSION)
 #'
 #' This function implements comprehensive fixes for:
@@ -164,26 +334,53 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
   })
 
   # --------------------------------------------------------------------------
-  # STEP 6: Combine All Data
+  # STEP 6: Combine All Data (FIXED: Use inner_join for critical fields)
   # --------------------------------------------------------------------------
   message("\n[5/6] Combining datasets...")
+
+  # FIX: Use INNER JOIN for critical fields (YTM and ModDur)
+  # This ensures we only keep rows where BOTH values exist
+  # Previously left_join introduced NA values that caused corruption
 
   # Start with YTM as base (most critical)
   full_df <- ytm_df
 
-  # Join modified duration
+  # CRITICAL FIX: Inner join for modified duration (must have both YTM and ModDur)
   if (!is.null(mod_dur_df)) {
+    rows_before <- nrow(full_df)
     full_df <- full_df %>%
-      dplyr::left_join(mod_dur_df, by = c("date", "bond"))
+      dplyr::inner_join(mod_dur_df, by = c("date", "bond"))
+    rows_after <- nrow(full_df)
+    message(sprintf("    - Inner join with mod_dur: %d -> %d rows", rows_before, rows_after))
   }
 
-  # Join duration
+  # CRITICAL FIX: Validate immediately after core join
+  # Filter out any rows with invalid YTM or ModDur values
+  rows_before_filter <- nrow(full_df)
+  full_df <- full_df %>%
+    dplyr::filter(
+      !is.na(yield_to_maturity),
+      !is.na(modified_duration),
+      yield_to_maturity > 2,   # SA bonds never below 2%
+      yield_to_maturity < 20,  # SA bonds never above 20%
+      modified_duration > 0.1  # Duration must be positive and reasonable
+    )
+  rows_after_filter <- nrow(full_df)
+  if (rows_before_filter != rows_after_filter) {
+    message(sprintf("    - Filtered out %d rows with invalid YTM/ModDur values",
+                    rows_before_filter - rows_after_filter))
+  }
+
+  # Debug checkpoint: Check for suspicious values after core join
+  debug_bond_values(full_df, "After YTM+ModDur join")
+
+  # Join duration (optional - use left_join)
   if (!is.null(dur_df)) {
     full_df <- full_df %>%
       dplyr::left_join(dur_df, by = c("date", "bond"))
   }
 
-  # Join convexity
+  # Join convexity (optional - use left_join)
   if (!is.null(conv_df)) {
     full_df <- full_df %>%
       dplyr::left_join(conv_df, by = c("date", "bond"))
@@ -733,6 +930,10 @@ load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
     # Step 5: Merge all data
     message("\n[5/5] Merging all data...")
 
+    # =========================================================================
+    # CRITICAL FIX: Use INNER JOIN for critical fields to prevent NA corruption
+    # =========================================================================
+
     # Start with modified duration as the base
     full_df <- ts_data_list[["mod_dur"]]
 
@@ -742,10 +943,40 @@ load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
 
     # Track rows before and after joins for diagnostics
     rows_before <- nrow(full_df)
+    message(sprintf("    Base (mod_dur): %d rows", rows_before))
 
-    # Join all other time series data
+    # CRITICAL FIX: INNER JOIN for YTM (must have both mod_dur and ytm)
+    ytm_data <- ts_data_list[["ytm"]]
+    if (!is.null(ytm_data)) {
+        full_df <- full_df %>%
+            dplyr::inner_join(ytm_data, by = c("date", "bond"))
+        message(sprintf("    After INNER join with ytm: %d rows (was %d)", nrow(full_df), rows_before))
+    } else {
+        stop("Failed to load YTM data - cannot proceed")
+    }
+
+    # CRITICAL FIX: Filter out invalid values immediately after core join
+    rows_before_filter <- nrow(full_df)
+    full_df <- full_df %>%
+        dplyr::filter(
+            !is.na(yield_to_maturity),
+            !is.na(modified_duration),
+            yield_to_maturity > 2,   # SA bonds never below 2%
+            yield_to_maturity < 20,  # SA bonds never above 20%
+            modified_duration > 0.1  # Duration must be positive and reasonable
+        )
+    rows_after_filter <- nrow(full_df)
+    if (rows_before_filter != rows_after_filter) {
+        message(sprintf("    Filtered out %d rows with invalid YTM/ModDur values",
+                        rows_before_filter - rows_after_filter))
+    }
+
+    # Debug checkpoint for critical fields
+    debug_bond_values(full_df, "After YTM+ModDur core join")
+
+    # LEFT JOIN for remaining optional time series data
     for (sheet in names(time_series_sheets)) {
-        if (sheet == "mod_dur") next  # Already have this as base
+        if (sheet %in% c("mod_dur", "ytm")) next  # Already joined these
 
         sheet_data <- ts_data_list[[sheet]]
         if (!is.null(sheet_data)) {
@@ -754,14 +985,17 @@ load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
         }
     }
 
-    # DIAGNOSTIC CHECKPOINT 2: Check for NA values introduced by joins
+    # DIAGNOSTIC CHECKPOINT 2: Verify no corruption after all joins
     if (run_diagnostics) {
         na_ytm <- sum(is.na(full_df$yield_to_maturity))
         na_dur <- sum(is.na(full_df$modified_duration))
         if (na_ytm > 0 || na_dur > 0) {
-            message(sprintf("\n  ⚠ WARNING: Join introduced NA values - YTM: %d, Duration: %d",
+            message(sprintf("\n  ⚠ WARNING: NA values in critical fields - YTM: %d, Duration: %d",
                             na_ytm, na_dur))
+        } else {
+            message("    ✓ No NA values in critical fields (YTM, ModDur)")
         }
+        debug_bond_values(full_df, "After all joins")
     }
 
     # Join coupon data (by bond only - static)
@@ -938,8 +1172,33 @@ load_bond_data <- function(
     message(sprintf("  Force refresh: %s", force_refresh))
     message(sprintf("  Verify quality: %s", verify_quality))
 
-    # Check if we need to reload from Excel
-    needs_refresh <- force_refresh || is_cache_stale(excel_path, cache_path)
+    # =========================================================================
+    # CRITICAL FIX: Check for cache corruption BEFORE deciding to use it
+    # =========================================================================
+    cache_is_corrupted <- FALSE
+
+    if (file.exists(cache_path) && !force_refresh) {
+        message("\n  Checking cache for corruption...")
+        tryCatch({
+            cache_data <- readRDS(cache_path)
+            cache_is_corrupted <- is_cache_corrupted(cache_data)
+
+            if (cache_is_corrupted) {
+                message("  ⚠ CORRUPTED CACHE DETECTED - Will reload from Excel")
+                # Delete the corrupted cache file
+                file.remove(cache_path)
+                message("  Corrupted cache file deleted")
+            } else {
+                message("  ✓ Cache integrity check PASSED")
+            }
+        }, error = function(e) {
+            message("  ⚠ Cache read error - will reload from Excel")
+            cache_is_corrupted <- TRUE
+        })
+    }
+
+    # Check if we need to reload from Excel (including corruption check)
+    needs_refresh <- force_refresh || cache_is_corrupted || is_cache_stale(excel_path, cache_path)
 
     if (needs_refresh) {
         message("\n→ Loading fresh data from Excel...")
@@ -947,8 +1206,12 @@ load_bond_data <- function(
         # Load from Excel with diagnostics
         full_df <- load_from_excel(excel_path, run_diagnostics = verify_quality)
 
-        # Save to cache
+        # =====================================================================
+        # CRITICAL FIX: Validate data BEFORE caching to prevent corruption
+        # =====================================================================
         tryCatch({
+            validate_data_before_cache(full_df)
+
             # Ensure cache directory exists
             cache_dir <- dirname(cache_path)
             if (!dir.exists(cache_dir)) {
@@ -958,7 +1221,9 @@ load_bond_data <- function(
             saveRDS(full_df, cache_path)
             message(sprintf("\n✓ Cache saved to: %s", cache_path))
         }, error = function(e) {
-            warning(sprintf("Failed to save cache: %s", e$message))
+            warning(sprintf("Cache validation/save failed: %s", e$message))
+            message("  Data was NOT cached due to validation failure")
+            message("  The data will be used for this session but may have issues")
         })
 
     } else {
