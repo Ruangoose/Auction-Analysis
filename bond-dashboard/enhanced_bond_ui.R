@@ -1615,10 +1615,10 @@ ui <- dashboardPage(
                                                       multiple = TRUE,
                                                       options = list(
                                                           `actions-box` = TRUE,
-                                                          `selected-text-format` = "count > 2",
+                                                          `selected-text-format` = "count > 3",
                                                           `count-selected-text` = "{0} bonds selected",
                                                           `live-search` = TRUE,
-                                                          `max-options` = 8
+                                                          `max-options` = 30
                                                       )
                                                   ),
 
