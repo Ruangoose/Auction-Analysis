@@ -375,3 +375,220 @@ validate_bond_data_columns <- function(df) {
 
     return(TRUE)
 }
+
+
+# ================================================================================
+# BOND MATURITY FILTERING FUNCTIONS
+# Dynamic filtering to exclude matured bonds based on selected date range
+# ================================================================================
+
+#' Infer maturity date from bond name
+#'
+#' SA government bonds follow naming conventions:
+#' - R2030, R2048 format: Year is the 4-digit number
+#' - R186, R213 format: R1XX means 20XX (e.g., R186 -> 2026)
+#'
+#' @param bond_name Character string of bond name (e.g., "R2030", "R186")
+#' @return Date object representing estimated maturity date, or NA
+infer_maturity_from_name <- function(bond_name) {
+    # Extract numeric portion
+    num <- gsub("R", "", bond_name, ignore.case = TRUE)
+
+    year <- NA_integer_
+
+    if (nchar(num) == 4 && grepl("^\\d{4}$", num)) {
+        # R2030, R2048 format -> year is the number
+        year <- as.integer(num)
+    } else if (nchar(num) == 3 && grepl("^\\d{3}$", num)) {
+        # R186, R213 format
+        first_digit <- as.integer(substr(num, 1, 1))
+        last_two <- as.integer(substr(num, 2, 3))
+
+        if (first_digit == 1) {
+            # R1XX -> 20XX (e.g., R186 -> 2026)
+            year <- 2000 + last_two
+        } else if (first_digit == 2) {
+            # R2XX -> 20XX (e.g., R209 -> 2009, R213 -> 2013)
+            year <- 2000 + as.integer(num) %% 100
+        }
+    }
+
+    # Return Dec 31 of maturity year as conservative estimate
+    # Actual date should come from auction data when available
+    if (!is.na(year) && year >= 2000 && year <= 2100) {
+        return(as.Date(paste0(year, "-12-31")))
+    }
+
+    return(NA_Date_)
+}
+
+
+#' Create bond metadata table with maturity dates from multiple sources
+#'
+#' Priority for maturity date:
+#' 1. Auction data (mature_date column) - most reliable
+#' 2. Inferred from bond name convention
+#' 3. Last data date (assumes bond matured if no more data)
+#'
+#' @param full_df Data frame with all bond time series data
+#' @param auction_df Optional data frame with auction data including mature_date
+#' @return Tibble with bond metadata including maturity dates and status
+create_bond_metadata <- function(full_df, auction_df = NULL) {
+    message("╔════════════════════════════════════════════════════════╗")
+    message("║        CREATING BOND METADATA TABLE                    ║")
+    message("╚════════════════════════════════════════════════════════╝")
+
+    # Method 1: Extract maturity dates from auction data (preferred)
+    if (!is.null(auction_df) && "mature_date" %in% names(auction_df)) {
+        maturity_from_auctions <- auction_df %>%
+            dplyr::filter(!is.na(mature_date)) %>%
+            dplyr::group_by(bond) %>%
+            dplyr::summarise(
+                maturity_date = max(mature_date, na.rm = TRUE),
+                .groups = "drop"
+            )
+        message(sprintf("  Maturity dates from auctions: %d bonds", nrow(maturity_from_auctions)))
+    } else {
+        maturity_from_auctions <- tibble::tibble(bond = character(), maturity_date = as.Date(character()))
+        message("  No auction maturity data available")
+    }
+
+    # Method 2: Get last data date for each bond (fallback indicator)
+    last_data_date <- full_df %>%
+        dplyr::filter(!is.na(yield_to_maturity)) %>%
+        dplyr::group_by(bond) %>%
+        dplyr::summarise(
+            last_data_date = max(date, na.rm = TRUE),
+            first_data_date = min(date, na.rm = TRUE),
+            data_points = dplyr::n(),
+            .groups = "drop"
+        )
+
+    # Combine all methods with priority: auction > inferred > last_data
+    all_bonds <- unique(full_df$bond)
+
+    bond_metadata <- tibble::tibble(bond = all_bonds) %>%
+        dplyr::left_join(maturity_from_auctions, by = "bond") %>%
+        dplyr::left_join(last_data_date, by = "bond") %>%
+        dplyr::mutate(
+            # Inferred maturity from name
+            inferred_maturity = purrr::map(bond, infer_maturity_from_name) %>%
+                purrr::map(~ if (is.null(.x) || length(.x) == 0) NA_Date_ else .x) %>%
+                do.call(c, .),
+
+            # Final maturity date: auction > inferred > last_data
+            final_maturity_date = dplyr::case_when(
+                !is.na(maturity_date) ~ maturity_date,
+                !is.na(inferred_maturity) ~ inferred_maturity,
+                # If bond has no data in recent period, assume it may have matured
+                TRUE ~ last_data_date
+            ),
+
+            # Data source for transparency
+            maturity_source = dplyr::case_when(
+                !is.na(maturity_date) ~ "auction_data",
+                !is.na(inferred_maturity) ~ "name_inference",
+                TRUE ~ "last_data_date"
+            ),
+
+            # Status based on today's date
+            is_matured = final_maturity_date < Sys.Date(),
+
+            # Days to maturity (negative if matured)
+            days_to_maturity = as.integer(final_maturity_date - Sys.Date()),
+
+            # Time to maturity in years
+            years_to_maturity = days_to_maturity / 365.25
+        )
+
+    # Summary statistics
+    n_matured <- sum(bond_metadata$is_matured, na.rm = TRUE)
+    n_active <- sum(!bond_metadata$is_matured, na.rm = TRUE)
+    n_unknown <- sum(is.na(bond_metadata$is_matured))
+
+    message(sprintf("  Total bonds:     %d", nrow(bond_metadata)))
+    message(sprintf("  Active bonds:    %d", n_active))
+    message(sprintf("  Matured bonds:   %d", n_matured))
+    message(sprintf("  Unknown status:  %d", n_unknown))
+
+    # List matured bonds for transparency
+    matured_bonds <- bond_metadata %>%
+        dplyr::filter(is_matured == TRUE) %>%
+        dplyr::arrange(final_maturity_date)
+
+    if (nrow(matured_bonds) > 0) {
+        message("\n  Matured bonds:")
+        for (i in seq_len(min(10, nrow(matured_bonds)))) {
+            message(sprintf("    - %s: matured %s (source: %s)",
+                           matured_bonds$bond[i],
+                           format(matured_bonds$final_maturity_date[i], "%Y-%m-%d"),
+                           matured_bonds$maturity_source[i]))
+        }
+        if (nrow(matured_bonds) > 10) {
+            message(sprintf("    ... and %d more", nrow(matured_bonds) - 10))
+        }
+    }
+
+    return(bond_metadata)
+}
+
+
+#' Get list of active (non-matured) bonds for a given date range
+#'
+#' A bond is considered "active" for analysis if:
+#' - It has NOT matured before the END of the selected period
+#' - This ensures we only analyze bonds that were tradeable
+#'
+#' @param bond_metadata Tibble created by create_bond_metadata()
+#' @param start_date Start of the analysis period (Date)
+#' @param end_date End of the analysis period (Date)
+#' @param include_unknown Whether to include bonds with unknown maturity (default TRUE)
+#' @return Character vector of active bond names
+get_active_bonds <- function(bond_metadata, start_date, end_date, include_unknown = TRUE) {
+    # Bond is active if it matures ON or AFTER the end of analysis period
+    active_bonds <- bond_metadata %>%
+        dplyr::filter(
+            # Bond maturity is on or after the end of analysis period
+            final_maturity_date >= end_date |
+            # Or include bonds with unknown maturity (conservative approach)
+            (include_unknown & is.na(final_maturity_date))
+        ) %>%
+        dplyr::pull(bond)
+
+    return(active_bonds)
+}
+
+
+#' Get list of matured bonds for a given date range (for reference/display)
+#'
+#' @param bond_metadata Tibble created by create_bond_metadata()
+#' @param end_date End of the analysis period (Date)
+#' @return Tibble with matured bond information
+get_matured_bonds <- function(bond_metadata, end_date) {
+    matured_bonds <- bond_metadata %>%
+        dplyr::filter(
+            !is.na(final_maturity_date),
+            final_maturity_date < end_date
+        ) %>%
+        dplyr::select(bond, final_maturity_date, maturity_source, days_to_maturity) %>%
+        dplyr::arrange(dplyr::desc(final_maturity_date))
+
+    return(matured_bonds)
+}
+
+
+#' Create display labels for bonds showing maturity status
+#'
+#' @param bond_metadata Tibble created by create_bond_metadata()
+#' @return Tibble with bond and display_label columns
+create_bond_labels <- function(bond_metadata) {
+    bond_metadata %>%
+        dplyr::mutate(
+            display_label = dplyr::case_when(
+                is_matured ~ paste0(bond, " (Matured)"),
+                days_to_maturity < 365 ~ paste0(bond, " (Matures ", format(final_maturity_date, "%b %Y"), ")"),
+                TRUE ~ bond
+            )
+        ) %>%
+        dplyr::select(bond, display_label, is_matured, final_maturity_date)
+}
