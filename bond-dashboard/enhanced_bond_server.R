@@ -405,7 +405,53 @@ server <- function(input, output, session) {
     })
 
 
-    # ✅ FILTERED DATA - With validation
+    # ════════════════════════════════════════════════════════════════════════
+    # BOND METADATA - Maturity dates and status (computed once at startup)
+    # ════════════════════════════════════════════════════════════════════════
+
+    bond_metadata <- reactive({
+        req(bond_data())
+
+        data <- bond_data()
+
+        # Extract auction data for maturity dates
+        # mature_date column comes from auction data joined in load_from_excel()
+        auction_data <- NULL
+        if ("mature_date" %in% names(data)) {
+            auction_data <- data %>%
+                dplyr::filter(!is.na(mature_date)) %>%
+                dplyr::select(bond, mature_date) %>%
+                dplyr::distinct()
+        }
+
+        # Create metadata using the function from data_loader.R
+        create_bond_metadata(data, auction_data)
+    })
+
+
+    # ════════════════════════════════════════════════════════════════════════
+    # ACTIVE BONDS - Dynamically filtered based on selected date range
+    # ════════════════════════════════════════════════════════════════════════
+
+    active_bonds <- reactive({
+        req(bond_metadata(), input$date_range)
+
+        start_date <- input$date_range[1]
+        end_date <- input$date_range[2]
+
+        # Get bonds that are active (not matured) for the selected period
+        active <- get_active_bonds(bond_metadata(), start_date, end_date)
+
+        message(sprintf("  Active bonds for period %s to %s: %d",
+                       format(start_date, "%Y-%m-%d"),
+                       format(end_date, "%Y-%m-%d"),
+                       length(active)))
+
+        return(active)
+    })
+
+
+    # ✅ FILTERED DATA - With validation and maturity filtering
     filtered_data <- reactive({
         req(input$selected_bonds, input$date_range, bond_data())
 
@@ -438,10 +484,49 @@ server <- function(input, output, session) {
             return(NULL)
         }
 
-        # Filter data
+        # ════════════════════════════════════════════════════════════════════
+        # MATURITY FILTER: Only include bonds active during the selected period
+        # ════════════════════════════════════════════════════════════════════
+
+        # Get active bonds for this date range (not matured)
+        active <- tryCatch({
+            active_bonds()
+        }, error = function(e) {
+            # Fallback: if active_bonds() fails, use all bonds
+            message("Warning: Could not get active bonds, using all bonds")
+            unique(bond_data()$bond)
+        })
+
+        # Intersect user selection with active bonds
+        valid_bonds <- intersect(input$selected_bonds, active)
+
+        # Notify user if any selected bonds were filtered out due to maturity
+        matured_selection <- setdiff(input$selected_bonds, active)
+        if (length(matured_selection) > 0) {
+            showNotification(
+                sprintf("Excluded %d matured bond(s) from analysis: %s",
+                       length(matured_selection),
+                       paste(head(matured_selection, 5), collapse = ", ")),
+                type = "message",
+                duration = 5,
+                id = "matured_bonds_notice"
+            )
+        }
+
+        # Check if any valid bonds remain after maturity filter
+        if (length(valid_bonds) == 0) {
+            showNotification(
+                "All selected bonds have matured. Please select active bonds or adjust date range.",
+                type = "warning",
+                duration = 8
+            )
+            return(NULL)
+        }
+
+        # Filter data using valid (non-matured) bonds only
         result <- bond_data() %>%
             filter(
-                bond %in% input$selected_bonds,
+                bond %in% valid_bonds,
                 date >= start_date,
                 date <= end_date
             )
@@ -1344,24 +1429,46 @@ server <- function(input, output, session) {
     # ================================================================================
 
 
-    # Dynamic bond selection
+    # Dynamic bond selection - Shows only ACTIVE bonds (filters out matured)
     observe({
         req(bond_data())
 
-        available_bonds <- unique(bond_data()$bond)
+        # Get active bonds for current date range (excludes matured bonds)
+        active <- tryCatch({
+            req(active_bonds())
+            active_bonds()
+        }, error = function(e) {
+            # Fallback: use all bonds if active_bonds not ready
+            unique(bond_data()$bond)
+        })
+
+        # Get currently selected bonds
+        current_selection <- input$selected_bonds
+
+        # If user has selection, keep only valid (active) bonds
+        if (!is.null(current_selection) && length(current_selection) > 0) {
+            valid_selection <- intersect(current_selection, active)
+            # If no valid bonds remain, select first few active bonds
+            if (length(valid_selection) == 0) {
+                valid_selection <- head(sort(active), 5)
+            }
+        } else {
+            # Default: select first 5 active bonds
+            valid_selection <- head(sort(active), 5)
+        }
 
         updatePickerInput(
             session,
             "selected_bonds",
-            choices = available_bonds,
-            selected = available_bonds
+            choices = sort(active),
+            selected = valid_selection
         )
 
         updateSelectInput(
             session,
             "tech_bond_select",
-            choices = available_bonds,
-            selected = available_bonds[1]
+            choices = sort(active),
+            selected = if(length(active) > 0) sort(active)[1] else NULL
         )
     })
 
@@ -1463,10 +1570,14 @@ server <- function(input, output, session) {
         )
     })
 
-    # Bond selection helpers
+    # Bond selection helpers - Only select from ACTIVE bonds
     observeEvent(input$select_short, {
         req(bond_data())
+        # Get active bonds for current date range
+        active <- tryCatch(active_bonds(), error = function(e) unique(bond_data()$bond))
+
         short_bonds <- bond_data() %>%
+            filter(bond %in% active) %>%
             group_by(bond) %>%
             summarise(avg_dur = mean(modified_duration, na.rm = TRUE), .groups = "drop") %>%
             filter(avg_dur < 5) %>%
@@ -1476,7 +1587,11 @@ server <- function(input, output, session) {
 
     observeEvent(input$select_medium, {
         req(bond_data())
+        # Get active bonds for current date range
+        active <- tryCatch(active_bonds(), error = function(e) unique(bond_data()$bond))
+
         medium_bonds <- bond_data() %>%
+            filter(bond %in% active) %>%
             group_by(bond) %>%
             summarise(avg_dur = mean(modified_duration, na.rm = TRUE), .groups = "drop") %>%
             filter(avg_dur >= 5, avg_dur <= 10) %>%
@@ -1486,7 +1601,11 @@ server <- function(input, output, session) {
 
     observeEvent(input$select_long, {
         req(bond_data())
+        # Get active bonds for current date range
+        active <- tryCatch(active_bonds(), error = function(e) unique(bond_data()$bond))
+
         long_bonds <- bond_data() %>%
+            filter(bond %in% active) %>%
             group_by(bond) %>%
             summarise(avg_dur = mean(modified_duration, na.rm = TRUE), .groups = "drop") %>%
             filter(avg_dur > 10) %>%
@@ -5109,14 +5228,17 @@ server <- function(input, output, session) {
         do.call(tagList, prediction_cards)
     })
 
-    # Update auction bond choices
+    # Update auction bond choices - Only show ACTIVE bonds
     observe({
         req(bond_data())
-        bonds <- unique(bond_data()$bond)
 
-        # Select bonds with recent auction activity as defaults
+        # Get active bonds for current date range
+        active <- tryCatch(active_bonds(), error = function(e) unique(bond_data()$bond))
+
+        # Select bonds with recent auction activity as defaults (from active bonds only)
         recent_auction_bonds <- bond_data() %>%
-            filter(!is.na(bid_to_cover),
+            filter(bond %in% active,
+                   !is.na(bid_to_cover),
                    date >= today() - days(90)) %>%
             pull(bond) %>%
             unique()
@@ -5124,7 +5246,7 @@ server <- function(input, output, session) {
         updatePickerInput(
             session,
             "auction_bonds_select",
-            choices = bonds,
+            choices = sort(active),
             selected = head(recent_auction_bonds, 3)
         )
     })
@@ -5945,13 +6067,18 @@ server <- function(input, output, session) {
         )
     })
 
-    # Observer for "Next Auction" quick select
+    # Observer for "Next Auction" quick select - Only uses ACTIVE bonds
     observeEvent(input$select_next_auction, {
         req(bond_data())
 
-        # Get bonds with most recent auction activity
+        # Get active bonds for current date range
+        active <- tryCatch(active_bonds(), error = function(e) unique(bond_data()$bond))
+
+        # Get bonds with most recent auction activity (from active bonds only)
         recent_bonds <- bond_data() %>%
-            filter(!is.na(bid_to_cover), date >= today() - days(60)) %>%
+            filter(bond %in% active,
+                   !is.na(bid_to_cover),
+                   date >= today() - days(60)) %>%
             group_by(bond) %>%
             summarise(n_auctions = n(), .groups = "drop") %>%
             arrange(desc(n_auctions)) %>%
@@ -5967,13 +6094,18 @@ server <- function(input, output, session) {
         }
     })
 
-    # Observer for "Following Auction" quick select
+    # Observer for "Following Auction" quick select - Only uses ACTIVE bonds
     observeEvent(input$select_following_auction, {
         req(bond_data())
 
-        # Get bonds with recent auction activity
+        # Get active bonds for current date range
+        active <- tryCatch(active_bonds(), error = function(e) unique(bond_data()$bond))
+
+        # Get bonds with recent auction activity (from active bonds only)
         recent_bonds <- bond_data() %>%
-            filter(!is.na(bid_to_cover), date >= today() - days(60)) %>%
+            filter(bond %in% active,
+                   !is.na(bid_to_cover),
+                   date >= today() - days(60)) %>%
             group_by(bond) %>%
             summarise(n_auctions = n(), .groups = "drop") %>%
             arrange(desc(n_auctions)) %>%
@@ -5989,13 +6121,17 @@ server <- function(input, output, session) {
         }
     })
 
-    # Observer for "Top 3 Recent" quick select
+    # Observer for "Top 3 Recent" quick select - Only uses ACTIVE bonds
     observeEvent(input$select_top_recent, {
         req(bond_data())
 
-        # Get the 3 bonds with most auction history
+        # Get active bonds for current date range
+        active <- tryCatch(active_bonds(), error = function(e) unique(bond_data()$bond))
+
+        # Get the 3 bonds with most auction history (from active bonds only)
         top_bonds <- bond_data() %>%
-            filter(!is.na(bid_to_cover)) %>%
+            filter(bond %in% active,
+                   !is.na(bid_to_cover)) %>%
             group_by(bond) %>%
             summarise(n_auctions = n(), .groups = "drop") %>%
             arrange(desc(n_auctions)) %>%
