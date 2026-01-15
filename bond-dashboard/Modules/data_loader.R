@@ -3,6 +3,371 @@
 # Dynamic Excel-based data loading with automatic caching
 # ================================================================================
 
+# ==============================================================================
+# ROBUST DATA LOADING FOR SA GOVERNMENT BOND DASHBOARD
+# Fixes: Corrupt placeholders, matured bond contamination, #N/A handling
+# ==============================================================================
+
+#' Load and process bond data from Excel file (ROBUST VERSION)
+#'
+#' This function implements comprehensive fixes for:
+#' 1. Corrupt placeholder values (1.00% yield, 1.00 duration)
+#' 2. Matured bond contamination
+#' 3. Excel #N/A values not being properly converted to NA
+#' 4. Missing data rows showing fallback values
+#'
+#' @param file_path Path to the Excel file
+#' @param reference_date Date to filter matured bonds (default: today)
+#' @return List containing full_df, bond_metadata, auction_summary, maturity_lookup
+#' @export
+load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
+
+  message("=== LOADING BOND DATA (ROBUST) ===")
+  message("File: ", file_path)
+  message("Reference date: ", reference_date)
+
+  # --------------------------------------------------------------------------
+  # STEP 1: Build Maturity Lookup from Auctions Sheet
+  # --------------------------------------------------------------------------
+  message("\n[1/6] Building maturity lookup...")
+
+  auction_raw <- tryCatch({
+    readxl::read_excel(file_path, sheet = "auctions",
+                       na = c("", "NA", "#N/A", "N/A", "#VALUE!", "#REF!")) %>%
+      dplyr::mutate(
+        mat_date = lubridate::as_date(mat_date),
+        offer_date = lubridate::as_date(offer_date)
+      )
+  }, error = function(e) {
+    stop("Failed to read auctions sheet: ", e$message)
+  })
+
+  # Create single maturity per bond (use most recent auction's maturity)
+  maturity_lookup <- auction_raw %>%
+    dplyr::filter(!is.na(mat_date)) %>%
+    dplyr::group_by(bond) %>%
+    dplyr::summarise(
+      maturity_date = dplyr::first(mat_date),  # All auctions for same bond have same maturity
+      first_auction = min(offer_date, na.rm = TRUE),
+      last_auction = max(offer_date, na.rm = TRUE),
+      total_auctions = dplyr::n(),
+      .groups = "drop"
+    ) %>%
+    dplyr::mutate(
+      is_matured = maturity_date < reference_date,
+      days_to_maturity = as.numeric(maturity_date - reference_date)
+    )
+
+  # Report maturity status
+  matured_bonds <- maturity_lookup %>% dplyr::filter(is_matured) %>% dplyr::pull(bond)
+  active_bonds <- maturity_lookup %>% dplyr::filter(!is_matured) %>% dplyr::pull(bond)
+
+  message("  - Total bonds in auctions: ", nrow(maturity_lookup))
+  message("  - Matured bonds (will be filtered out): ", paste(sort(matured_bonds), collapse = ", "))
+  message("  - Active bonds: ", paste(sort(active_bonds), collapse = ", "))
+
+  # --------------------------------------------------------------------------
+  # STEP 2: Helper Function to Load Time Series Sheets (with #N/A handling)
+  # --------------------------------------------------------------------------
+
+  load_ts_sheet_robust <- function(sheet_name, value_col) {
+    message("\n  Loading sheet: ", sheet_name)
+
+    tryCatch({
+      # CRITICAL: na parameter handles Excel error values
+      df <- readxl::read_excel(file_path, sheet = sheet_name,
+                               na = c("", "NA", "#N/A", "N/A", "#VALUE!", "#REF!", "#DIV/0!"))
+
+      # Ensure date column exists and is proper format
+      if (!"date" %in% names(df)) {
+        stop("Sheet '", sheet_name, "' missing 'date' column")
+      }
+
+      # Get all bond columns (everything except date)
+      bond_cols <- setdiff(names(df), "date")
+      message("    - Found ", length(bond_cols), " bond columns")
+
+      # Pivot to long format
+      df_long <- df %>%
+        dplyr::mutate(date = lubridate::as_date(date)) %>%
+        tidyr::pivot_longer(
+          cols = dplyr::all_of(bond_cols),
+          names_to = "bond",
+          values_to = value_col
+        ) %>%
+        # CRITICAL: Force numeric conversion and filter out NAs
+        dplyr::mutate(
+          !!value_col := as.numeric(!!rlang::sym(value_col))
+        ) %>%
+        # Remove rows where the value is NA (bond didn't exist yet or #N/A)
+        dplyr::filter(!is.na(!!rlang::sym(value_col)))
+
+      message("    - Rows after removing NA: ", nrow(df_long))
+
+      return(df_long)
+
+    }, error = function(e) {
+      warning("Failed to load sheet '", sheet_name, "': ", e$message)
+      return(NULL)
+    })
+  }
+
+  # --------------------------------------------------------------------------
+  # STEP 3: Load Core Time Series Data
+  # --------------------------------------------------------------------------
+  message("\n[2/6] Loading core time series...")
+
+  ytm_df <- load_ts_sheet_robust("ytm", "yield_to_maturity")
+  mod_dur_df <- load_ts_sheet_robust("mod_dur", "modified_duration")
+  dur_df <- load_ts_sheet_robust("dur", "duration")
+  conv_df <- load_ts_sheet_robust("conv", "convexity")
+
+  # Check that core data loaded
+  if (is.null(ytm_df) || is.null(mod_dur_df)) {
+    stop("Failed to load essential data (ytm or mod_dur)")
+  }
+
+  # --------------------------------------------------------------------------
+  # STEP 4: Load Optional Sheets
+  # --------------------------------------------------------------------------
+  message("\n[3/6] Loading optional time series...")
+
+  clean_price_df <- load_ts_sheet_robust("clean_price", "clean_price")
+  full_price_df <- load_ts_sheet_robust("full_price", "full_price")
+  bpv_df <- load_ts_sheet_robust("bpv", "basis_point_value")
+  accrued_df <- load_ts_sheet_robust("accrued", "accrued_interest")
+
+  # --------------------------------------------------------------------------
+  # STEP 5: Load Coupon Data (Special - Single Row)
+  # --------------------------------------------------------------------------
+  message("\n[4/6] Loading coupon data...")
+
+  cpn_df <- tryCatch({
+    df <- readxl::read_excel(file_path, sheet = "cpn",
+                             na = c("", "NA", "#N/A", "N/A", "#VALUE!", "#REF!"))
+    bond_cols <- setdiff(names(df), "date")
+
+    df %>%
+      dplyr::select(-date) %>%
+      tidyr::pivot_longer(
+        cols = dplyr::everything(),
+        names_to = "bond",
+        values_to = "coupon"
+      ) %>%
+      dplyr::mutate(coupon = as.numeric(coupon)) %>%
+      dplyr::filter(!is.na(coupon)) %>%
+      dplyr::distinct(bond, .keep_all = TRUE)  # One coupon per bond
+
+  }, error = function(e) {
+    warning("Failed to load coupon data: ", e$message)
+    return(NULL)
+  })
+
+  # --------------------------------------------------------------------------
+  # STEP 6: Combine All Data
+  # --------------------------------------------------------------------------
+  message("\n[5/6] Combining datasets...")
+
+  # Start with YTM as base (most critical)
+  full_df <- ytm_df
+
+  # Join modified duration
+  if (!is.null(mod_dur_df)) {
+    full_df <- full_df %>%
+      dplyr::left_join(mod_dur_df, by = c("date", "bond"))
+  }
+
+  # Join duration
+  if (!is.null(dur_df)) {
+    full_df <- full_df %>%
+      dplyr::left_join(dur_df, by = c("date", "bond"))
+  }
+
+  # Join convexity
+  if (!is.null(conv_df)) {
+    full_df <- full_df %>%
+      dplyr::left_join(conv_df, by = c("date", "bond"))
+  }
+
+  # Join coupon (by bond only, not date)
+  if (!is.null(cpn_df)) {
+    full_df <- full_df %>%
+      dplyr::left_join(cpn_df, by = "bond")
+  }
+
+  # Join optional sheets
+  if (!is.null(clean_price_df)) {
+    full_df <- full_df %>%
+      dplyr::left_join(clean_price_df, by = c("date", "bond"))
+  }
+
+  if (!is.null(full_price_df)) {
+    full_df <- full_df %>%
+      dplyr::left_join(full_price_df, by = c("date", "bond"))
+  }
+
+  if (!is.null(bpv_df)) {
+    full_df <- full_df %>%
+      dplyr::left_join(bpv_df, by = c("date", "bond"))
+  }
+
+  if (!is.null(accrued_df)) {
+    full_df <- full_df %>%
+      dplyr::left_join(accrued_df, by = c("date", "bond"))
+  }
+
+  # Join maturity information (by bond only)
+  full_df <- full_df %>%
+    dplyr::left_join(
+      maturity_lookup %>% dplyr::select(bond, maturity_date, is_matured, days_to_maturity),
+      by = "bond"
+    )
+
+  # Join auction metrics (by date AND bond)
+  auction_metrics <- auction_raw %>%
+    dplyr::select(bond, date = offer_date, offer, bids, bid_to_cover, allocation) %>%
+    dplyr::filter(!is.na(date))
+
+  full_df <- full_df %>%
+    dplyr::left_join(auction_metrics, by = c("date", "bond"))
+
+  message("  - Combined rows: ", nrow(full_df))
+  message("  - Unique bonds before filtering: ", dplyr::n_distinct(full_df$bond))
+
+  # --------------------------------------------------------------------------
+  # STEP 7: Add Calculated Fields and Filter
+  # --------------------------------------------------------------------------
+  message("\n[6/6] Adding calculated fields and filtering matured bonds...")
+
+  full_df <- full_df %>%
+    dplyr::mutate(
+      # Time-based groupings
+      year = lubridate::year(date),
+      quarter = lubridate::quarter(date),
+      month = lubridate::month(date),
+      week = lubridate::week(date),
+
+      # Calculate DV01 if not provided
+      dv01 = dplyr::case_when(
+        !is.na(basis_point_value) ~ basis_point_value,
+        !is.na(modified_duration) & !is.na(full_price) ~ modified_duration * full_price / 10000,
+        !is.na(modified_duration) ~ modified_duration * 100 / 10000,  # Assume par
+        TRUE ~ NA_real_
+      ),
+
+      # Maturity bucket based on actual time to maturity
+      maturity_bucket = dplyr::case_when(
+        days_to_maturity <= 3*365 ~ "Short (0-3Y)",
+        days_to_maturity <= 7*365 ~ "Medium (3-7Y)",
+        days_to_maturity <= 12*365 ~ "Long (7-12Y)",
+        days_to_maturity > 12*365 ~ "Ultra-Long (12Y+)",
+        TRUE ~ "Unknown"
+      ),
+
+      # Auction success flag
+      auction_success = dplyr::case_when(
+        is.na(bid_to_cover) ~ NA_character_,
+        bid_to_cover >= 3 ~ "Strong",
+        bid_to_cover >= 2 ~ "Adequate",
+        TRUE ~ "Weak"
+      )
+    ) %>%
+    # CRITICAL: Remove matured bonds
+    dplyr::filter(!is_matured | is.na(is_matured)) %>%
+    # CRITICAL: Remove rows where core data is missing (NO FALLBACKS!)
+    dplyr::filter(!is.na(yield_to_maturity) & !is.na(modified_duration)) %>%
+    # Arrange by date and bond
+    dplyr::arrange(date, bond)
+
+  message("  - Final rows after maturity filter: ", nrow(full_df))
+  message("  - Final unique bonds: ", dplyr::n_distinct(full_df$bond))
+
+  # --------------------------------------------------------------------------
+  # Create Summary Tables
+  # --------------------------------------------------------------------------
+
+  # Bond metadata summary
+  bond_metadata <- full_df %>%
+    dplyr::group_by(bond) %>%
+    dplyr::summarise(
+      coupon = dplyr::first(stats::na.omit(coupon)),
+      maturity_date = dplyr::first(maturity_date),
+      avg_duration = mean(modified_duration, na.rm = TRUE),
+      avg_convexity = mean(convexity, na.rm = TRUE),
+      latest_ytm = dplyr::last(stats::na.omit(yield_to_maturity)),
+      first_date = min(date),
+      last_date = max(date),
+      total_observations = dplyr::n(),
+      total_auctions = sum(!is.na(bid_to_cover)),
+      avg_bid_cover = mean(bid_to_cover, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    dplyr::arrange(avg_duration)
+
+  # Auction summary
+  auction_summary <- auction_raw %>%
+    dplyr::filter(bond %in% unique(full_df$bond)) %>%  # Only active bonds
+    dplyr::filter(!is.na(bid_to_cover)) %>%
+    dplyr::group_by(bond) %>%
+    dplyr::summarise(
+      total_auctions = dplyr::n(),
+      total_offered = sum(offer, na.rm = TRUE) / 1e9,
+      avg_bid_cover = mean(bid_to_cover, na.rm = TRUE),
+      min_bid_cover = min(bid_to_cover, na.rm = TRUE),
+      max_bid_cover = max(bid_to_cover, na.rm = TRUE),
+      last_auction = max(offer_date),
+      .groups = "drop"
+    )
+
+  # --------------------------------------------------------------------------
+  # Quality Report
+  # --------------------------------------------------------------------------
+  message("\n=== DATA QUALITY REPORT ===")
+  message("Date Range: ", min(full_df$date), " to ", max(full_df$date))
+  message("Total Observations: ", format(nrow(full_df), big.mark = ","))
+  message("Unique Active Bonds: ", dplyr::n_distinct(full_df$bond))
+  message("Active Bonds: ", paste(sort(unique(full_df$bond)), collapse = ", "))
+
+  # Validation checks
+  message("\n=== VALIDATION CHECKS ===")
+
+  # Check for impossible values
+  impossible_ytm <- full_df %>% dplyr::filter(yield_to_maturity < 0 | yield_to_maturity > 30)
+  if (nrow(impossible_ytm) > 0) {
+    warning("Found ", nrow(impossible_ytm), " rows with impossible YTM values")
+  } else {
+    message("  All YTM values in valid range (0-30%)")
+  }
+
+  impossible_dur <- full_df %>% dplyr::filter(modified_duration < 0 | modified_duration > 40)
+  if (nrow(impossible_dur) > 0) {
+    warning("Found ", nrow(impossible_dur), " rows with impossible duration values")
+  } else {
+    message("  All modified duration values in valid range (0-40)")
+  }
+
+  # Check for placeholder values (the bug we're fixing)
+  placeholder_values <- full_df %>%
+    dplyr::filter(yield_to_maturity == 1 | modified_duration == 1)
+  if (nrow(placeholder_values) > 0) {
+    warning("Found ", nrow(placeholder_values), " rows with placeholder values (1.0)")
+  } else {
+    message("  No placeholder values detected")
+  }
+
+  message("\n=== DATA LOADING COMPLETE ===\n")
+
+  # Return as list
+  return(list(
+    full_df = tibble::as_tibble(full_df),
+    bond_metadata = bond_metadata,
+    auction_summary = auction_summary,
+    maturity_lookup = maturity_lookup,
+    auction_raw = auction_raw
+  ))
+}
+
+
 #' Check if cache is stale (Excel newer than cache or cache doesn't exist)
 #'
 #' @param excel_path Path to the Excel source file

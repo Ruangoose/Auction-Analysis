@@ -4,7 +4,7 @@
 # Load required libraries
 pacman::p_load(
     shiny, shinydashboard, shinyWidgets, shinycssloaders, shinyjs,
-    readxl, dplyr, tidyverse, lubridate, zoo,
+    readxl, dplyr, tidyverse, lubridate, zoo, tibble, rlang, tidyr,
     ggplot2, plotly, scales, viridis, gridExtra,
     DT, rmarkdown, knitr, openxlsx,
     splines, mgcv
@@ -14,6 +14,7 @@ pacman::p_load(
 source("bond-dashboard/R/data_processing.R")
 source("bond-dashboard/R/plotting.R")
 source("bond-dashboard/R/analytics.R")
+source("bond-dashboard/Modules/data_loader.R")
 
 # Initialize shinyjs for dynamic UI
 shinyjs::useShinyjs()
@@ -612,72 +613,25 @@ server <- function(input, output, session) {
         last_update = NULL
     )
 
-    # Load and validate data
+    # Load and validate data using robust loader
     observe({
         tryCatch({
             showNotification("Loading bond data...", type = "message", duration = 2)
 
-            # Load data
-            last_date <- today()
+            # Use the robust data loading function (dynamic bond detection, #N/A handling, maturity filtering)
+            bond_data <- load_bond_data_robust(
+                file_path = "bond-dashboard/data/Siyanda Bonds.xlsx",
+                reference_date = Sys.Date()
+            )
 
-            # Load all sheets
-            mod_dur_df <- read_excel("data/Siyanda Bonds.xlsx",
-                                     sheet = "mod_dur", col_types = c("date", rep("numeric", 14))) %>%
-                filter(date < last_date) %>%
-                select(date, R186, R2030, R213, R2032, R2033, R2035, R2038,
-                       R209, R2037, R2040, R2044, R214, R2053, R2048) %>%
-                mutate(date = lubridate::ymd(date)) %>%
-                pivot_longer(-date, names_to = "bond", values_to = "modified_duration")
+            # Extract the full dataframe
+            full_df <- bond_data$full_df
 
-            ytm_df <- read_excel("data/Siyanda Bonds.xlsx",
-                                 sheet = "ytm", col_types = c("date", rep("numeric", 14))) %>%
-                filter(date < last_date) %>%
-                select(date, R186, R2030, R213, R2032, R2033, R2035, R2038,
-                       R209, R2037, R2040, R2044, R214, R2053, R2048) %>%
-                mutate(date = lubridate::ymd(date)) %>%
-                pivot_longer(-date, names_to = "bond", values_to = "yield_to_maturity")
-
-            dur_df <- read_excel("data/Siyanda Bonds.xlsx",
-                                 sheet = "dur", col_types = c("date", rep("numeric", 14))) %>%
-                filter(date < last_date) %>%
-                select(date, R186, R2030, R213, R2032, R2033, R2035, R2038,
-                       R209, R2037, R2040, R2044, R214, R2053, R2048) %>%
-                mutate(date = lubridate::ymd(date)) %>%
-                pivot_longer(-date, names_to = "bond", values_to = "duration")
-
-            conv_df <- read_excel("data/Siyanda Bonds.xlsx",
-                                  sheet = "conv", col_types = c("date", rep("numeric", 14))) %>%
-                filter(date < last_date) %>%
-                select(date, R186, R2030, R213, R2032, R2033, R2035, R2038,
-                       R209, R2037, R2040, R2044, R214, R2053, R2048) %>%
-                mutate(date = lubridate::ymd(date)) %>%
-                pivot_longer(-date, names_to = "bond", values_to = "convexity")
-
-            cpn_df <- read_excel("data/Siyanda Bonds.xlsx",
-                                 sheet = "cpn", col_types = c("date", rep("numeric", 14))) %>%
-                select(date, R186, R2030, R213, R2032, R2033, R2035, R2038,
-                       R209, R2037, R2040, R2044, R214, R2053, R2048) %>%
-                mutate(date = lubridate::ymd(date)) %>%
-                pivot_longer(-date, names_to = "bond", values_to = "coupon") %>%
-                filter(!is.na(coupon)) %>%
-                group_by(bond) %>%
-                distinct(coupon) %>%
-                ungroup()
-
-            auction_df <- read_excel("data/Siyanda Bonds.xlsx", sheet = "auctions") %>%
-                mutate(
-                    offer_date = lubridate::ymd(offer_date),
-                    date = offer_date
-                ) %>%
-                select(date, bond, offer, allocation, bids, bid_to_cover)
-
-            # Combine all data
-            full_df <- mod_dur_df %>%
-                left_join(ytm_df, by = c("date", "bond")) %>%
-                left_join(dur_df, by = c("date", "bond")) %>%
-                left_join(conv_df, by = c("date", "bond")) %>%
-                left_join(cpn_df, by = "bond") %>%
-                left_join(auction_df, by = c("date", "bond"))
+            # Store maturity lookup and auction data for reference
+            values$maturity_lookup <- bond_data$maturity_lookup
+            values$auction_raw <- bond_data$auction_raw
+            values$bond_metadata <- bond_data$bond_metadata
+            values$auction_summary <- bond_data$auction_summary
 
             # Validate and enhance data
             validation_results <- validate_bond_data(full_df)
@@ -691,13 +645,16 @@ server <- function(input, output, session) {
             # Check for alerts
             check_for_alerts()
 
-            # Update bond selector
+            # Update bond selector with dynamic bond list (no hardcoded bonds!)
             bond_choices <- unique(values$validated_df$bond)
 
-            # Group bonds by maturity
+            # Group bonds by maturity bucket (from maturity_lookup for accurate grouping)
             bond_groups <- values$validated_df %>%
                 group_by(bond) %>%
-                summarise(avg_duration = mean(modified_duration, na.rm = TRUE)) %>%
+                summarise(
+                    avg_duration = mean(modified_duration, na.rm = TRUE),
+                    .groups = "drop"
+                ) %>%
                 mutate(group = case_when(
                     avg_duration <= 5 ~ "Short (≤5y)",
                     avg_duration <= 10 ~ "Medium (5-10y)",
@@ -711,15 +668,20 @@ server <- function(input, output, session) {
                               choices = grouped_choices,
                               selected = bond_choices)
 
-            # Show data quality notification
+            # Show data quality notification with bond count
+            n_bonds <- length(unique(values$validated_df$bond))
             if(validation_results$needs_attention) {
                 showNotification(
-                    paste("Data loaded with", length(validation_results$report$warnings), "warnings"),
+                    paste("Loaded", n_bonds, "active bonds with", length(validation_results$report$warnings), "warnings"),
                     type = "warning",
                     duration = 5
                 )
             } else {
-                showNotification("Data loaded successfully", type = "success", duration = 3)
+                showNotification(
+                    paste("Loaded", n_bonds, "active bonds successfully"),
+                    type = "success",
+                    duration = 3
+                )
             }
 
         }, error = function(e) {
@@ -765,7 +727,7 @@ server <- function(input, output, session) {
         values$alerts <- alerts
     }
 
-    # Filter data based on inputs
+    # Filter data based on inputs (with dynamic maturity filtering)
     observe({
         req(values$validated_df)
 
@@ -784,10 +746,21 @@ server <- function(input, output, session) {
                                  start = start_date, end = end_date)
         }
 
-        # Apply filters
-        filtered <- values$validated_df %>%
-            filter(date >= input$date_range[1] & date <= input$date_range[2])
+        # Apply date range filter
+        start_date <- input$date_range[1]
+        end_date <- input$date_range[2]
 
+        filtered <- values$validated_df %>%
+            filter(date >= start_date & date <= end_date)
+
+        # Re-filter for bonds that were active during this period
+        # (maturity date must be AFTER the end_date to be included)
+        if ("maturity_date" %in% names(filtered)) {
+            filtered <- filtered %>%
+                filter(maturity_date > end_date | is.na(maturity_date))
+        }
+
+        # Apply bond selection filter
         if(!is.null(input$bond_selection) && length(input$bond_selection) > 0) {
             filtered <- filtered %>%
                 filter(bond %in% input$bond_selection)
