@@ -201,20 +201,32 @@ load_auction_data <- function(excel_path) {
 #' Load all bond data from Excel file
 #'
 #' @param excel_path Path to the Excel file
+#' @param run_diagnostics Run diagnostic checks during loading (default TRUE)
 #' @return Tibble with all bond data merged
-load_from_excel <- function(excel_path) {
+load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
     message("╔════════════════════════════════════════════════════════╗")
     message("║        LOADING BOND DATA FROM EXCEL                    ║")
     message("╚════════════════════════════════════════════════════════╝")
     message(sprintf("  Source: %s", excel_path))
 
-    # Step 1: Detect available bonds from mod_dur sheet
-    message("\n[1/4] Detecting available bonds...")
-    mod_dur_raw <- readxl::read_excel(excel_path, sheet = "mod_dur")
-    available_bonds <- detect_available_bonds(mod_dur_raw)
+    # Step 1: Detect available bonds from BOTH required sheets
+    # This ensures we only load bonds that exist in both ytm and mod_dur
+    message("\n[1/5] Detecting available bonds...")
+
+    # IMPROVED: Detect common bonds across required sheets to prevent data loss
+    available_bonds <- detect_common_bonds(excel_path)
+
+    if (length(available_bonds) == 0) {
+        # Fallback to original method if common detection fails
+        message("  WARNING: Common bond detection failed, falling back to mod_dur only")
+        mod_dur_raw <- readxl::read_excel(excel_path, sheet = "mod_dur")
+        available_bonds <- detect_available_bonds(mod_dur_raw)
+    }
+
+    message(sprintf("  Bonds to load: %s", paste(sort(available_bonds), collapse = ", ")))
 
     # Step 2: Load all time series sheets
-    message("\n[2/4] Loading time series data...")
+    message("\n[2/5] Loading time series data...")
 
     # Define sheet mappings: sheet_name -> value_column_name
     time_series_sheets <- list(
@@ -239,12 +251,25 @@ load_from_excel <- function(excel_path) {
     })
     names(ts_data_list) <- names(time_series_sheets)
 
+    # DIAGNOSTIC CHECKPOINT 1: Verify YTM loaded correctly
+    if (run_diagnostics && !is.null(ts_data_list[["ytm"]])) {
+        ytm_check <- ts_data_list[["ytm"]] %>%
+            dplyr::filter(date == max(date)) %>%
+            dplyr::filter(yield_to_maturity < 5 | yield_to_maturity > 15)
+        if (nrow(ytm_check) > 0) {
+            message("\n  ⚠ WARNING: Bonds with unusual YTM values:")
+            for (i in 1:min(nrow(ytm_check), 5)) {
+                message(sprintf("    %s: %.2f%%", ytm_check$bond[i], ytm_check$yield_to_maturity[i]))
+            }
+        }
+    }
+
     # Step 3: Load coupon data (static)
-    message("\n[3/4] Loading coupon data...")
+    message("\n[3/5] Loading coupon data...")
     cpn_df <- load_coupon_data(excel_path, available_bonds)
 
     # Step 4: Load auction data
-    message("\n[4/4] Loading auction data...")
+    message("\n[4/5] Loading auction data...")
     auction_df <- load_auction_data(excel_path)
 
     # Step 5: Merge all data
@@ -257,14 +282,27 @@ load_from_excel <- function(excel_path) {
         stop("Failed to load modified_duration - cannot proceed")
     }
 
+    # Track rows before and after joins for diagnostics
+    rows_before <- nrow(full_df)
+
     # Join all other time series data
-    for (sheet in names(ts_data_list)) {
+    for (sheet in names(time_series_sheets)) {
         if (sheet == "mod_dur") next  # Already have this as base
 
         sheet_data <- ts_data_list[[sheet]]
         if (!is.null(sheet_data)) {
             full_df <- full_df %>%
                 dplyr::left_join(sheet_data, by = c("date", "bond"))
+        }
+    }
+
+    # DIAGNOSTIC CHECKPOINT 2: Check for NA values introduced by joins
+    if (run_diagnostics) {
+        na_ytm <- sum(is.na(full_df$yield_to_maturity))
+        na_dur <- sum(is.na(full_df$modified_duration))
+        if (na_ytm > 0 || na_dur > 0) {
+            message(sprintf("\n  ⚠ WARNING: Join introduced NA values - YTM: %d, Duration: %d",
+                            na_ytm, na_dur))
         }
     }
 
@@ -280,6 +318,8 @@ load_from_excel <- function(excel_path) {
             dplyr::left_join(auction_df, by = c("date", "bond"))
     }
 
+    rows_after <- nrow(full_df)
+
     # Summary
     message("\n╔════════════════════════════════════════════════════════╗")
     message("║          EXCEL DATA LOADED SUCCESSFULLY                ║")
@@ -292,20 +332,65 @@ load_from_excel <- function(excel_path) {
     message(sprintf("  Columns:           %d", ncol(full_df)))
     message(sprintf("  Column names:      %s", paste(names(full_df), collapse = ", ")))
 
+    # DIAGNOSTIC CHECKPOINT 3: Final data quality check
+    if (run_diagnostics) {
+        message("\n  Performing final data quality check...")
+        latest <- full_df %>%
+            dplyr::filter(date == max(date, na.rm = TRUE)) %>%
+            dplyr::select(bond, yield_to_maturity, modified_duration)
+
+        bad_data <- latest %>%
+            dplyr::filter(
+                is.na(yield_to_maturity) | yield_to_maturity < 5 | yield_to_maturity > 15 |
+                is.na(modified_duration) | modified_duration < 0.5
+            )
+
+        if (nrow(bad_data) > 0) {
+            message("  ⚠ QUALITY ISSUE DETECTED - Bonds with problematic values:")
+            for (i in 1:nrow(bad_data)) {
+                row <- bad_data[i,]
+                message(sprintf("    %s: YTM=%.2f%%, ModDur=%.2f",
+                                row$bond,
+                                ifelse(is.na(row$yield_to_maturity), 0, row$yield_to_maturity),
+                                ifelse(is.na(row$modified_duration), 0, row$modified_duration)))
+            }
+            message("  RECOMMENDATION: Check Excel source data or run diagnose_bond_data_loading()")
+        } else {
+            message(sprintf("  ✓ All %d bonds have valid YTM and duration values", nrow(latest)))
+        }
+    }
+
     return(tibble::as_tibble(full_df))
 }
 
 
 #' Main bond data loader with caching
 #'
+#' Loads bond data from Excel with automatic caching for faster subsequent loads.
+#' Includes data quality verification to detect corrupted values.
+#'
 #' @param excel_path Path to the Excel source file
 #' @param cache_path Path to the RDS cache file
 #' @param force_refresh Force reload from Excel even if cache is fresh
+#' @param verify_quality Run data quality verification after loading (default TRUE)
 #' @return Tibble with full bond data
+#'
+#' @examples
+#' # Normal load (uses cache if available)
+#' data <- load_bond_data()
+#'
+#' # Force fresh load from Excel (use if data appears corrupted)
+#' data <- load_bond_data(force_refresh = TRUE)
+#'
+#' # Skip quality verification for faster loading
+#' data <- load_bond_data(verify_quality = FALSE)
+#'
+#' @export
 load_bond_data <- function(
     excel_path = "data/Siyanda Bonds.xlsx",
     cache_path = "data/processed_bond_data.rds",
-    force_refresh = FALSE
+    force_refresh = FALSE,
+    verify_quality = TRUE
 ) {
     message("╔════════════════════════════════════════════════════════╗")
     message("║          BOND DATA LOADER                              ║")
@@ -313,6 +398,7 @@ load_bond_data <- function(
     message(sprintf("  Excel source:  %s", excel_path))
     message(sprintf("  Cache file:    %s", cache_path))
     message(sprintf("  Force refresh: %s", force_refresh))
+    message(sprintf("  Verify quality: %s", verify_quality))
 
     # Check if we need to reload from Excel
     needs_refresh <- force_refresh || is_cache_stale(excel_path, cache_path)
@@ -320,8 +406,8 @@ load_bond_data <- function(
     if (needs_refresh) {
         message("\n→ Loading fresh data from Excel...")
 
-        # Load from Excel
-        full_df <- load_from_excel(excel_path)
+        # Load from Excel with diagnostics
+        full_df <- load_from_excel(excel_path, run_diagnostics = verify_quality)
 
         # Save to cache
         tryCatch({
@@ -337,8 +423,6 @@ load_bond_data <- function(
             warning(sprintf("Failed to save cache: %s", e$message))
         })
 
-        return(full_df)
-
     } else {
         message("\n→ Loading data from cache (faster)...")
 
@@ -346,13 +430,30 @@ load_bond_data <- function(
             readRDS(cache_path)
         }, error = function(e) {
             warning(sprintf("Cache read failed, falling back to Excel: %s", e$message))
-            load_from_excel(excel_path)
+            load_from_excel(excel_path, run_diagnostics = verify_quality)
         })
 
         message(sprintf("✓ Loaded %s rows from cache", format(nrow(full_df), big.mark = ",")))
-
-        return(tibble::as_tibble(full_df))
     }
+
+    # Data quality verification (runs regardless of source)
+    if (verify_quality && !is.null(full_df) && nrow(full_df) > 0) {
+        quality_check <- verify_bond_data_quality(full_df)
+
+        # Check if there are problematic bonds
+        if (!is.null(quality_check)) {
+            n_bad <- sum(!(quality_check$ytm_ok & quality_check$dur_ok))
+            if (n_bad > 0 && !force_refresh) {
+                message("\n  ════════════════════════════════════════════════════════")
+                message(sprintf("  ⚠ %d bond(s) with suspicious values detected!", n_bad))
+                message("  Consider running: load_bond_data(force_refresh = TRUE)")
+                message("  Or run diagnostics: diagnose_bond_data_loading('data/Siyanda Bonds.xlsx')")
+                message("  ════════════════════════════════════════════════════════\n")
+            }
+        }
+    }
+
+    return(tibble::as_tibble(full_df))
 }
 
 
@@ -374,6 +475,251 @@ validate_bond_data_columns <- function(df) {
     }
 
     return(TRUE)
+}
+
+
+# ================================================================================
+# DATA QUALITY VERIFICATION FUNCTIONS
+# Diagnostic tools to detect and prevent bond data corruption
+# ================================================================================
+
+#' Check column alignment across all Excel sheets
+#'
+#' Verifies that bond columns exist consistently across required sheets.
+#' This prevents data loss from join operations when bonds are missing from some sheets.
+#'
+#' @param excel_path Path to the Excel file
+#' @return List with alignment check results
+#' @export
+check_column_alignment <- function(excel_path) {
+    message("\n╔════════════════════════════════════════════════════════╗")
+    message("║          COLUMN ALIGNMENT CHECK                        ║")
+    message("╚════════════════════════════════════════════════════════╝")
+
+    sheets <- c("ytm", "mod_dur", "dur", "conv", "clean_price", "bpv", "accrued", "full_price")
+    required_sheets <- c("ytm", "mod_dur")
+
+    all_cols <- list()
+    for (sheet in sheets) {
+        tryCatch({
+            df <- readxl::read_excel(excel_path, sheet = sheet)
+            cols <- names(df)[tolower(names(df)) != "date"]
+            all_cols[[sheet]] <- cols
+            message(sprintf("  %s: %d bond columns", sheet, length(cols)))
+        }, error = function(e) {
+            message(sprintf("  %s: ERROR - %s", sheet, e$message))
+        })
+    }
+
+    # Find common bonds across all sheets
+    common_bonds <- Reduce(intersect, all_cols)
+    message(sprintf("\n  Common bonds across all sheets: %d", length(common_bonds)))
+    message(sprintf("  %s", paste(sort(common_bonds), collapse = ", ")))
+
+    # Find bonds missing from some sheets
+    all_bonds <- unique(unlist(all_cols))
+    missing_issues <- list()
+    for (bond in sort(all_bonds)) {
+        missing_from <- sheets[!sapply(all_cols, function(x) bond %in% x)]
+        if (length(missing_from) > 0) {
+            message(sprintf("  ⚠ %s missing from: %s", bond, paste(missing_from, collapse = ", ")))
+            missing_issues[[bond]] <- missing_from
+        }
+    }
+
+    # Check required sheets specifically
+    required_common <- Reduce(intersect, all_cols[required_sheets])
+    message(sprintf("\n  Common bonds in required sheets (ytm, mod_dur): %d", length(required_common)))
+
+    message("╚════════════════════════════════════════════════════════╝\n")
+
+    return(list(
+        common_all_sheets = common_bonds,
+        common_required = required_common,
+        all_bonds = all_bonds,
+        missing_issues = missing_issues,
+        sheet_columns = all_cols
+    ))
+}
+
+
+#' Detect bonds that exist in ALL required sheets
+#'
+#' Returns only bonds that have data in both ytm and mod_dur sheets to prevent
+#' data loss from join operations.
+#'
+#' @param excel_path Path to the Excel file
+#' @return Character vector of bond names present in all required sheets
+detect_common_bonds <- function(excel_path) {
+    required_sheets <- c("ytm", "mod_dur")
+
+    bond_lists <- lapply(required_sheets, function(sheet) {
+        tryCatch({
+            df <- readxl::read_excel(excel_path, sheet = sheet)
+            names(df)[tolower(names(df)) != "date"]
+        }, error = function(e) {
+            character(0)
+        })
+    })
+
+    common_bonds <- Reduce(intersect, bond_lists)
+    message(sprintf("  Common bonds in required sheets: %d", length(common_bonds)))
+
+    return(common_bonds)
+}
+
+
+#' Verify bond data quality after loading
+#'
+#' Comprehensive data quality verification that checks for corrupted or invalid values.
+#' This should be called after data loading to ensure data integrity.
+#'
+#' @param data Data frame with bond data
+#' @param ytm_min Minimum valid yield (default 5%)
+#' @param ytm_max Maximum valid yield (default 15%)
+#' @param dur_min Minimum valid modified duration (default 0.5 years)
+#' @return Tibble with quality check results for each bond
+#' @export
+verify_bond_data_quality <- function(data, ytm_min = 5, ytm_max = 15, dur_min = 0.5) {
+    message("\n╔════════════════════════════════════════════════════════╗")
+    message("║        DATA QUALITY VERIFICATION                       ║")
+    message("╚════════════════════════════════════════════════════════╝")
+
+    if (is.null(data) || nrow(data) == 0) {
+        message("  ERROR: No data to verify!")
+        return(NULL)
+    }
+
+    latest_date <- max(data$date, na.rm = TRUE)
+    latest <- data %>% dplyr::filter(date == latest_date)
+
+    message(sprintf("  Latest date: %s", latest_date))
+    message(sprintf("  Bonds on latest date: %d", dplyr::n_distinct(latest$bond)))
+
+    # Check each bond
+    quality_check <- latest %>%
+        dplyr::group_by(bond) %>%
+        dplyr::summarise(
+            ytm = dplyr::first(yield_to_maturity),
+            mod_dur = dplyr::first(modified_duration),
+            coupon = dplyr::first(coupon),
+            .groups = "drop"
+        ) %>%
+        dplyr::mutate(
+            ytm_ok = !is.na(ytm) & ytm > ytm_min & ytm < ytm_max,
+            dur_ok = !is.na(mod_dur) & mod_dur > dur_min,
+            status = dplyr::case_when(
+                ytm_ok & dur_ok ~ "OK",
+                !ytm_ok & !dur_ok ~ "BAD (ytm & dur)",
+                !ytm_ok ~ "BAD ytm",
+                !dur_ok ~ "BAD dur"
+            )
+        ) %>%
+        dplyr::arrange(dplyr::desc(ytm_ok), bond)
+
+    message("\n  Bond Data Quality:")
+    for (i in 1:nrow(quality_check)) {
+        row <- quality_check[i,]
+        status_icon <- if(row$ytm_ok && row$dur_ok) "✓" else "✗"
+        message(sprintf("    %s %-6s: YTM=%6.2f%%, ModDur=%5.2f  %s",
+                        status_icon, row$bond, row$ytm, row$mod_dur, row$status))
+    }
+
+    n_good <- sum(quality_check$ytm_ok & quality_check$dur_ok)
+    n_bad <- nrow(quality_check) - n_good
+
+    message(sprintf("\n  Summary: %d good, %d problematic", n_good, n_bad))
+
+    if (n_bad > 0) {
+        message("\n  ⚠ PROBLEMATIC BONDS DETECTED!")
+        bad_bonds <- quality_check %>% dplyr::filter(!(ytm_ok & dur_ok))
+        for (i in 1:nrow(bad_bonds)) {
+            row <- bad_bonds[i,]
+            message(sprintf("    %s: ytm=%.2f, mod_dur=%.2f - %s",
+                            row$bond, row$ytm, row$mod_dur, row$status))
+        }
+        message("\n  RECOMMENDED ACTION: Force cache refresh with force_refresh=TRUE")
+    }
+
+    message("╚════════════════════════════════════════════════════════╝\n")
+
+    return(quality_check)
+}
+
+
+#' Diagnose bond data loading with checkpoints
+#'
+#' Detailed diagnostic function that tracks data through the loading pipeline
+#' to identify where corruption might be occurring.
+#'
+#' @param excel_path Path to the Excel file
+#' @return List with diagnostic results at each checkpoint
+#' @export
+diagnose_bond_data_loading <- function(excel_path) {
+    message("\n╔════════════════════════════════════════════════════════╗")
+    message("║        BOND DATA LOADING DIAGNOSTICS                   ║")
+    message("╚════════════════════════════════════════════════════════╝")
+
+    results <- list()
+
+    # CHECKPOINT 1: Raw YTM values
+    message("\n[CHECKPOINT 1] Raw YTM Sheet")
+    ytm_raw <- readxl::read_excel(excel_path, sheet = "ytm")
+    latest_row <- ytm_raw %>% dplyr::slice_tail(n = 1)
+
+    message(sprintf("  Columns: %s", paste(names(ytm_raw), collapse = ", ")))
+    message(sprintf("  Latest date: %s", latest_row$date))
+    message("  Latest YTM values:")
+    for (col in names(latest_row)[-1]) {
+        val <- latest_row[[col]]
+        if (!is.na(val)) {
+            status <- if(val > 5 && val < 15) "✓" else "⚠ PROBLEM"
+            message(sprintf("    %s: %.2f%% %s", col, val, status))
+        }
+    }
+    results$ytm_raw <- latest_row
+
+    # CHECKPOINT 2: Raw mod_dur values
+    message("\n[CHECKPOINT 2] Raw mod_dur Sheet")
+    dur_raw <- readxl::read_excel(excel_path, sheet = "mod_dur")
+    latest_dur <- dur_raw %>% dplyr::slice_tail(n = 1)
+
+    message(sprintf("  Latest date: %s", latest_dur$date))
+    message("  Latest duration values:")
+    for (col in names(latest_dur)[-1]) {
+        val <- latest_dur[[col]]
+        if (!is.na(val)) {
+            status <- if(val > 0.5) "✓" else "⚠ PROBLEM"
+            message(sprintf("    %s: %.2f years %s", col, val, status))
+        }
+    }
+    results$dur_raw <- latest_dur
+
+    # CHECKPOINT 3: After pivot_longer on YTM
+    message("\n[CHECKPOINT 3] After YTM pivot_longer")
+    available_bonds <- detect_available_bonds(dur_raw)
+    ytm_pivoted <- ytm_raw %>%
+        dplyr::select(dplyr::all_of(intersect(names(ytm_raw), c("date", available_bonds)))) %>%
+        dplyr::mutate(date = lubridate::as_date(date)) %>%
+        tidyr::pivot_longer(-date, names_to = "bond", values_to = "yield_to_maturity") %>%
+        dplyr::filter(!is.na(yield_to_maturity))
+
+    latest_ytm_check <- ytm_pivoted %>%
+        dplyr::filter(date == max(date)) %>%
+        dplyr::arrange(bond)
+
+    bad_ytm <- latest_ytm_check %>%
+        dplyr::filter(yield_to_maturity < 5 | is.na(yield_to_maturity))
+    if (nrow(bad_ytm) > 0) {
+        message("  ⚠ WARNING: Bonds with bad YTM values after pivot:")
+        print(bad_ytm)
+    } else {
+        message(sprintf("  ✓ All %d bonds have valid YTM values", nrow(latest_ytm_check)))
+    }
+    results$ytm_pivoted <- latest_ytm_check
+
+    message("\n╚════════════════════════════════════════════════════════╝\n")
+    return(results)
 }
 
 
