@@ -1448,13 +1448,13 @@ server <- function(input, output, session) {
         # If user has selection, keep only valid (active) bonds
         if (!is.null(current_selection) && length(current_selection) > 0) {
             valid_selection <- intersect(current_selection, active)
-            # If no valid bonds remain, select first few active bonds
+            # If no valid bonds remain, select ALL active bonds
             if (length(valid_selection) == 0) {
-                valid_selection <- head(sort(active), 5)
+                valid_selection <- active
             }
         } else {
-            # Default: select first 5 active bonds
-            valid_selection <- head(sort(active), 5)
+            # Default: select ALL active bonds (not just first 5)
+            valid_selection <- active
         }
 
         updatePickerInput(
@@ -5243,11 +5243,19 @@ server <- function(input, output, session) {
             pull(bond) %>%
             unique()
 
+        # Select ALL bonds with recent auction activity by default
+        # If no recent activity, fall back to all active bonds
+        default_selection <- if (length(recent_auction_bonds) > 0) {
+            recent_auction_bonds
+        } else {
+            active
+        }
+
         updatePickerInput(
             session,
             "auction_bonds_select",
             choices = sort(active),
-            selected = head(recent_auction_bonds, 3)
+            selected = sort(default_selection)
         )
     })
 
@@ -6240,7 +6248,11 @@ server <- function(input, output, session) {
         # Get selected bonds for display
         selected_bonds <- input$auction_bonds_select
         if(is.null(selected_bonds) || length(selected_bonds) == 0) {
-            selected_bonds <- c("R186", "R2032", "R2040")  # Default bonds
+            # Use active bonds as fallback instead of hardcoded values
+            selected_bonds <- tryCatch(
+                active_bonds(),
+                error = function(e) c("R186", "R2032", "R2040")
+            )
         }
 
         # Distribute bonds across auction dates for display
