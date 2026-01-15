@@ -6523,15 +6523,31 @@ server <- function(input, output, session) {
                                      min(bonds$spread_bps, na.rm = TRUE),
                                      max(bonds$spread_bps, na.rm = TRUE)))
 
-        # Calculate signals and scores for ALL bonds
+        # ═══════════════════════════════════════════════════════════════════════════
+        # FIX: Filter out bonds with missing or placeholder data BEFORE calculations
+        # Problem 3 & 4: Don't show bonds with placeholder values or no actual data
+        # ═══════════════════════════════════════════════════════════════════════════
         opportunities <- bonds %>%
-            filter(!is.na(spread_bps)) %>%
+            filter(
+                # Basic validity checks
+                !is.na(spread_bps),
+                !is.na(yield_to_maturity),
+                !is.na(x_value),  # x_value is the dynamic x-axis (duration/TTM)
+                # FIX: Exclude placeholder values (1.0% yield, 1.0 duration indicates bad data)
+                yield_to_maturity > 2.0,  # Real SA government bonds have yields > 2%
+                x_value > 0.5,  # Modified duration should be > 0.5 for real bonds
+                # FIX: Exclude bonds with no z-score data instead of filling with 0
+                !is.na(z_score) | TRUE  # Allow NA z-scores but handle them properly below
+            ) %>%
             mutate(
-                # Fill NA z_scores with 0
-                zscore = ifelse(is.na(z_score), 0, z_score),
+                # FIX: Keep NA z-scores as NA, don't fill with 0
+                # Use the actual z_score, or NA if missing - let the UI show "N/A"
+                zscore = z_score,
 
                 # CORRECT signal logic based on spread (positive = cheap = buy)
+                # Handle NA z-scores gracefully
                 signal = case_when(
+                    is.na(zscore) ~ "Insufficient Data",  # FIX: Show when z-score missing
                     spread_bps > 10 & zscore > 1.5 ~ "Strong Buy",
                     spread_bps > 5 ~ "Buy",
                     spread_bps < -10 & zscore < -1.5 ~ "Strong Sell",
@@ -6539,7 +6555,6 @@ server <- function(input, output, session) {
                     TRUE ~ "Hold"
                 ),
 
-                # NEW: Calculate conviction score (0-10 scale)
                 # Get bid_to_cover if available
                 btc = if ("bid_to_cover" %in% names(.)) bid_to_cover else NA_real_
             ) %>%
@@ -6547,7 +6562,7 @@ server <- function(input, output, session) {
             mutate(
                 score = calculate_conviction_score(
                     spread_bps = spread_bps,
-                    zscore = zscore,
+                    zscore = ifelse(is.na(zscore), 0, zscore),  # Use 0 only for score calc
                     bid_to_cover = btc
                 )
             ) %>%
@@ -6555,6 +6570,7 @@ server <- function(input, output, session) {
             mutate(
                 # Signal category for filtering
                 signal_category = case_when(
+                    signal == "Insufficient Data" ~ "insufficient",
                     signal %in% c("Strong Buy", "Strong Sell") ~ "strong",
                     signal %in% c("Buy", "Sell") ~ "actionable",
                     TRUE ~ "hold"
@@ -6589,14 +6605,14 @@ server <- function(input, output, session) {
                 Score = score
             )
 
-        # Format the display
+        # Format the display - FIX: Handle NA z-scores properly
         display_data <- display_data %>%
             mutate(
                 Yield = sprintf("%.3f%%", Yield),
                 Duration = sprintf("%.2f", Duration),
                 Spread = sprintf("%+.1f bps", Spread),  # Show sign
-                ZScore = sprintf("%+.2f", ZScore),      # Show sign
-                Score = sprintf("%.1f", Score)
+                ZScore = ifelse(is.na(ZScore), "N/A", sprintf("%+.2f", ZScore)),  # FIX: Show N/A for missing
+                Score = ifelse(is.na(Score), "N/A", sprintf("%.1f", Score))  # FIX: Handle NA scores
             )
 
         # Dynamic column name based on x-axis selection
@@ -6624,12 +6640,12 @@ server <- function(input, output, session) {
             formatStyle(
                 "Signal",
                 backgroundColor = styleEqual(
-                    c("Strong Buy", "Buy", "Hold", "Sell", "Strong Sell"),
-                    c("#1B5E20", "#4CAF50", "#9E9E9E", "#EF5350", "#B71C1C")
+                    c("Strong Buy", "Buy", "Hold", "Sell", "Strong Sell", "Insufficient Data"),
+                    c("#1B5E20", "#4CAF50", "#9E9E9E", "#EF5350", "#B71C1C", "#757575")  # Gray for insufficient
                 ),
                 color = styleEqual(
-                    c("Strong Buy", "Buy", "Hold", "Sell", "Strong Sell"),
-                    c("white", "white", "white", "white", "white")
+                    c("Strong Buy", "Buy", "Hold", "Sell", "Strong Sell", "Insufficient Data"),
+                    c("white", "white", "white", "white", "white", "white")
                 ),
                 fontWeight = "bold"
             )

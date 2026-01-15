@@ -80,6 +80,30 @@ generate_enhanced_yield_curve <- function(data, params) {
     # CRITICAL FIX: Ensure date columns are Date objects
     data <- ensure_date_columns(data)
 
+    # ═══════════════════════════════════════════════════════════════════════════
+    # FIX: DATA AVAILABILITY FILTER - Only include bonds with VALID data
+    # Problem 3 & 4: Exclude bonds with placeholder values or missing data
+    # ═══════════════════════════════════════════════════════════════════════════
+    n_before <- nrow(data)
+    data <- data %>%
+        filter(
+            # Must have valid yield and duration
+            !is.na(yield_to_maturity),
+            !is.na(modified_duration),
+            is.finite(yield_to_maturity),
+            is.finite(modified_duration),
+            # Exclude placeholder values that indicate bad data
+            yield_to_maturity > 2.0,  # Real SA bonds have yields > 2%
+            yield_to_maturity < 20.0,  # Sanity check upper bound
+            modified_duration > 0.5,   # Must have meaningful duration
+            modified_duration < 30.0   # Sanity check upper bound
+        )
+    n_after <- nrow(data)
+    if (n_before > n_after) {
+        message(sprintf("  [Yield Curve] Filtered %d bonds with invalid data (keeping %d)",
+                       n_before - n_after, n_after))
+    }
+
     # VALIDATION: Ensure spread_to_curve exists
     if(!"spread_to_curve" %in% names(data)) {
         warning("spread_to_curve not found in data - calculating it")
