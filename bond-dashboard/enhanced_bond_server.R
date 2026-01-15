@@ -82,6 +82,7 @@ source_module <- function(module_name) {
 
 # Load all required modules
 required_modules <- c(
+    "data_loader.R",                 # Dynamic Excel data loader with caching
     "theme_config.R",
     "ui_helpers.R",
     "data_processors.R",
@@ -147,44 +148,96 @@ server <- function(input, output, session) {
     treasury_module_data <- treasury_holdings_server("treasury_module")
 
     # ════════════════════════════════════════════════════════════════════════
-    # BOND DATA LOADING - BULLETPROOF VERSION
+    # BOND DATA LOADING - DYNAMIC EXCEL VERSION WITH CACHING
     # ════════════════════════════════════════════════════════════════════════
 
     bond_data <- reactive({
         w$show()
 
         # ════════════════════════════════════════════════════════════════════
-        # STEP 1: LOAD RAW DATA
+        # STEP 1: LOAD DATA VIA DYNAMIC EXCEL LOADER
+        # Automatically detects if Excel has changed and reloads as needed
         # ════════════════════════════════════════════════════════════════════
 
         data <- tryCatch({
-            # First check for in-memory data
+            # First check for in-memory data (for testing/development)
             if (exists("full_df")) {
                 message("✓ Loading bond data from full_df (in-memory)")
                 return(full_df)
             }
 
-            # Try multiple possible data file locations
-            data_paths <- c(
+            # Try multiple possible Excel file locations
+            excel_paths <- c(
+                "data/Siyanda Bonds.xlsx",                 # Standard location
+                "Siyanda Bonds.xlsx",                      # Same directory
+                "../data/Siyanda Bonds.xlsx",              # Parent data directory
+                "bond-dashboard/data/Siyanda Bonds.xlsx"   # Old structure
+            )
+
+            # Try multiple possible cache file locations
+            cache_paths <- c(
                 "data/processed_bond_data.rds",            # Standard data directory
                 "processed_bond_data.rds",                 # Same directory
                 "../data/processed_bond_data.rds",         # Parent data directory
                 "bond-dashboard/data/processed_bond_data.rds"  # Old structure
             )
 
-            for (data_path in data_paths) {
-                if (file.exists(data_path)) {
-                    message(sprintf("✓ Loading bond data from: %s", data_path))
-                    return(readRDS(data_path))
+            # Find the first existing Excel file
+            excel_path <- NULL
+            for (path in excel_paths) {
+                if (file.exists(path)) {
+                    excel_path <- path
+                    break
                 }
             }
 
-            # No data found
-            warning("No bond data found in any expected location")
-            NULL
+            # Find the first existing or writable cache path
+            cache_path <- NULL
+            for (path in cache_paths) {
+                if (file.exists(path) || file.exists(dirname(path))) {
+                    cache_path <- path
+                    break
+                }
+            }
+
+            # Default cache path if none found
+            if (is.null(cache_path)) {
+                cache_path <- "data/processed_bond_data.rds"
+            }
+
+            # Load via the dynamic loader
+            if (!is.null(excel_path)) {
+                message(sprintf("✓ Using Excel source: %s", excel_path))
+                message(sprintf("✓ Using cache file: %s", cache_path))
+
+                load_bond_data(
+                    excel_path = excel_path,
+                    cache_path = cache_path,
+                    force_refresh = FALSE
+                )
+            } else {
+                # Excel not found - try to load from cache as fallback
+                warning("Excel file not found - attempting cache fallback")
+                cache_fallback <- NULL
+                for (path in cache_paths) {
+                    if (file.exists(path)) {
+                        message(sprintf("✓ Falling back to cache: %s", path))
+                        cache_fallback <- readRDS(path)
+                        break
+                    }
+                }
+                cache_fallback
+            }
 
         }, error = function(e) {
             warning(sprintf("Error loading bond data: %s", e$message))
+            # Fallback to cache if Excel fails
+            for (path in c("data/processed_bond_data.rds", "../data/processed_bond_data.rds")) {
+                if (file.exists(path)) {
+                    message(sprintf("Falling back to cache: %s", path))
+                    return(readRDS(path))
+                }
+            }
             NULL
         })
 
@@ -192,7 +245,7 @@ server <- function(input, output, session) {
         if (is.null(data)) {
             w$hide()
             showNotification(
-                "Unable to load bond data. Please check data files.",
+                "Unable to load bond data. Please check Excel file and data files.",
                 type = "error",
                 duration = 10
             )
