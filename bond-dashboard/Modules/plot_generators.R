@@ -700,20 +700,63 @@ generate_enhanced_yield_curve <- function(data, params) {
 #' @export
 # 2. Relative Value Heatmap Generation
 #' @param data Bond data with date, bond, yield_to_maturity, modified_duration columns
-#' @param params List of parameters (optional: bond_order for custom ordering)
+#' @param params List of parameters (optional: bond_order for custom ordering, active_bonds for filtering,
+#'               label_threshold for z-score label visibility)
 generate_relative_value_heatmap <- function(data, params) {
     # CRITICAL FIX: Ensure date columns are Date objects
     data <- ensure_date_columns(data)
 
     # ========================================================================
-    # FIX 4: ORDER BONDS BY DURATION (short bonds at bottom of heatmap)
+    # CRITICAL FIX: Filter to active bonds ONLY (exclude matured bonds like R186)
+    # This ensures consistency with the Z-Score Distribution chart
     # ========================================================================
-    # Get duration-based ordering from the data
+    active_bonds <- params$active_bonds
+    if (!is.null(active_bonds) && length(active_bonds) > 0) {
+        bonds_before <- unique(data$bond)
+        data <- data[data$bond %in% active_bonds, ]
+        bonds_after <- unique(data$bond)
+        excluded <- setdiff(bonds_before, bonds_after)
+        if (length(excluded) > 0) {
+            message(sprintf("[Heatmap] Filtered to %d active bonds (excluded: %s)",
+                           length(bonds_after), paste(excluded, collapse = ", ")))
+        } else {
+            message(sprintf("[Heatmap] Using %d active bonds", length(bonds_after)))
+        }
+    }
+
+    # Double-check: Remove any known matured bonds as safety net
+    known_matured_bonds <- c("R157", "R186", "R197", "R203", "R204", "R207", "R208", "R212", "R2023")
+    found_matured <- intersect(unique(data$bond), known_matured_bonds)
+    if (length(found_matured) > 0) {
+        warning(sprintf("[Heatmap] REMOVING matured bonds: %s", paste(found_matured, collapse = ", ")))
+        data <- data[!data$bond %in% found_matured, ]
+    }
+
+    # Get label threshold (default 1.5 for better visibility)
+    label_threshold <- params$label_threshold %||% 1.5
+
+    # ========================================================================
+    # FIX: ORDER BONDS BY DURATION - Long duration at TOP of heatmap
+    # ========================================================================
+    # In ggplot y-axis: first factor level = BOTTOM, last level = TOP
+    # So for "long at top", we need SHORT duration bonds FIRST in factor levels
+    # (i.e., arrange by duration ASCENDING)
+    # ========================================================================
     bond_duration_order <- data %>%
         group_by(bond) %>%
         summarise(avg_duration = mean(modified_duration, na.rm = TRUE), .groups = "drop") %>%
-        arrange(desc(avg_duration)) %>%  # Descending so short bonds at bottom
+        arrange(avg_duration) %>%  # ASCENDING: short first in levels = long at TOP
         pull(bond)
+
+    # Log the ordering for verification
+    duration_info <- data %>%
+        group_by(bond) %>%
+        summarise(avg_duration = mean(modified_duration, na.rm = TRUE), .groups = "drop") %>%
+        arrange(desc(avg_duration))  # Show longest first for logging
+    message("[Heatmap] Bond ordering (long at top):")
+    for (i in seq_len(min(5, nrow(duration_info)))) {
+        message(sprintf("  TOP-%d: %s (%.1fy)", i, duration_info$bond[i], duration_info$avg_duration[i]))
+    }
 
     # Use custom order if provided in params
     if (!is.null(params$bond_order)) {
@@ -755,16 +798,26 @@ generate_relative_value_heatmap <- function(data, params) {
         # Apply duration-based ordering
         mutate(bond = factor(bond, levels = bond_duration_order))
 
+    # Count active bonds for subtitle
+    n_bonds <- length(unique(rv_matrix$bond))
+
     # Get current date for "Today" indicator
     current_date <- Sys.Date()
     current_week <- floor_date(current_date, "week")
 
-    p <- ggplot(rv_matrix, aes(x = week, y = bond, fill = avg_z_score)) +
-        geom_tile(color = "white", linewidth = 0.5) +
+    # Create z-score labels with threshold
+    rv_matrix <- rv_matrix %>%
+        mutate(
+            z_label = ifelse(
+                abs(avg_z_score) >= label_threshold,
+                sprintf("%+.1f", avg_z_score),  # Format with sign: +1.5, -2.3
+                ""
+            )
+        )
 
-        # ========================================================================
-        # FIX 6: ADD "TODAY" INDICATOR
-        # ========================================================================
+    p <- ggplot(rv_matrix, aes(x = week, y = bond, fill = avg_z_score)) +
+        geom_tile(color = "gray90", linewidth = 0.3) +  # Light grid lines between cells
+
         # "Today" vertical line
         geom_vline(
             xintercept = as.numeric(current_week),
@@ -789,11 +842,12 @@ generate_relative_value_heatmap <- function(data, params) {
                 title.hjust = 0.5
             )
         ) +
-        geom_text(aes(label = ifelse(abs(avg_z_score) > 2,
-                                     sprintf("%.1f", avg_z_score), "")),
-                  size = 3,
-                  color = "white",
-                  fontface = 2) +
+
+        # Z-score labels with configurable threshold
+        geom_text(aes(label = z_label),
+                  size = 2.8,
+                  color = "black",
+                  fontface = "bold") +
 
         # "Today" label annotation
         annotate(
@@ -810,7 +864,7 @@ generate_relative_value_heatmap <- function(data, params) {
 
         scale_x_date(
             date_breaks = "2 weeks",
-            date_labels = "%d\n%b",
+            date_labels = "%d %b",
             expand = c(0.02, 0)  # Small expand to show Today label
         ) +
         scale_y_discrete(expand = c(0, 0)) +
@@ -820,15 +874,16 @@ generate_relative_value_heatmap <- function(data, params) {
 
         labs(
             title = "Relative Value Heatmap",
-            subtitle = "Weekly Z-scores showing rich/cheap dynamics | Ordered by duration (long at top)",
+            subtitle = sprintf("Weekly Z-scores | %d active bonds | Ordered by duration (long at top) | Labels: |Z| > %.1f",
+                              n_bonds, label_threshold),
             x = "",
             y = "",
-            caption = "Red = Rich (Sell) | Green = Cheap (Buy) | Values > |2| shown"
+            caption = "Red = Rich (Sell) | Green = Cheap (Buy)"
         ) +
         create_insele_theme() +
         theme(
-            axis.text.x = element_text(angle = 0, hjust = 0.5),
-            axis.text.y = element_text(face = "bold"),
+            axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
+            axis.text.y = element_text(face = "bold", size = 9),
             panel.border = element_rect(fill = NA, color = insele_palette$dark_gray, linewidth = 1),
             legend.position = "bottom",
             plot.margin = ggplot2::margin(t = 20, r = 10, b = 10, l = 10)  # Extra top margin for Today label
@@ -927,8 +982,8 @@ generate_enhanced_zscore_plot <- function(data, params) {
         coord_flip() +
         labs(
             title = "Z-Score Distribution",
-            subtitle = paste("Statistical Significance |",
-                             sum(abs(plot_data$z_score) > 2), "bonds in extreme territory"),
+            subtitle = sprintf("Statistical Significance | %d bonds | %d in extreme territory",
+                              nrow(plot_data), sum(abs(plot_data$z_score) > 2)),
             x = "",
             y = "Z-Score (Standard Deviations)",
             caption = "Normal: |z| < 1 | Notable: 1 ≤ |z| < 2 | Extreme: |z| ≥ 2"
