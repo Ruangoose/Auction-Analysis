@@ -387,23 +387,110 @@ validate_required_columns <- function(data, required_cols, context = "function")
 
 
 
-# Add this helper function at the beginning of your server function:
-smart_label <- function(data, label_col, priority_col = NULL, max_labels = 10) {
-    if(nrow(data) <= max_labels) {
+# ════════════════════════════════════════════════════════════════════════════════
+# SMART LABEL FUNCTION - Intelligent label selection for crowded plots
+#
+# FIX: Improved algorithm to reduce label overlap in crowded areas:
+# 1. Always include highest-priority signals (highest |z-score|)
+# 2. Always include extremes (cheapest/richest)
+# 3. Use spatial distribution to avoid clustering labels
+# 4. Support for z-score based actionable thresholds
+# ════════════════════════════════════════════════════════════════════════════════
+smart_label <- function(data, label_col, priority_col = NULL, max_labels = 12,
+                        x_col = "modified_duration", y_col = "yield_to_maturity",
+                        min_spacing = 0.5) {
+    if (is.null(data) || nrow(data) == 0) {
         return(data)
     }
 
-    if(!is.null(priority_col)) {
-        # Label top by priority column
-        top_n <- data %>%
-            arrange(desc(abs(!!sym(priority_col)))) %>%
-            head(max_labels)
-        return(top_n)
-    } else {
-        # Default: label evenly spaced
-        indices <- round(seq(1, nrow(data), length.out = max_labels))
-        return(data[indices, ])
+    if (nrow(data) <= max_labels) {
+        return(data)
     }
+
+    # Initialize selection with all FALSE
+    selected <- rep(FALSE, nrow(data))
+
+    # PRIORITY 1: Always include bonds with strong signals (|z-score| > 2.0)
+    if (!is.null(priority_col) && priority_col %in% names(data)) {
+        strong_signals <- abs(data[[priority_col]]) > 2.0
+        selected <- selected | strong_signals
+    }
+
+    # PRIORITY 2: Always include extremes (highest/lowest in y-axis)
+    if (y_col %in% names(data) && sum(!is.na(data[[y_col]])) > 0) {
+        max_idx <- which.max(data[[y_col]])
+        min_idx <- which.min(data[[y_col]])
+        selected[max_idx] <- TRUE
+        selected[min_idx] <- TRUE
+    }
+
+    # PRIORITY 3: Include extremes in x-axis (shortest/longest duration)
+    if (x_col %in% names(data) && sum(!is.na(data[[x_col]])) > 0) {
+        max_x_idx <- which.max(data[[x_col]])
+        min_x_idx <- which.min(data[[x_col]])
+        selected[max_x_idx] <- TRUE
+        selected[min_x_idx] <- TRUE
+    }
+
+    # PRIORITY 4: Fill remaining slots with highest priority bonds
+    # that are spatially distributed (not too close to already selected)
+    remaining_slots <- max_labels - sum(selected)
+
+    if (remaining_slots > 0 && !is.null(priority_col) && priority_col %in% names(data)) {
+        # Get candidates not yet selected
+        candidates <- which(!selected)
+
+        if (length(candidates) > 0) {
+            # Sort candidates by priority (descending |value|)
+            candidate_priorities <- abs(data[[priority_col]][candidates])
+            sorted_candidates <- candidates[order(candidate_priorities, decreasing = TRUE)]
+
+            # Add candidates with spatial distribution check
+            for (cand in sorted_candidates) {
+                if (sum(selected) >= max_labels) break
+
+                # Check if this candidate is far enough from already selected points
+                if (x_col %in% names(data) && y_col %in% names(data)) {
+                    already_selected <- which(selected)
+                    if (length(already_selected) > 0) {
+                        # Calculate distances to selected points (in normalized space)
+                        x_range <- diff(range(data[[x_col]], na.rm = TRUE))
+                        y_range <- diff(range(data[[y_col]], na.rm = TRUE))
+
+                        if (x_range > 0 && y_range > 0) {
+                            x_norm <- (data[[x_col]][cand] - data[[x_col]][already_selected]) / x_range
+                            y_norm <- (data[[y_col]][cand] - data[[y_col]][already_selected]) / y_range
+                            min_dist <- min(sqrt(x_norm^2 + y_norm^2))
+
+                            # Only add if far enough from existing labels
+                            if (min_dist > min_spacing / 10) {
+                                selected[cand] <- TRUE
+                            }
+                        } else {
+                            selected[cand] <- TRUE
+                        }
+                    } else {
+                        selected[cand] <- TRUE
+                    }
+                } else {
+                    selected[cand] <- TRUE
+                }
+            }
+        }
+    }
+
+    # If still haven't filled max_labels, add evenly spaced from remaining
+    remaining_slots <- max_labels - sum(selected)
+    if (remaining_slots > 0) {
+        remaining_indices <- which(!selected)
+        if (length(remaining_indices) > 0) {
+            n_to_add <- min(remaining_slots, length(remaining_indices))
+            evenly_spaced <- remaining_indices[round(seq(1, length(remaining_indices), length.out = n_to_add))]
+            selected[evenly_spaced] <- TRUE
+        }
+    }
+
+    return(data[selected, ])
 }
 
 #' @export

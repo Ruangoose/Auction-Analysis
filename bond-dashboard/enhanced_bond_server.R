@@ -7127,8 +7127,14 @@ server <- function(input, output, session) {
             filter(zscore_abs == max(zscore_abs, na.rm = TRUE)) %>%
             slice(1)
 
-        # Count actionable signals (|z-score| > 1.5)
-        actionable_count <- sum(latest_data$zscore_abs > 1.5, na.rm = TRUE)
+        # ════════════════════════════════════════════════════════════════════════════
+        # FIX: Use unified signal calculation for consistency with signal_strength_box
+        # Both displays now use the same SIGNAL_THRESHOLDS from theme_config.R
+        # ════════════════════════════════════════════════════════════════════════════
+        unified_signals <- calculate_unified_signals(latest_data, spread_col = "spread_bps", bond_col = "bond")
+        strong_count <- unified_signals$strong_count
+        moderate_count <- unified_signals$moderate_count
+        actionable_count <- moderate_count  # Actionable = moderate and above
 
         tagList(
             # ═══════════════════════════════════════════════════════════
@@ -7199,17 +7205,25 @@ server <- function(input, output, session) {
                 tags$p(tags$b("Highest Conviction: "), "N/A")
             },
 
-            # Actionable signals count
+            # ═══════════════════════════════════════════════════════════
+            # SYNCHRONIZED SIGNAL COUNTS (matches signal_strength_box)
+            # ═══════════════════════════════════════════════════════════
             tags$p(
-                tags$b("Actionable Signals: "),
-                sprintf("%d bonds with |Z| > 1.5", actionable_count)
+                tags$b("Strong Signals: "),
+                sprintf("%d bonds with |Z| > %.1f", strong_count, SIGNAL_THRESHOLDS$strong)
             ),
 
-            # Z-Score explanation
+            tags$p(
+                tags$b("Actionable Signals: "),
+                sprintf("%d bonds with |Z| > %.1f", actionable_count, SIGNAL_THRESHOLDS$moderate)
+            ),
+
+            # Z-Score explanation with dynamic thresholds
             tags$p(
                 class = "text-muted small",
                 style = "margin-top: 10px; font-size: 11px;",
-                "Z-Score measures statistical significance: |Z| > 2 = strong signal, |Z| > 1.5 = moderate signal"
+                sprintf("Z-Score thresholds: |Z| > %.1f = strong, |Z| > %.1f = moderate",
+                        SIGNAL_THRESHOLDS$strong, SIGNAL_THRESHOLDS$moderate)
             )
         )
     })
@@ -7279,7 +7293,16 @@ server <- function(input, output, session) {
     # OUTPUT: VALUE BOXES
     # ================================================================================
 
-    # Replace the market_regime_box output with this fixed version
+    # ════════════════════════════════════════════════════════════════════════════
+    # REGIME VALUE BOX - Fixed to clearly separate Volatility (Regime) from Trend
+    #
+    # KEY INSIGHT: Regime and Trend are INDEPENDENT dimensions:
+    # - Regime (Calm/Normal/Elevated/Stressed) = VOLATILITY state
+    # - Trend (Uptrend/Downtrend/Sideways) = DIRECTION of movement
+    #
+    # A market can be "Calm" (low volatility) with "Strong Downtrend" (consistent direction)
+    # This is NOT contradictory - it means yields are moving consistently without large swings.
+    # ════════════════════════════════════════════════════════════════════════════
     output$market_regime_box <- renderValueBox({
         req(regime_data())
 
@@ -7295,6 +7318,7 @@ server <- function(input, output, session) {
                 color = "gray"
             )
         } else {
+            # Regime color is based on VOLATILITY (the regime classification)
             color <- case_when(
                 current_regime$regime[1] == "Stressed" ~ "red",
                 current_regime$regime[1] == "Elevated" ~ "yellow",
@@ -7302,11 +7326,38 @@ server <- function(input, output, session) {
                 TRUE ~ "blue"
             )
 
+            # Get volatility percentile for clarity
+            vol_pct <- if("vol_percentile" %in% names(current_regime)) {
+                current_regime$vol_percentile[1] * 100
+            } else {
+                NA
+            }
+
+            # Create clear, non-contradictory subtitle
+            # Format: "Volatility: XX% | Direction: YY"
+            # This makes it explicit that regime=volatility and trend=direction are separate
+            vol_text <- if(!is.na(vol_pct)) {
+                sprintf("Vol: %.0f%%ile", vol_pct)
+            } else {
+                sprintf("Vol: %.1f%%", current_regime$vol_20d[1] * 100)
+            }
+
+            # Add trend with directional icon for visual clarity
+            trend_text <- current_regime$trend[1]
+            trend_icon <- case_when(
+                grepl("Uptrend", trend_text) ~ "\u2191",      # ↑
+                grepl("Downtrend", trend_text) ~ "\u2193",   # ↓
+                TRUE ~ "\u2194"                               # ↔
+            )
+
             valueBox(
                 value = current_regime$regime[1],
-                subtitle = sprintf("Vol: %.1f%% | Trend: %s",
-                                   current_regime$vol_20d[1] * 100,
-                                   current_regime$trend[1]),
+                subtitle = HTML(sprintf(
+                    "<span style='font-size: 11px;'>%s (volatility)</span><br/><span style='font-size: 10px;'>%s %s</span>",
+                    vol_text,
+                    trend_icon,
+                    trend_text
+                )),
                 icon = icon("chart-area"),
                 color = color
             )
@@ -7367,26 +7418,51 @@ server <- function(input, output, session) {
     output$signal_strength_box <- renderValueBox({
         req(processed_data())
 
-        # Check if signal_strength exists, if not create it
-        if(!"signal_strength" %in% names(processed_data())) {
+        # ════════════════════════════════════════════════════════════════════════════
+        # FIX: Use unified z-score based signals for consistency with yield curve panel
+        # This ensures "Strong Signals Active" matches "Actionable Signals" calculation
+        # ════════════════════════════════════════════════════════════════════════════
+
+        data <- processed_data()
+
+        # Calculate signals using the unified function (same as yield curve)
+        if ("z_score" %in% names(data)) {
+            # Use unified signal calculation from theme_config.R
+            signals <- calculate_unified_signals(data, spread_col = "spread_bps", bond_col = "bond")
+            strong_count <- signals$strong_count
+            moderate_count <- signals$moderate_count
+
+            # Value shows strong signals (|Z| > 2.0)
+            # Subtitle clarifies the threshold used
             valueBox(
-                value = 0,
-                subtitle = "Strong Signals Active",
+                value = strong_count,
+                subtitle = sprintf("Strong Signals (|Z|>%.1f) | %d Moderate",
+                                   SIGNAL_THRESHOLDS$strong,
+                                   moderate_count - strong_count),
                 icon = icon("bolt"),
-                color = "blue"
+                color = if(strong_count > 3) "red" else if(strong_count > 0) "yellow" else "blue"
             )
         } else {
-            signals <- processed_data() %>%
-                filter(!is.na(signal_strength))
+            # Fallback to technical signals if z_score not available
+            if ("signal_strength" %in% names(data)) {
+                signals <- data %>%
+                    filter(!is.na(signal_strength))
+                strong_signals <- sum(signals$signal_strength %in% c("Strong Buy", "Strong Sell"))
 
-            strong_signals <- sum(signals$signal_strength %in% c("Strong Buy", "Strong Sell"))
-
-            valueBox(
-                value = strong_signals,
-                subtitle = "Strong Signals Active",
-                icon = icon("bolt"),
-                color = if(strong_signals > 3) "red" else if(strong_signals > 1) "yellow" else "blue"
-            )
+                valueBox(
+                    value = strong_signals,
+                    subtitle = "Technical Signals (RSI/BB/MACD)",
+                    icon = icon("bolt"),
+                    color = if(strong_signals > 3) "red" else if(strong_signals > 1) "yellow" else "blue"
+                )
+            } else {
+                valueBox(
+                    value = 0,
+                    subtitle = "Strong Signals Active",
+                    icon = icon("bolt"),
+                    color = "blue"
+                )
+            }
         }
     })
 
