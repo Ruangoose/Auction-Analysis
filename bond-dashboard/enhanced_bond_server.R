@@ -1121,6 +1121,37 @@ server <- function(input, output, session) {
 
         bond_data <- processed_data()
 
+        # =========================================================================
+        # CRITICAL FIX: Filter to GLOBAL latest date (same as yield curve chart)
+        # =========================================================================
+        # Problem: processed_data() returns latest data PER BOND, which can include
+        # bonds with stale data (e.g., R186 with Dec 2025 data when other bonds
+        # have Jan 2026 data). The yield curve chart filters to global latest date,
+        # so Trading Signals must do the same to ensure consistency.
+        # =========================================================================
+        if ("date" %in% names(bond_data) && !all(is.na(bond_data$date))) {
+            # Find the global latest date across all bonds
+            global_latest_date <- max(bond_data$date, na.rm = TRUE)
+
+            # Identify bonds that don't have data on the latest date
+            bonds_before_filter <- unique(bond_data$bond)
+            bond_data <- bond_data %>%
+                filter(date == global_latest_date)
+            bonds_after_filter <- unique(bond_data$bond)
+
+            # Log which bonds were filtered out (for debugging)
+            excluded_bonds <- setdiff(bonds_before_filter, bonds_after_filter)
+            if (length(excluded_bonds) > 0) {
+                message(sprintf("[fitted_curve_data] Excluded %d bond(s) without data on %s: %s",
+                               length(excluded_bonds),
+                               format(global_latest_date, "%Y-%m-%d"),
+                               paste(excluded_bonds, collapse = ", ")))
+            }
+
+            message(sprintf("[fitted_curve_data] Using %d bonds with data from %s",
+                           nrow(bond_data), format(global_latest_date, "%Y-%m-%d")))
+        }
+
         # -------------------------------------------------------------------------
         # Handle time_to_maturity calculation if needed
         # -------------------------------------------------------------------------
@@ -7088,6 +7119,23 @@ server <- function(input, output, session) {
         metrics <- curve_data$metrics
         x_var <- curve_data$x_var
 
+        # =========================================================================
+        # DEBUG LOGGING: Confirm bond universe for Trading Signals
+        # =========================================================================
+        bonds_in_signals <- sort(unique(data$bond))
+        message(sprintf("[TRADING SIGNALS] Active bonds: %d", length(bonds_in_signals)))
+        message(sprintf("[TRADING SIGNALS] List: %s", paste(bonds_in_signals, collapse = ", ")))
+
+        # Verify no known matured bonds are present (safety check)
+        known_matured_bonds <- c("R157", "R186", "R197", "R203", "R204", "R207", "R208", "R212", "R2023")
+        found_matured <- intersect(bonds_in_signals, known_matured_bonds)
+        if (length(found_matured) > 0) {
+            warning(sprintf("[TRADING SIGNALS] !!! POTENTIAL MATURED BONDS PRESENT: %s",
+                           paste(found_matured, collapse = ", ")))
+        } else {
+            message("[TRADING SIGNALS] ✓ No known matured bonds present")
+        }
+
         # ════════════════════════════════════════════════════════════════════════
         # FIX: Use adaptive bucket and slope calculations that handle data limits
         # SA Government Bond universe has max ModDur ~9.5y, no bonds >10y
@@ -7226,8 +7274,12 @@ server <- function(input, output, session) {
             # ═══════════════════════════════════════════════════════════
             h5("Trading Signals", style = "color: #1B3A6B; font-weight: bold;"),
 
+            # ─────────────────────────────────────────────────────────────
+            # VALIDATION: Ensure signal bonds are in active universe
+            # ─────────────────────────────────────────────────────────────
             # Cheapest bond (BUY signal) - uses spread_bps from fitted_curve_data
-            if (nrow(cheapest) > 0 && !is.na(cheapest$spread_bps[1])) {
+            if (nrow(cheapest) > 0 && !is.na(cheapest$spread_bps[1]) &&
+                cheapest$bond[1] %in% bonds_in_signals) {
                 tags$p(
                     tags$b("Cheapest: "),
                     tags$span(cheapest$bond[1], style = "color: #388E3C; font-weight: bold;"),
@@ -7238,7 +7290,8 @@ server <- function(input, output, session) {
             },
 
             # Richest bond (SELL signal) - uses spread_bps from fitted_curve_data
-            if (nrow(richest) > 0 && !is.na(richest$spread_bps[1])) {
+            if (nrow(richest) > 0 && !is.na(richest$spread_bps[1]) &&
+                richest$bond[1] %in% bonds_in_signals) {
                 tags$p(
                     tags$b("Richest: "),
                     tags$span(richest$bond[1], style = "color: #D32F2F; font-weight: bold;"),
@@ -7249,7 +7302,8 @@ server <- function(input, output, session) {
             },
 
             # Highest conviction trade
-            if (nrow(highest_conviction) > 0 && !is.na(highest_conviction$z_score[1])) {
+            if (nrow(highest_conviction) > 0 && !is.na(highest_conviction$z_score[1]) &&
+                highest_conviction$bond[1] %in% bonds_in_signals) {
                 tags$p(
                     tags$b("Highest Conviction: "),
                     highest_conviction$bond[1],
