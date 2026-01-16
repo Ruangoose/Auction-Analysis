@@ -1,3 +1,235 @@
+# ============================================================================
+# VaR DATA PREPARATION FUNCTIONS
+# ============================================================================
+
+#' Prepare VaR Data for Plotting
+#' @description Removes all NA, NaN, and Inf values from VaR data BEFORE plotting.
+#'              This ensures both distribution and ladder plots show identical bonds.
+#' @param var_data Data frame with VaR metrics from calculate_var() or generate_var_distribution_plot()
+#' @param source Character string identifying the source (for logging)
+#' @return Filtered data frame with only valid VaR values
+#' @export
+prepare_var_data_for_plotting <- function(var_data, source = "VaR") {
+
+    # Handle NULL or empty input
+    if (is.null(var_data) || nrow(var_data) == 0) {
+        message(sprintf("[%s Plot Prep] Input is NULL or empty", source))
+        return(data.frame())
+    }
+
+    n_total <- nrow(var_data)
+    message(sprintf("[%s Plot Prep] Input: %d bonds", source, n_total))
+
+    # Determine which columns to check based on what's available
+    # Distribution plot uses VaR_95, VaR_99 (percentages)
+    # Ladder plot uses VaR_95_bps, VaR_99_bps (basis points)
+    has_bps <- "VaR_95_bps" %in% names(var_data)
+    has_pct <- "VaR_95" %in% names(var_data)
+
+    # Build comprehensive NA mask
+    na_mask <- rep(FALSE, nrow(var_data))
+
+    # Check bond column
+    if ("bond" %in% names(var_data)) {
+        na_mask <- na_mask |
+            is.na(var_data$bond) |
+            var_data$bond == "" |
+            var_data$bond == "NA" |
+            as.character(var_data$bond) == "NA" |
+            nchar(trimws(as.character(var_data$bond))) == 0
+    }
+
+    # Check VaR columns (basis points version)
+    if (has_bps) {
+        na_mask <- na_mask |
+            is.na(var_data$VaR_95_bps) |
+            is.nan(var_data$VaR_95_bps) |
+            is.infinite(var_data$VaR_95_bps) |
+            is.na(var_data$VaR_99_bps) |
+            is.nan(var_data$VaR_99_bps) |
+            is.infinite(var_data$VaR_99_bps)
+    }
+
+    # Check VaR columns (percentage version)
+    if (has_pct) {
+        na_mask <- na_mask |
+            is.na(var_data$VaR_95) |
+            is.nan(var_data$VaR_95) |
+            is.infinite(var_data$VaR_95) |
+            is.na(var_data$VaR_99) |
+            is.nan(var_data$VaR_99) |
+            is.infinite(var_data$VaR_99)
+    }
+
+    # Check CVaR if present
+    if ("CVaR_95" %in% names(var_data)) {
+        na_mask <- na_mask |
+            is.na(var_data$CVaR_95) |
+            is.nan(var_data$CVaR_95) |
+            is.infinite(var_data$CVaR_95)
+    }
+
+    # Identify excluded bonds for logging
+    if (any(na_mask)) {
+        na_bonds <- if ("bond" %in% names(var_data)) {
+            var_data$bond[na_mask]
+        } else {
+            paste0("Row ", which(na_mask))
+        }
+        na_bonds <- na_bonds[!is.na(na_bonds) & na_bonds != "" & na_bonds != "NA"]
+
+        if (length(na_bonds) > 0) {
+            warning(sprintf("[%s Plot Prep] Excluding %d bonds with invalid VaR: %s",
+                           source, length(na_bonds), paste(na_bonds, collapse = ", ")))
+        }
+    }
+
+    # Filter to valid data only
+    valid_data <- var_data[!na_mask, ]
+
+    # Additional sanity check: filter extreme values
+    if (has_bps && nrow(valid_data) > 0) {
+        # VaR > 1000 bps (10%) is extremely unusual for government bonds
+        extreme_mask <- valid_data$VaR_95_bps > 1000 | valid_data$VaR_99_bps > 1500
+        if (any(extreme_mask, na.rm = TRUE)) {
+            extreme_bonds <- valid_data$bond[extreme_mask]
+            warning(sprintf("[%s Plot Prep] Excluding %d bonds with extreme VaR (>1000 bps): %s",
+                           source, length(extreme_bonds), paste(extreme_bonds, collapse = ", ")))
+            valid_data <- valid_data[!extreme_mask, ]
+        }
+    }
+
+    message(sprintf("[%s Plot Prep] Output: %d valid bonds", source, nrow(valid_data)))
+
+    # Final verification
+    if (has_bps && nrow(valid_data) > 0) {
+        if (any(is.na(valid_data$VaR_95_bps)) || any(is.na(valid_data$VaR_99_bps))) {
+            stop(sprintf("[%s Plot Prep] CRITICAL: NA values still present after filtering!", source))
+        }
+    }
+
+    return(valid_data)
+}
+
+#' Assess Data Quality for VaR Calculation
+#' @description Evaluates bond history completeness based on CURRENT lookback setting.
+#'              Longer lookback periods require more observations to be "Good".
+#' @param data Bond data with date and bond columns
+#' @param lookback_days Current lookback period from UI (e.g., 252, 375)
+#' @param min_ratio Minimum ratio of observations to lookback for "Limited" (default 0.8)
+#' @return Data frame with quality assessment per bond
+#' @export
+assess_data_quality_for_var <- function(data, lookback_days, min_ratio = 0.8) {
+
+    # Minimum absolute observations for any VaR calculation
+    min_required <- 30
+
+    # Quality thresholds scale with lookback period
+    recommended <- lookback_days  # Ideal: full lookback period worth of data
+    limited_threshold <- floor(lookback_days * min_ratio)  # 80% of lookback = Limited
+
+    # Count observations per bond
+    obs_count <- data %>%
+        dplyr::group_by(bond) %>%
+        dplyr::summarise(
+            n_observations = dplyr::n(),
+            date_range_days = as.numeric(max(date) - min(date)),
+            first_date = min(date),
+            last_date = max(date),
+            .groups = "drop"
+        ) %>%
+        dplyr::mutate(
+            data_quality = dplyr::case_when(
+                n_observations < min_required ~ "Insufficient",
+                n_observations < limited_threshold ~ "Limited",
+                n_observations < recommended ~ "Adequate",
+                TRUE ~ "Good"
+            ),
+            # Quality flags for plot labels
+            quality_flag = dplyr::case_when(
+                data_quality == "Insufficient" ~ "**",
+                data_quality == "Limited" ~ "*",
+                TRUE ~ ""
+            ),
+            quality_note = dplyr::case_when(
+                data_quality == "Insufficient" ~ paste0("INSUFFICIENT (", n_observations,
+                                                        " obs, need ", min_required, "+)"),
+                data_quality == "Limited" ~ paste0("Limited (", n_observations,
+                                                   " of ", lookback_days, " days)"),
+                data_quality == "Adequate" ~ paste0("Adequate (", n_observations,
+                                                    " of ", lookback_days, " days)"),
+                TRUE ~ ""
+            )
+        )
+
+    # Log summary
+    message(sprintf("[Data Quality] Lookback: %d days", lookback_days))
+    message(sprintf("  Good (>=%d obs): %d bonds",
+                   recommended, sum(obs_count$data_quality == "Good")))
+    message(sprintf("  Adequate (%d-%d obs): %d bonds",
+                   limited_threshold, recommended, sum(obs_count$data_quality == "Adequate")))
+    message(sprintf("  Limited (<%d obs): %d bonds",
+                   limited_threshold, sum(obs_count$data_quality == "Limited")))
+    message(sprintf("  Insufficient (<%d obs): %d bonds",
+                   min_required, sum(obs_count$data_quality == "Insufficient")))
+
+    return(obs_count)
+}
+
+#' Filter Bonds for VaR Calculation Based on Method
+#' @description Determines which bonds have sufficient data for VaR calculation
+#'              based on the selected method (parametric requires more data).
+#' @param data Bond data
+#' @param method VaR method: "historical", "parametric", or "cornish-fisher"
+#' @param lookback_days Current lookback period
+#' @return List with sufficient_bonds and insufficient_bonds vectors
+#' @export
+filter_bonds_for_var_method <- function(data, method, lookback_days) {
+
+    # Minimum observations depend on method
+    min_required <- switch(method,
+        "parametric" = 30,       # Normal distribution needs more samples
+        "cornish-fisher" = 30,   # Needs reliable skewness/kurtosis estimates
+        "historical" = 20        # Empirical quantiles work with fewer samples
+    )
+
+    # Count observations within lookback window
+    latest_date <- max(data$date, na.rm = TRUE)
+    lookback_start <- latest_date - lookback_days
+
+    lookback_data <- data %>%
+        dplyr::filter(date >= lookback_start)
+
+    obs_counts <- lookback_data %>%
+        dplyr::group_by(bond) %>%
+        dplyr::summarise(n_obs = dplyr::n(), .groups = "drop")
+
+    # Identify bonds with sufficient/insufficient data
+    sufficient_bonds <- obs_counts$bond[obs_counts$n_obs >= min_required]
+    insufficient_bonds <- obs_counts$bond[obs_counts$n_obs < min_required]
+
+    # Log exclusions
+    if (length(insufficient_bonds) > 0) {
+        message(sprintf("[VaR Filter] Excluding %d bonds with insufficient data for %s method (need %d+ obs):",
+                       length(insufficient_bonds), method, min_required))
+        for (b in insufficient_bonds) {
+            n <- obs_counts$n_obs[obs_counts$bond == b]
+            message(sprintf("  %s: %d obs", b, n))
+        }
+    }
+
+    return(list(
+        sufficient_bonds = sufficient_bonds,
+        insufficient_bonds = insufficient_bonds,
+        min_required = min_required,
+        method = method
+    ))
+}
+
+# ============================================================================
+# ORIGINAL FUNCTIONS
+# ============================================================================
+
 #' Data Quality Check Function
 #' @description Performs comprehensive data quality checks for a specific bond
 data_quality_check <- function(data, bond_name) {
@@ -75,12 +307,24 @@ generate_var_distribution_plot <- function(data, params = list()) {
     show_stats <- params$show_stats %||% FALSE  # CHANGED: Don't show stats in facets by default
     max_bonds <- params$max_bonds %||% 12
     outlier_threshold <- params$outlier_threshold  # Will use adaptive if NULL
-    min_observations <- params$min_observations %||% 60
     enable_diagnostics <- params$enable_diagnostics %||% FALSE  # CHANGED: Disable verbose diagnostics by default
     max_daily_return <- params$max_daily_return %||% 10  # Cap at 10% daily return
     recalculate_volatility_if_low <- params$recalculate_volatility_if_low %||% TRUE  # Failsafe for upstream bugs
     bond_order <- params$bond_order  # Optional: pre-specified bond order for consistency
     data_quality <- params$data_quality  # Optional: data quality assessment for annotations
+
+    # ===========================================================================
+    # METHOD-AWARE MINIMUM OBSERVATIONS
+    # Parametric and Cornish-Fisher methods require more data for reliable estimates
+    # ===========================================================================
+    min_observations <- switch(method,
+        "parametric" = params$min_observations %||% 30,      # Normal distribution needs samples for mean/sd
+        "cornish-fisher" = params$min_observations %||% 30,  # Needs reliable skewness/kurtosis
+        "historical" = params$min_observations %||% 20       # Empirical quantiles work with fewer samples
+    )
+
+    message(sprintf("[VaR Distribution] Method: %s | Min observations: %d | Horizon: %d days",
+                   method, min_observations, horizon_days))
 
     # Validate required columns
     required_cols <- c("bond", "date", "yield_to_maturity", "modified_duration", "convexity")
@@ -89,7 +333,9 @@ generate_var_distribution_plot <- function(data, params = list()) {
                    paste(setdiff(required_cols, names(data)), collapse = ", ")))
     }
 
-    # Check for sufficient data
+    # ===========================================================================
+    # FILTER BONDS WITH INSUFFICIENT DATA FOR CURRENT METHOD
+    # ===========================================================================
     data_check <- data %>%
         group_by(bond) %>%
         summarise(n_obs = n(), .groups = "drop")
@@ -98,11 +344,34 @@ generate_var_distribution_plot <- function(data, params = list()) {
         insufficient_bonds <- data_check %>%
             filter(n_obs < min_observations) %>%
             pull(bond)
-        warning(paste("Insufficient data (<", min_observations, "obs) for bonds:",
-                      paste(insufficient_bonds, collapse = ", ")))
+
+        # Log exclusions with observation counts
+        message(sprintf("[VaR Distribution] Excluding %d bond(s) with insufficient data for %s method:",
+                       length(insufficient_bonds), method))
+        for (b in insufficient_bonds) {
+            n <- data_check$n_obs[data_check$bond == b]
+            message(sprintf("  - %s: %d obs (need %d+)", b, n, min_observations))
+        }
+
         data <- data %>%
             filter(!bond %in% insufficient_bonds)
     }
+
+    # Check if we have any data left after filtering
+    if (nrow(data) == 0 || n_distinct(data$bond) == 0) {
+        warning("generate_var_distribution_plot: No bonds with sufficient data")
+        return(
+            ggplot() +
+                annotate("text", x = 0.5, y = 0.5,
+                         label = paste0("No bonds have sufficient data\nfor ", method, " VaR calculation.\n",
+                                       "Try using Historical method or reducing lookback period."),
+                         size = 5, color = "#666666") +
+                theme_void() +
+                labs(title = "Daily Return Distributions")
+        )
+    }
+
+    message(sprintf("[VaR Distribution] Processing %d bonds", n_distinct(data$bond)))
 
     # COMPREHENSIVE DATA QUALITY CHECKS
     if (enable_diagnostics) {
@@ -983,10 +1252,23 @@ generate_var_ladder_plot <- function(var_data, params = list()) {
     bond_order <- params$bond_order  # Optional: pre-specified bond order for consistency
     data_quality <- params$data_quality  # Optional: data quality info for annotations
 
-    # Validate input
+    # ===========================================================================
+    # STEP 1: COMPREHENSIVE NA FILTERING USING CENTRALIZED FUNCTION
+    # This is the first line of defense against NA/invalid values
+    # ===========================================================================
+    var_data <- prepare_var_data_for_plotting(var_data, source = "Risk Ladder")
+
+    # Validate input after filtering
     if (is.null(var_data) || nrow(var_data) == 0) {
-        warning("generate_var_ladder_plot: No data provided")
-        return(NULL)
+        warning("generate_var_ladder_plot: No valid data after filtering")
+        return(
+            ggplot() +
+                annotate("text", x = 0.5, y = 0.5,
+                         label = "No bonds have sufficient data\nfor VaR calculation with current parameters",
+                         size = 5, color = "#666666") +
+                theme_void() +
+                labs(title = "Risk Ladder: VaR & Expected Shortfall")
+        )
     }
 
     # Ensure required columns exist
@@ -997,15 +1279,19 @@ generate_var_ladder_plot <- function(var_data, params = list()) {
         return(NULL)
     }
 
-    # Prepare data - ensure numeric and handle NAs
-    # CRITICAL: Filter out NA and invalid bond names to prevent "NA" appearing in chart
+    # ===========================================================================
+    # STEP 2: SECONDARY FILTERING - belt and suspenders approach
+    # The prepare_var_data_for_plotting should have handled this, but double-check
+    # ===========================================================================
     var_ladder <- var_data %>%
         select(bond, VaR_95_bps, VaR_99_bps, CVaR_95) %>%
+        # Final NA check (should be clean but verify)
         filter(
             !is.na(bond),
             bond != "",
             bond != "NA",
-            as.character(bond) != "NA"
+            as.character(bond) != "NA",
+            nchar(trimws(as.character(bond))) > 0
         ) %>%
         mutate(
             VaR_95_bps = as.numeric(VaR_95_bps),
@@ -1017,17 +1303,20 @@ generate_var_ladder_plot <- function(var_data, params = list()) {
         filter(
             !is.na(VaR_95_bps),
             is.finite(VaR_95_bps),
+            !is.na(VaR_99_bps),
+            is.finite(VaR_99_bps),
+            VaR_95_bps > 0,     # Must have positive VaR
             VaR_95_bps < 1000,  # Filter extreme values (>10% daily VaR)
             VaR_99_bps < 1500   # Filter extreme 99% VaR values
         )
 
     # Check if we have valid data after filtering
     if (nrow(var_ladder) == 0) {
-        warning("generate_var_ladder_plot: No valid VaR data after filtering")
+        warning("generate_var_ladder_plot: No valid VaR data after all filtering")
         return(
             ggplot() +
                 annotate("text", x = 0.5, y = 0.5,
-                         label = "No valid VaR data available\nCheck data quality",
+                         label = "All bonds filtered out due to invalid VaR values\nTry adjusting parameters",
                          size = 5, color = "#666666") +
                 theme_void() +
                 labs(title = "Risk Ladder: VaR & Expected Shortfall")
