@@ -425,6 +425,27 @@ generate_enhanced_yield_curve <- function(data, params) {
     point_size_metric <- params$point_size_metric %||% "zscore"
     confidence_level <- params$confidence_level %||% 0.95
 
+    # ================================================================================
+    # MATURITY STATUS: Add shape variable for maturing bonds
+    # ================================================================================
+    # Check if maturity info is available in the data
+    if ("matures_in_period" %in% names(data)) {
+        data$maturity_status <- ifelse(data$matures_in_period, "Maturing", "Active")
+    } else if ("final_maturity_date" %in% names(data) && !is.null(params$end_date)) {
+        # Calculate matures_in_period from final_maturity_date if available
+        data$matures_in_period <- !is.na(data$final_maturity_date) &
+                                  data$final_maturity_date >= params$start_date &
+                                  data$final_maturity_date <= params$end_date
+        data$maturity_status <- ifelse(data$matures_in_period, "Maturing", "Active")
+    } else {
+        # No maturity info available - treat all as active
+        data$maturity_status <- "Active"
+        data$matures_in_period <- FALSE
+    }
+
+    # Track if there are any maturing bonds (for legend display)
+    has_maturing_bonds <- any(data$matures_in_period, na.rm = TRUE)
+
     # Determine point size variable based on setting
     if (point_size_metric == "zscore") {
         data$point_size_var <- abs(data$z_score)
@@ -472,15 +493,36 @@ generate_enhanced_yield_curve <- function(data, params) {
                   linewidth = 1.5,
                   alpha = 0.9)
 
-    # Add bond points
-    p <- p +
-        geom_point(aes(y = yield_to_maturity,
-                       fill = spread_to_curve,
-                       size = point_size_var),
-                   shape = 21,
-                   stroke = 1.5,
-                   color = "white",
-                   alpha = 0.9)
+    # Add bond points (with shape indicating maturity status)
+    # Shape 21 = filled circle (Active), Shape 24 = filled triangle (Maturing)
+    if (has_maturing_bonds) {
+        p <- p +
+            geom_point(aes(y = yield_to_maturity,
+                           fill = spread_to_curve,
+                           size = point_size_var,
+                           shape = maturity_status),
+                       stroke = 1.5,
+                       color = "white",
+                       alpha = 0.9) +
+            scale_shape_manual(
+                values = c("Active" = 21, "Maturing" = 24),
+                name = "Status",
+                guide = guide_legend(
+                    title.position = "top",
+                    title.hjust = 0.5,
+                    override.aes = list(fill = insele_palette$primary, size = 5)
+                )
+            )
+    } else {
+        p <- p +
+            geom_point(aes(y = yield_to_maturity,
+                           fill = spread_to_curve,
+                           size = point_size_var),
+                       shape = 21,
+                       stroke = 1.5,
+                       color = "white",
+                       alpha = 0.9)
+    }
 
     # Add labels (if enabled)
     if (show_labels) {
@@ -559,7 +601,8 @@ generate_enhanced_yield_curve <- function(data, params) {
             caption = paste0(
                 "Z-Score = Signal Strength (|Z| > 2 = Strong, |Z| > 1.5 = Moderate) | ",
                 "Color = Spread to Fair Value (Red = Rich/SELL, Green = Cheap/BUY) | ",
-                "95% confidence band shown"
+                "95% confidence band shown",
+                if (has_maturing_bonds) " | Triangle = Matures in period" else ""
             )
         ) +
         create_insele_theme()

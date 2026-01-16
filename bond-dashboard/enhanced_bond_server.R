@@ -546,7 +546,79 @@ server <- function(input, output, session) {
             return(NULL)
         }
 
-        # ✅ NEW: Sanitize filtered output
+        # ════════════════════════════════════════════════════════════════════
+        # ADD MATURITY TRACKING FIELDS
+        # ════════════════════════════════════════════════════════════════════
+        # Get maturity info from bond_metadata
+        metadata <- tryCatch({
+            bond_metadata() %>%
+                dplyr::select(bond, final_maturity_date) %>%
+                dplyr::distinct()
+        }, error = function(e) {
+            message("Warning: Could not get bond metadata for maturity tracking")
+            NULL
+        })
+
+        if (!is.null(metadata)) {
+            result <- result %>%
+                dplyr::left_join(metadata, by = "bond") %>%
+                dplyr::mutate(
+                    # Flag bonds that mature WITHIN the analysis period
+                    matures_in_period = !is.na(final_maturity_date) &
+                                        final_maturity_date >= start_date &
+                                        final_maturity_date <= end_date,
+                    # Days to maturity from the end of the analysis period
+                    days_to_maturity = as.numeric(difftime(final_maturity_date, end_date, units = "days"))
+                )
+
+            # ════════════════════════════════════════════════════════════════════
+            # APPLY MATURING BOND FILTER (if checkbox is checked)
+            # ════════════════════════════════════════════════════════════════════
+            exclude_maturing <- isTRUE(input$exclude_maturing_bonds)
+
+            if (exclude_maturing) {
+                # Get count of bonds maturing in period before filtering
+                maturing_bonds <- result %>%
+                    dplyr::filter(matures_in_period) %>%
+                    dplyr::pull(bond) %>%
+                    unique()
+
+                if (length(maturing_bonds) > 0) {
+                    showNotification(
+                        sprintf("Excluded %d bond(s) maturing in analysis period: %s",
+                               length(maturing_bonds),
+                               paste(head(maturing_bonds, 5), collapse = ", ")),
+                        type = "message",
+                        duration = 5,
+                        id = "maturing_bonds_excluded"
+                    )
+
+                    # Filter out bonds maturing in the period
+                    result <- result %>%
+                        dplyr::filter(!matures_in_period)
+
+                    # Check if any bonds remain after filtering
+                    if(nrow(result) == 0) {
+                        showNotification(
+                            "All bonds mature within the selected period. Uncheck 'Exclude maturing bonds' or adjust date range.",
+                            type = "warning",
+                            duration = 8
+                        )
+                        return(NULL)
+                    }
+                }
+            }
+        } else {
+            # No metadata available - add empty maturity columns
+            result <- result %>%
+                dplyr::mutate(
+                    final_maturity_date = as.Date(NA),
+                    matures_in_period = FALSE,
+                    days_to_maturity = NA_real_
+                )
+        }
+
+        # ✅ Sanitize filtered output
         result <- sanitize_pipeline_data(result, "filtered_data [output]")
 
         return(result)
@@ -6582,6 +6654,25 @@ server <- function(input, output, session) {
                 )
             )
 
+        # ═══════════════════════════════════════════════════════════════════════════
+        # ADD MATURITY INDICATOR: Flag bonds maturing in analysis period
+        # ═══════════════════════════════════════════════════════════════════════════
+        has_maturity_info <- "matures_in_period" %in% names(opportunities)
+        has_days_to_maturity <- "days_to_maturity" %in% names(opportunities)
+
+        if (has_maturity_info || has_days_to_maturity) {
+            opportunities <- opportunities %>%
+                mutate(
+                    maturity_flag = case_when(
+                        has_maturity_info & !is.na(matures_in_period) & matures_in_period ~ "Matures in period",
+                        has_days_to_maturity & !is.na(days_to_maturity) & days_to_maturity >= 0 & days_to_maturity < 180 ~ "<6mo to maturity",
+                        TRUE ~ ""
+                    )
+                )
+        } else {
+            opportunities$maturity_flag <- ""
+        }
+
         # Apply filter based on user selection
         if (filter_choice == "actionable") {
             opportunities <- opportunities %>%
@@ -6607,7 +6698,8 @@ server <- function(input, output, session) {
                 Spread = spread_bps,
                 ZScore = zscore,
                 Signal = signal,
-                Score = score
+                Score = score,
+                Maturity = maturity_flag  # Add maturity indicator
             )
 
         # Format the display - FIX: Handle NA z-scores properly
@@ -6640,7 +6732,7 @@ server <- function(input, output, session) {
             ),
             rownames = FALSE,
             class = 'table-striped table-bordered',
-            colnames = c("Bond", "Yield", duration_col_name, "Spread", "Z-Score", "Signal", "Score")
+            colnames = c("Bond", "Yield", duration_col_name, "Spread", "Z-Score", "Signal", "Score", "Maturity")
         ) %>%
             formatStyle(
                 "Signal",
@@ -6653,6 +6745,17 @@ server <- function(input, output, session) {
                     c("white", "white", "white", "white", "white", "white")
                 ),
                 fontWeight = "bold"
+            ) %>%
+            formatStyle(
+                "Maturity",
+                backgroundColor = styleEqual(
+                    c("Matures in period", "<6mo to maturity", ""),
+                    c("#FFA726", "#FFE0B2", "transparent")  # Orange shades for maturity warnings
+                ),
+                fontWeight = styleEqual(
+                    c("Matures in period", "<6mo to maturity", ""),
+                    c("bold", "normal", "normal")
+                )
             )
     })
 

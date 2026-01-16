@@ -2512,15 +2512,28 @@ calculate_advanced_carry_roll <- memoise(function(data,
 
         results <- list()
 
+        # Check if days_to_maturity column exists (for maturity capping)
+        has_days_to_maturity <- "days_to_maturity" %in% names(latest_data)
+
         for (period in holding_periods) {
             period_label <- paste0(period, "d")
 
             carry_roll_data <- latest_data %>%
                 mutate(
                     # ═══════════════════════════════════════════════════════════
-                    # TIME CONVERSION
+                    # TIME CONVERSION (with maturity capping)
                     # ═══════════════════════════════════════════════════════════
-                    period_years = period / 365,
+                    # Cap effective horizon at maturity if days_to_maturity is available
+                    effective_horizon_days = if (has_days_to_maturity)
+                        pmin(period, pmax(0, ifelse(is.na(days_to_maturity), period, days_to_maturity)))
+                    else
+                        period,
+
+                    # Flag if projection is truncated due to maturity
+                    projection_truncated = effective_horizon_days < period,
+
+                    # Use effective horizon for all calculations
+                    period_years = effective_horizon_days / 365,
 
                     # ═══════════════════════════════════════════════════════════
                     # CARRY INCOME (with ILB adjustment)

@@ -41,14 +41,19 @@ generate_enhanced_carry_roll_heatmap <- function(data, return_type = "net", fund
     heatmap_data <- data %>%
         filter(!is.na(!!sym(return_col))) %>%
         select(bond, holding_period, all_of(return_col),
-               any_of(c("carry_income", "roll_return", "funding_cost", "modified_duration"))) %>%
+               any_of(c("carry_income", "roll_return", "funding_cost", "modified_duration",
+                        "projection_truncated", "effective_horizon_days"))) %>%
         rename(return_value = all_of(return_col)) %>%
         mutate(
             # Apply bond ordering (rev for ggplot - highest at top)
             bond = factor(bond, levels = rev(bond_order)),
             # Ensure holding period order is correct
             holding_period = factor(holding_period,
-                                    levels = c("30d", "90d", "180d", "360d"))
+                                    levels = c("30d", "90d", "180d", "360d")),
+            # Add asterisk for truncated projections (bond matures before period ends)
+            is_truncated = if ("projection_truncated" %in% names(.))
+                               ifelse(is.na(projection_truncated), FALSE, projection_truncated)
+                           else FALSE
         )
 
     if(nrow(heatmap_data) == 0) {
@@ -119,12 +124,23 @@ generate_enhanced_carry_roll_heatmap <- function(data, return_type = "net", fund
         TRUE ~ "black"                               # Black text otherwise
     )
 
+    # Check if any projections are truncated (for caption)
+    has_truncated <- any(heatmap_data$is_truncated, na.rm = TRUE)
+
+    # Create labels with asterisk for truncated projections
+    heatmap_data <- heatmap_data %>%
+        mutate(
+            label_text = ifelse(is_truncated,
+                               sprintf("%.2f%%*", return_value),
+                               sprintf("%.2f%%", return_value))
+        )
+
     # Create heatmap with realistic scale
     p <- ggplot(heatmap_data, aes(x = holding_period, y = bond, fill = return_value)) +
 
         geom_tile(color = "white", linewidth = 1.5) +
 
-        geom_text(aes(label = sprintf("%.2f%%", return_value)),
+        geom_text(aes(label = label_text),
                   size = 4,
                   fontface = "bold",
                   color = text_colors) +
@@ -143,7 +159,10 @@ generate_enhanced_carry_roll_heatmap <- function(data, return_type = "net", fund
                                return_type_label, funding_rate),
             x = "Holding Period",
             y = "",
-            caption = "Returns shown are total period returns (not annualized)"
+            caption = paste0(
+                "Returns shown are total period returns (not annualized)",
+                if (has_truncated) " | * = Truncated at maturity" else ""
+            )
         ) +
 
         create_insele_theme() +
