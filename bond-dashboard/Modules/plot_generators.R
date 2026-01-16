@@ -428,14 +428,20 @@ generate_enhanced_yield_curve <- function(data, params) {
     # ================================================================================
     # MATURITY STATUS: Add shape variable for maturing bonds
     # ================================================================================
-    # Check if maturity info is available in the data
+    # Check if maturity info is already calculated in the data (preferred - from filtered_data)
     if ("matures_in_period" %in% names(data)) {
         data$maturity_status <- ifelse(data$matures_in_period, "Maturing", "Active")
     } else if ("final_maturity_date" %in% names(data) && !is.null(params$end_date)) {
-        # Calculate matures_in_period from final_maturity_date if available
-        data$matures_in_period <- !is.na(data$final_maturity_date) &
-                                  data$final_maturity_date >= params$start_date &
-                                  data$final_maturity_date <= params$end_date
+        # Fallback: Calculate matures_in_period from final_maturity_date if available
+        # Uses same expanded logic as server: bonds maturing WITHIN or SHORTLY AFTER the analysis period
+        # This captures bonds that mature during the period OR within 365 days after period end
+        data <- data %>%
+            dplyr::mutate(
+                days_to_maturity_calc = as.numeric(difftime(final_maturity_date, params$end_date, units = "days")),
+                matures_in_period = !is.na(final_maturity_date) &
+                                    final_maturity_date >= params$start_date &
+                                    (final_maturity_date <= params$end_date | days_to_maturity_calc <= 365)
+            )
         data$maturity_status <- ifelse(data$matures_in_period, "Maturing", "Active")
     } else {
         # No maturity info available - treat all as active
