@@ -7931,7 +7931,7 @@ server <- function(input, output, session) {
                         xlim(0, 1) + ylim(0, 1) +
                         theme_void() +
                         theme(plot.background = element_rect(fill = "#FFF9C4", color = NA),
-                              plot.margin = margin(20, 20, 20, 20))
+                              plot.margin = ggplot2::margin(20, 20, 20, 20))
 
                     ggsave(file, plot = p, width = 10, height = 6, dpi = 150, bg = "white")
                 } else {
