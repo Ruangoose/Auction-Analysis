@@ -563,13 +563,38 @@ server <- function(input, output, session) {
             result <- result %>%
                 dplyr::left_join(metadata, by = "bond") %>%
                 dplyr::mutate(
-                    # Flag bonds that mature WITHIN the analysis period
+                    # Days to maturity from the end of the analysis period
+                    days_to_maturity = as.numeric(difftime(final_maturity_date, end_date, units = "days")),
+                    # Flag bonds that mature WITHIN or SHORTLY AFTER the analysis period
+                    # This captures:
+                    # 1. Bonds that mature during the analysis period (definitely exclude)
+                    # 2. Bonds that mature within 365 days after the period ends (short-dated, different risk profile)
+                    # The expanded logic ensures short-dated bonds like R186 are properly flagged
                     matures_in_period = !is.na(final_maturity_date) &
                                         final_maturity_date >= start_date &
-                                        final_maturity_date <= end_date,
-                    # Days to maturity from the end of the analysis period
-                    days_to_maturity = as.numeric(difftime(final_maturity_date, end_date, units = "days"))
+                                        (final_maturity_date <= end_date | days_to_maturity <= 365)
                 )
+
+            # Debug logging for maturity filtering
+            maturing_bonds_debug <- result %>%
+                dplyr::filter(!is.na(final_maturity_date)) %>%
+                dplyr::select(bond, final_maturity_date, days_to_maturity, matures_in_period) %>%
+                dplyr::distinct()
+            message(sprintf("=== MATURITY FILTER DEBUG ==="))
+            message(sprintf("Analysis period: %s to %s", start_date, end_date))
+            message(sprintf("Bonds with maturity data: %d", nrow(maturing_bonds_debug)))
+            bonds_flagged <- maturing_bonds_debug %>% dplyr::filter(matures_in_period)
+            if (nrow(bonds_flagged) > 0) {
+                message(sprintf("Bonds flagged as matures_in_period: %s",
+                               paste(sprintf("%s (matures %s, %d days)",
+                                           bonds_flagged$bond,
+                                           format(bonds_flagged$final_maturity_date, "%Y-%m-%d"),
+                                           bonds_flagged$days_to_maturity),
+                                     collapse = ", ")))
+            } else {
+                message("No bonds flagged as matures_in_period")
+            }
+            message("=============================")
 
             # ════════════════════════════════════════════════════════════════════
             # APPLY MATURING BOND FILTER (if checkbox is checked)
@@ -2891,12 +2916,35 @@ server <- function(input, output, session) {
         })
     }, ignoreNULL = FALSE)
 
-    # Initialize on load
-    observe({
-        # Trigger initial calculation when data is ready
-        req(filtered_data())  # Use filtered_data which has full historical data
-        shinyjs::delay(1000, shinyjs::click("generate_butterflies"))
-    })
+    # Track if butterflies have been calculated this session (to avoid recalculating on tab re-navigation)
+    butterfly_calculated <- reactiveVal(FALSE)
+
+    # Lazy loading: Only trigger butterfly calculation when user navigates to Market Intelligence tab
+    # This prevents expensive calculations on app startup (fixes 3-5 second delay on load)
+    observeEvent(input$main_tabs, {
+        # Only trigger when:
+        # 1. User navigates to Market Intelligence tab
+        # 2. Data is ready (filtered_data available)
+        # 3. Butterflies haven't been calculated yet in this session
+        if (input$main_tabs == "Market Intelligence" &&
+            !butterfly_calculated() &&
+            !is.null(tryCatch(filtered_data(), error = function(e) NULL))) {
+
+            message("=== BUTTERFLY CALCULATION TRIGGERED BY USER NAVIGATION ===")
+            message("User clicked on Market Intelligence tab - initiating butterfly calculations")
+
+            # Small delay to allow tab UI to render first, then trigger calculation
+            shinyjs::delay(500, {
+                shinyjs::click("generate_butterflies")
+                butterfly_calculated(TRUE)  # Mark as calculated
+            })
+        }
+    }, ignoreInit = TRUE)  # ignoreInit = TRUE prevents triggering on app startup
+
+    # Reset butterfly_calculated flag when data changes (so user can get fresh calculations)
+    observeEvent(filtered_data(), {
+        butterfly_calculated(FALSE)
+    }, ignoreInit = TRUE)
 
     # Filtered butterfly data - responds to stationarity_filter changes
     # This is a separate reactive so filter changes don't require regenerating butterflies
