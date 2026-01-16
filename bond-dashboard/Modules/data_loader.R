@@ -9,6 +9,14 @@
 # ==============================================================================
 
 # ==============================================================================
+# MINIMUM OBSERVATIONS THRESHOLD
+# Very low threshold to include new bond issuances with limited historical data
+# Set to 1 to include bonds with ANY valid data (even a single observation)
+# Bonds with fewer observations than this will be excluded with a warning
+# ==============================================================================
+MIN_OBSERVATIONS <- 1  # Require only 1 observation minimum to include all bonds with any valid data
+
+# ==============================================================================
 # CORRUPTION DETECTION AND VALIDATION FUNCTIONS
 # Added 2026-01-15 to fix bond data corruption (YTM=1.0%, ModDur=1.0)
 # ==============================================================================
@@ -489,6 +497,10 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
     stop("Failed to load essential data (ytm or mod_dur)")
   }
 
+  # DEBUG: Track bond counts after loading (before value filtering)
+  debug_bond_count(ytm_df, "robust: after ytm load (raw)")
+  debug_bond_count(mod_dur_df, "robust: after mod_dur load (raw)")
+
   # --------------------------------------------------------------------------
   # STEP 4: Load Optional Sheets
   # --------------------------------------------------------------------------
@@ -550,6 +562,7 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
   # CRITICAL FIX: Validate immediately after core join
   # Filter out any rows with invalid YTM or ModDur values
   # NOTE: Changed YTM threshold from 2% to 1.5% to keep bonds with lower but valid yields
+  bonds_before_filter <- unique(full_df$bond)
   rows_before_filter <- nrow(full_df)
   full_df <- full_df %>%
     dplyr::filter(
@@ -560,9 +573,19 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
       modified_duration > 0.1   # Duration must be positive and reasonable
     )
   rows_after_filter <- nrow(full_df)
+  bonds_after_filter <- unique(full_df$bond)
+
   if (rows_before_filter != rows_after_filter) {
     message(sprintf("    - Filtered out %d rows with invalid YTM/ModDur values",
                     rows_before_filter - rows_after_filter))
+  }
+
+  # DEBUG: Show which bonds were lost during value filtering
+  lost_bonds <- setdiff(bonds_before_filter, bonds_after_filter)
+  if (length(lost_bonds) > 0) {
+    message(sprintf("    ⚠ Bonds lost during value filter (all data was placeholders): %s",
+                    paste(sort(lost_bonds), collapse = ", ")))
+    message("      These bonds have NO valid YTM data (all values <= 1.5%% or NA)")
   }
   debug_bond_count(full_df, "robust: after quality filter")
 
@@ -875,7 +898,50 @@ load_time_series_sheet <- function(excel_path, sheet_name, value_name, available
             }
         }
 
-        message(sprintf("    Loaded %d rows for %s", nrow(result), value_name))
+        # =====================================================================
+        # FIX: Count observations per bond and track which bonds have data
+        # Use MIN_OBSERVATIONS threshold to allow newer bonds with limited data
+        # =====================================================================
+        bond_counts <- result %>%
+            dplyr::group_by(bond) %>%
+            dplyr::summarise(n_obs = dplyr::n(), .groups = "drop")
+
+        # Keep bonds with at least MIN_OBSERVATIONS (very low to include new issuances)
+        bonds_with_data <- bond_counts %>%
+            dplyr::filter(n_obs >= MIN_OBSERVATIONS) %>%
+            dplyr::pull(bond)
+
+        # Debug: Show which bonds would be excluded due to insufficient data
+        excluded_bonds <- setdiff(available_bonds, bonds_with_data)
+        if (length(excluded_bonds) > 0) {
+            excluded_info <- bond_counts %>%
+                dplyr::filter(bond %in% excluded_bonds)
+            # Check if any excluded bonds have SOME data (just below threshold)
+            has_some_data <- excluded_info %>%
+                dplyr::filter(n_obs > 0)
+            if (nrow(has_some_data) > 0) {
+                message(sprintf("    ⚠ Bonds excluded from %s (< %d obs): %s",
+                                value_name, MIN_OBSERVATIONS,
+                                paste(has_some_data$bond, collapse = ", ")))
+                message(sprintf("      Observation counts: %s",
+                                paste(sprintf("%s=%d", has_some_data$bond, has_some_data$n_obs),
+                                      collapse = ", ")))
+                message("      Consider lowering MIN_OBSERVATIONS if these are valid new issuances")
+            }
+            # Also note bonds with ZERO observations (all placeholder values filtered out)
+            has_no_data <- setdiff(excluded_bonds, has_some_data$bond)
+            if (length(has_no_data) > 0) {
+                message(sprintf("    ⚠ Bonds with NO valid %s data (all placeholders): %s",
+                                value_name, paste(has_no_data, collapse = ", ")))
+            }
+        }
+
+        # Filter to bonds with sufficient data
+        result <- result %>%
+            dplyr::filter(bond %in% bonds_with_data)
+
+        message(sprintf("    Loaded %d rows for %s (%d bonds)",
+                        nrow(result), value_name, length(bonds_with_data)))
         return(result)
 
     }, error = function(e) {
@@ -1228,6 +1294,7 @@ load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
 
     # CRITICAL FIX: Filter out invalid values immediately after core join
     # NOTE: Changed YTM threshold from 2% to 1.5% to keep bonds with lower but valid yields
+    bonds_before_filter <- unique(full_df$bond)
     rows_before_filter <- nrow(full_df)
     full_df <- full_df %>%
         dplyr::filter(
@@ -1238,9 +1305,19 @@ load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
             modified_duration > 0.1   # Duration must be positive and reasonable
         )
     rows_after_filter <- nrow(full_df)
+    bonds_after_filter <- unique(full_df$bond)
+
     if (rows_before_filter != rows_after_filter) {
         message(sprintf("    Filtered out %d rows with invalid YTM/ModDur values",
                         rows_before_filter - rows_after_filter))
+    }
+
+    # DEBUG: Show which bonds were lost during value filtering
+    lost_bonds <- setdiff(bonds_before_filter, bonds_after_filter)
+    if (length(lost_bonds) > 0) {
+        message(sprintf("    ⚠ Bonds lost during value filter (all data was placeholders): %s",
+                        paste(sort(lost_bonds), collapse = ", ")))
+        message("      These bonds have NO valid data after joining (all YTM <= 1.5%% or NA)")
     }
     debug_bond_count(full_df, "after quality filter")
 
