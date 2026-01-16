@@ -936,6 +936,152 @@ check_wcag_contrast <- function(foreground, background, level = "AA") {
 }
 
 # ================================================================================
+# SIGNAL THRESHOLD CONSTANTS (Single Source of Truth)
+# ================================================================================
+# These thresholds define trading signal strength across the entire dashboard.
+# Both the Market Intelligence card and Yield Curve panel use these values.
+#
+# Z-Score Interpretation:
+#   - |Z| > 2.0 = Strong signal (statistically significant at 95% confidence)
+#   - |Z| > 1.5 = Moderate signal (actionable, worth investigating)
+#   - |Z| > 1.0 = Weak signal (normal variation)
+#   - |Z| < 1.0 = No signal (within normal bounds)
+# ================================================================================
+
+#' @export
+SIGNAL_THRESHOLDS <- list(
+    strong = 2.0,      # |Z| > 2.0 = Strong signal (statistically significant)
+    moderate = 1.5,    # |Z| > 1.5 = Moderate signal (actionable)
+    weak = 1.0         # |Z| > 1.0 = Weak signal
+)
+
+#' Calculate unified trading signals from curve data
+#' @description Single source of truth for signal calculations used across dashboard
+#' @param curve_data Data frame with z_score, spread_bps/spread_to_curve, and bond columns
+#' @param spread_col Name of spread column (default: "spread_bps")
+#' @param bond_col Name of bond identifier column (default: "bond")
+#' @return List containing signal counts and key trade recommendations
+#' @export
+calculate_unified_signals <- function(curve_data,
+                                       spread_col = "spread_bps",
+                                       bond_col = "bond") {
+    # Validate input
+    if (is.null(curve_data) || nrow(curve_data) == 0) {
+        return(list(
+            strong_count = 0,
+            moderate_count = 0,
+            weak_count = 0,
+            actionable_bonds = character(0),
+            cheapest = list(bond = NA, spread = NA),
+            richest = list(bond = NA, spread = NA),
+            highest_conviction = list(bond = NA, z_score = NA),
+            signal_summary = "No data available"
+        ))
+    }
+
+    # Handle alternative spread column names
+    if (!spread_col %in% names(curve_data)) {
+        if ("spread_to_curve" %in% names(curve_data)) {
+            spread_col <- "spread_to_curve"
+        } else {
+            spread_col <- NULL
+        }
+    }
+
+    # Calculate Z-scores if not present
+    if (!"z_score" %in% names(curve_data)) {
+        if (!is.null(spread_col) && spread_col %in% names(curve_data)) {
+            spreads <- curve_data[[spread_col]]
+            spread_sd <- sd(spreads, na.rm = TRUE)
+            if (!is.na(spread_sd) && spread_sd > 0) {
+                curve_data$z_score <- (spreads - mean(spreads, na.rm = TRUE)) / spread_sd
+            } else {
+                curve_data$z_score <- 0
+            }
+        } else {
+            curve_data$z_score <- 0
+        }
+    }
+
+    # Filter valid rows
+    valid_data <- curve_data[!is.na(curve_data$z_score), ]
+
+    if (nrow(valid_data) == 0) {
+        return(list(
+            strong_count = 0,
+            moderate_count = 0,
+            weak_count = 0,
+            actionable_bonds = character(0),
+            cheapest = list(bond = NA, spread = NA),
+            richest = list(bond = NA, spread = NA),
+            highest_conviction = list(bond = NA, z_score = NA),
+            signal_summary = "No valid z-score data"
+        ))
+    }
+
+    # Count signals by threshold using the centralized constants
+    zscore_abs <- abs(valid_data$z_score)
+    strong_count <- sum(zscore_abs > SIGNAL_THRESHOLDS$strong, na.rm = TRUE)
+    moderate_count <- sum(zscore_abs > SIGNAL_THRESHOLDS$moderate, na.rm = TRUE)  # Includes strong
+    weak_count <- sum(zscore_abs > SIGNAL_THRESHOLDS$weak, na.rm = TRUE)  # Includes moderate and strong
+
+    # Identify actionable bonds (|Z| > 1.5 = moderate threshold)
+    actionable_mask <- zscore_abs > SIGNAL_THRESHOLDS$moderate
+    actionable_bonds <- if (any(actionable_mask)) {
+        valid_data[[bond_col]][actionable_mask]
+    } else {
+        character(0)
+    }
+
+    # Find extremes (cheapest, richest, highest conviction)
+    cheapest <- list(bond = NA, spread = NA)
+    richest <- list(bond = NA, spread = NA)
+    highest_conviction <- list(bond = NA, z_score = NA)
+
+    if (!is.null(spread_col) && spread_col %in% names(valid_data)) {
+        spread_data <- valid_data[[spread_col]]
+        if (any(!is.na(spread_data))) {
+            cheapest_idx <- which.max(spread_data)
+            richest_idx <- which.min(spread_data)
+            cheapest <- list(
+                bond = valid_data[[bond_col]][cheapest_idx],
+                spread = spread_data[cheapest_idx]
+            )
+            richest <- list(
+                bond = valid_data[[bond_col]][richest_idx],
+                spread = spread_data[richest_idx]
+            )
+        }
+    }
+
+    highest_conviction_idx <- which.max(zscore_abs)
+    if (length(highest_conviction_idx) > 0) {
+        highest_conviction <- list(
+            bond = valid_data[[bond_col]][highest_conviction_idx],
+            z_score = valid_data$z_score[highest_conviction_idx]
+        )
+    }
+
+    # Create summary text
+    signal_summary <- sprintf(
+        "%d strong (|Z|>%.1f), %d moderate (|Z|>%.1f)",
+        strong_count, SIGNAL_THRESHOLDS$strong,
+        moderate_count - strong_count, SIGNAL_THRESHOLDS$moderate
+    )
+
+    return(list(
+        strong_count = strong_count,
+        moderate_count = moderate_count,
+        weak_count = weak_count,
+        actionable_bonds = actionable_bonds,
+        cheapest = cheapest,
+        richest = richest,
+        highest_conviction = highest_conviction,
+        signal_summary = signal_summary
+    ))
+}
+
+# ================================================================================
 # INITIALIZATION MESSAGE
 # ================================================================================
 

@@ -30,20 +30,24 @@ if (is.null(logo_base64)) {
 ui <- dashboardPage(
     dashboardHeader(
         title = tags$div(
-            style = "display: flex; align-items: center; width: 100%; padding: 5px 0;",
+            # FIX: Improved header styling to prevent tagline truncation
+            # Added flex-shrink: 0 to prevent compression, and responsive handling
+            style = "display: flex; align-items: center; width: 100%; padding: 5px 0; overflow: visible;",
             # Direct base64 embed
             if(!is.null(logo_base64)) {
                 tags$img(src = logo_base64, height = "35px",
-                         style = "margin-right: 10px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));")
+                         style = "margin-right: 10px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1)); flex-shrink: 0;")
             } else {
                 NULL
             },
             tags$span("INSELE CAPITAL PARTNERS",
-                      style = "font-weight: 600; font-size: 18px; color: white; letter-spacing: 0.5px;"),
+                      style = "font-weight: 600; font-size: 18px; color: white; letter-spacing: 0.5px; white-space: nowrap; flex-shrink: 0;"),
+            # FIX: Tagline with proper overflow handling and full visibility
             tags$span("The Power of Partnership",
-                      style = "color: #FFD700; margin-left: 15px; font-style: italic; font-size: 14px;")
+                      class = "header-tagline",
+                      style = "color: #FFD700; margin-left: 15px; font-style: italic; font-size: 14px; white-space: nowrap; flex-shrink: 1; min-width: 0;")
         ),
-        titleWidth = 500,
+        titleWidth = 550,  # Increased from 500 to accommodate full tagline
 
         # Enhanced notification dropdown
         dropdownMenu(
@@ -131,6 +135,32 @@ ui <- dashboardPage(
           color: #333 !important;
           background-color: #f8f9fa !important;
           border: 1px solid #ddd !important;
+        }
+
+        /* ════════════════════════════════════════════════════════════════════════
+           FIX: Header tagline responsive handling
+           Ensures tagline is fully visible on larger screens, hidden on small
+           ════════════════════════════════════════════════════════════════════════ */
+        .header-tagline {
+          display: inline-block;
+          overflow: visible;
+          text-overflow: clip;
+        }
+
+        /* On screens smaller than 1200px, hide the tagline to prevent truncation */
+        @media (max-width: 1200px) {
+          .header-tagline {
+            display: none !important;
+          }
+        }
+
+        /* Ensure header logo area has enough width */
+        .main-header .logo {
+          overflow: visible !important;
+        }
+
+        .main-header .navbar-brand {
+          overflow: visible !important;
         }
       ")))
         ),

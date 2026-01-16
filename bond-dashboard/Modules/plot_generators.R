@@ -558,20 +558,40 @@ generate_enhanced_yield_curve <- function(data, params) {
                        alpha = 0.9)
     }
 
-    # Add labels (if enabled)
+    # ════════════════════════════════════════════════════════════════════════════
+    # FIX: Improved label handling to reduce overlap in crowded areas
+    # Uses enhanced smart_label function with spatial distribution awareness
+    # ════════════════════════════════════════════════════════════════════════════
     if (show_labels) {
+        # Use improved smart_label with spatial awareness
+        label_data <- smart_label(
+            data,
+            label_col = "bond",
+            priority_col = "z_score",
+            max_labels = 15,  # Increased from 10 to show more labels
+            x_col = "x_var_plot",
+            y_col = "yield_to_maturity",
+            min_spacing = 0.3
+        )
+
         p <- p +
             ggrepel::geom_text_repel(
-                data = smart_label(data, "bond", "z_score", max_labels = 10),
+                data = label_data,
                 aes(y = yield_to_maturity, label = bond),
-                size = 3.5,
-                max.overlaps = 20,
+                size = 3.2,
+                max.overlaps = 25,           # Increased to check more overlaps
+                min.segment.length = 0.2,    # Draw connectors for closer labels
                 segment.size = 0.3,
-                segment.alpha = 0.6,
-                box.padding = 0.4,
-                point.padding = 0.3,
-                force = 2,
+                segment.alpha = 0.5,
+                segment.color = insele_palette$medium_gray,
+                box.padding = 0.5,           # Increased padding around labels
+                point.padding = 0.4,         # Increased distance from points
+                force = 3,                   # Increased repulsion force
+                force_pull = 0.3,            # Pull toward original position
+                direction = "both",          # Allow movement in x and y
+                seed = 42,                   # Reproducible positioning
                 color = insele_palette$dark_gray,
+                fontface = "bold",
                 family = if(Sys.info()["sysname"] == "Windows") "sans" else "Helvetica"
             )
     }
@@ -633,14 +653,42 @@ generate_enhanced_yield_curve <- function(data, params) {
             },
             x = x_label,
             y = "Yield to Maturity",
+            # FIX: Use SIGNAL_THRESHOLDS constants for consistency across dashboard
             caption = paste0(
-                "Z-Score = Signal Strength (|Z| > 2 = Strong, |Z| > 1.5 = Moderate) | ",
+                sprintf("Z-Score = Signal Strength (|Z| > %.1f = Strong, |Z| > %.1f = Moderate) | ",
+                        SIGNAL_THRESHOLDS$strong, SIGNAL_THRESHOLDS$moderate),
                 "Color = Spread to Fair Value (Red = Rich/SELL, Green = Cheap/BUY) | ",
                 "95% confidence band shown",
                 if (has_maturing_bonds) " | Triangle = Matures in period" else ""
             )
         ) +
-        create_insele_theme()
+        create_insele_theme() +
+        # ════════════════════════════════════════════════════════════════════════════
+        # FIX: Improved legend readability - larger text, better spacing
+        # ════════════════════════════════════════════════════════════════════════════
+        theme(
+            # Legend improvements for better readability
+            legend.position = "bottom",
+            legend.box = "horizontal",
+            legend.box.spacing = unit(0.5, "cm"),
+            legend.spacing.x = unit(0.5, "cm"),
+            legend.text = element_text(size = 10),  # Increased from default
+            legend.title = element_text(size = 11, face = "bold"),
+            legend.key.size = unit(1.2, "lines"),
+            legend.margin = margin(t = 10, b = 5, l = 0, r = 0),
+
+            # Caption improvements - make it more readable
+            plot.caption = element_text(
+                size = 9,
+                color = insele_palette$medium_gray,
+                hjust = 0.5,  # Center the caption
+                lineheight = 1.3,
+                margin = margin(t = 10, b = 0)
+            ),
+
+            # Add some padding around the plot for labels that extend beyond
+            plot.margin = margin(t = 15, r = 15, b = 10, l = 10)
+        )
 
     return(p)
 }
