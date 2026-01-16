@@ -1358,6 +1358,37 @@ generate_var_ladder_plot <- function(var_data, params = list()) {
 
     # Apply bond ordering - create factor with levels locked in order
     if (!is.null(bond_order)) {
+        # =========================================================================
+        # CRITICAL FIX: Filter var_ladder to ONLY bonds in bond_order BEFORE
+        # creating factor levels. This prevents NA rows from appearing when
+        # var_ladder has bonds not present in bond_order.
+        # =========================================================================
+        original_count <- nrow(var_ladder)
+        bonds_in_ladder <- unique(var_ladder$bond)
+        bonds_not_in_order <- setdiff(bonds_in_ladder, bond_order)
+
+        if (length(bonds_not_in_order) > 0) {
+            warning(sprintf("[Risk Ladder Plot] %d bonds in data not in bond_order - FILTERING OUT: %s",
+                           length(bonds_not_in_order), paste(bonds_not_in_order, collapse = ", ")))
+            var_ladder <- var_ladder %>%
+                filter(bond %in% bond_order)
+            message(sprintf("[Risk Ladder Plot] Filtered: %d -> %d bonds to match bond_order",
+                           original_count, nrow(var_ladder)))
+        }
+
+        # Check if we have any data left after filtering
+        if (nrow(var_ladder) == 0) {
+            warning("[Risk Ladder Plot] No bonds remaining after filtering to bond_order")
+            return(
+                ggplot() +
+                    annotate("text", x = 0.5, y = 0.5,
+                             label = "No matching bonds between data and ordering\nCheck VaR parameters",
+                             size = 5, color = "#666666") +
+                    theme_void() +
+                    labs(title = "Risk Ladder: VaR & Expected Shortfall")
+            )
+        }
+
         # Create label order matching bond_order
         label_lookup <- var_ladder %>% select(bond, bond_label) %>% distinct()
         bond_label_order <- tibble(bond = bond_order) %>%
@@ -1368,6 +1399,16 @@ generate_var_ladder_plot <- function(var_data, params = list()) {
         # Use provided order (reversed for coord_flip so highest at top)
         var_ladder <- var_ladder %>%
             mutate(bond_display = factor(bond_label, levels = rev(bond_label_order)))
+
+        # FINAL SAFETY CHECK: Remove any rows with NA bond_display
+        # This should not happen after the above fix, but belt-and-suspenders
+        na_display_count <- sum(is.na(var_ladder$bond_display))
+        if (na_display_count > 0) {
+            warning(sprintf("[Risk Ladder Plot] CRITICAL: %d rows with NA bond_display after factor creation - removing",
+                           na_display_count))
+            var_ladder <- var_ladder %>%
+                filter(!is.na(bond_display))
+        }
     } else {
         # Lock in current order (sorted by VaR_95_bps ascending)
         var_ladder <- var_ladder %>%
