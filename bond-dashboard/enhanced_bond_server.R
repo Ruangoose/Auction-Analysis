@@ -138,7 +138,8 @@ server <- function(input, output, session) {
         notifications = list(),
         alert_counter = 0,
         auction_performance_plot = NULL,  # Add this for storing plot
-        carry_refresh = 0  # Add this for carry & roll refresh trigger
+        carry_refresh = 0,  # Add this for carry & roll refresh trigger
+        excel_path = NULL   # Store the Excel file path for metadata creation
     )
 
     # ================================================================================
@@ -209,6 +210,9 @@ server <- function(input, output, session) {
             if (!is.null(excel_path)) {
                 message(sprintf("✓ Using Excel source: %s", excel_path))
                 message(sprintf("✓ Using cache file: %s", cache_path))
+
+                # Store excel path for later use in metadata creation
+                values$excel_path <- excel_path
 
                 load_bond_data(
                     excel_path = excel_path,
@@ -425,7 +429,8 @@ server <- function(input, output, session) {
         }
 
         # Create metadata using the function from data_loader.R
-        create_bond_metadata(data, auction_data)
+        # Pass excel_path to enable reading maturity_date sheet (PRIMARY SOURCE)
+        create_bond_metadata(data, auction_data, excel_path = values$excel_path)
     })
 
 
@@ -6534,7 +6539,7 @@ server <- function(input, output, session) {
                 !is.na(yield_to_maturity),
                 !is.na(x_value),  # x_value is the dynamic x-axis (duration/TTM)
                 # FIX: Exclude placeholder values (1.0% yield, 1.0 duration indicates bad data)
-                yield_to_maturity > 2.0,  # Real SA government bonds have yields > 2%
+                yield_to_maturity > 1.5,  # Filter out placeholder values only (was 2%)
                 x_value > 0.5,  # Modified duration should be > 0.5 for real bonds
                 # FIX: Exclude bonds with no z-score data instead of filling with 0
                 !is.na(z_score) | TRUE  # Allow NA z-scores but handle them properly below

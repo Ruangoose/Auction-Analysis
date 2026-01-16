@@ -93,7 +93,7 @@ generate_enhanced_yield_curve <- function(data, params) {
             is.finite(yield_to_maturity),
             is.finite(modified_duration),
             # Exclude placeholder values that indicate bad data
-            yield_to_maturity > 2.0,  # Real SA bonds have yields > 2%
+            yield_to_maturity > 1.5,  # Filter out placeholder values only (was 2%)
             yield_to_maturity < 20.0,  # Sanity check upper bound
             modified_duration > 0.5,   # Must have meaningful duration
             modified_duration < 30.0   # Sanity check upper bound
