@@ -7088,14 +7088,30 @@ server <- function(input, output, session) {
         metrics <- curve_data$metrics
         x_var <- curve_data$x_var
 
-        # Calculate key curve metrics
-        short_yield <- mean(data$yield_to_maturity[data$x_value <= 5], na.rm = TRUE)
-        medium_yield <- mean(data$yield_to_maturity[data$x_value > 5 & data$x_value <= 10], na.rm = TRUE)
-        long_yield <- mean(data$yield_to_maturity[data$x_value > 10], na.rm = TRUE)
+        # ════════════════════════════════════════════════════════════════════════
+        # FIX: Use adaptive bucket and slope calculations that handle data limits
+        # SA Government Bond universe has max ModDur ~9.5y, no bonds >10y
+        # ════════════════════════════════════════════════════════════════════════
 
-        curve_slope <- (long_yield - short_yield) * 100
+        # Calculate duration bucket yields with adaptive thresholds
+        buckets <- calculate_duration_bucket_yields(data, x_col = "x_value",
+                                                     y_col = "yield_to_maturity",
+                                                     bucket_type = "adaptive")
+
+        # Calculate adaptive slope (uses actual curve endpoints if 2s10s unavailable)
+        slope_info <- calculate_adaptive_slope(data, x_col = "x_value",
+                                                y_col = "yield_to_maturity",
+                                                min_spread = 4)
+
+        # Calculate curvature using adaptive bucket yields
+        curvature_info <- calculate_curvature(
+            buckets$short$avg_yield,
+            buckets$medium$avg_yield,
+            buckets$long$avg_yield
+        )
+
+        # Simple curve level (always available)
         curve_level <- mean(data$yield_to_maturity, na.rm = TRUE)
-        curve_curvature <- 2 * medium_yield - short_yield - long_yield
 
         # Use model fit quality from fitted_curve_data metrics (already calculated)
         avg_spread <- metrics$avg_spread
@@ -7136,25 +7152,63 @@ server <- function(input, output, session) {
         moderate_count <- unified_signals$moderate_count
         actionable_count <- moderate_count  # Actionable = moderate and above
 
+        # ═══════════════════════════════════════════════════════════════════════════
+        # Build dynamic bucket labels based on adaptive thresholds
+        # ═══════════════════════════════════════════════════════════════════════════
+        short_label <- if (buckets$is_adaptive) {
+            sprintf("Short (<%dy) [%d]", buckets$short_max, buckets$short$count)
+        } else {
+            sprintf("Short (<5y) [%d]", buckets$short$count)
+        }
+
+        medium_label <- if (buckets$is_adaptive) {
+            sprintf("Medium (%d-%dy) [%d]", buckets$short_max, buckets$medium_max, buckets$medium$count)
+        } else {
+            sprintf("Medium (5-10y) [%d]", buckets$medium$count)
+        }
+
+        long_label <- if (buckets$is_adaptive) {
+            sprintf("Long (>%dy) [%d]", buckets$medium_max, buckets$long$count)
+        } else {
+            sprintf("Long (>10y) [%d]", buckets$long$count)
+        }
+
+        # Build slope label with adaptive indicator
+        slope_label <- paste0("Slope (", slope_info$label, "):")
+
         tagList(
             # ═══════════════════════════════════════════════════════════
-            # CURVE METRICS SECTION
+            # CURVE METRICS SECTION - Now with graceful NaN handling
             # ═══════════════════════════════════════════════════════════
             h5("Curve Metrics", style = "color: #1B3A6B; font-weight: bold; margin-top: 0;"),
             tags$div(
-                tags$p(tags$b("Level:"), sprintf(" %.2f%%", curve_level)),
-                tags$p(tags$b("Slope (2s10s):"), sprintf(" %.0f bps", curve_slope)),
-                tags$p(tags$b("Curvature:"), sprintf(" %.2f%%", curve_curvature))
+                tags$p(tags$b("Level:"), format_curve_metric(curve_level, "%", decimals = 2)),
+                tags$p(
+                    tags$b(slope_label),
+                    format_curve_metric(slope_info$slope, " bps", decimals = 0,
+                                        na_text = if (!is.null(slope_info$label) && slope_info$label != "No data")
+                                                  paste0("Curve ", slope_info$label) else "N/A")
+                ),
+                tags$p(tags$b("Curvature:"),
+                    format_curve_metric(curvature_info$value, "%", decimals = 2,
+                                        na_text = "Insufficient tenors")
+                )
             ),
             hr(style = "margin: 10px 0;"),
 
             # ═══════════════════════════════════════════════════════════
-            # SECTOR YIELDS SECTION
+            # SECTOR YIELDS SECTION - Adaptive buckets with counts
             # ═══════════════════════════════════════════════════════════
             tags$div(
-                tags$p(tags$b("Short (<5y):"), sprintf(" %.2f%%", short_yield)),
-                tags$p(tags$b("Medium (5-10y):"), sprintf(" %.2f%%", medium_yield)),
-                tags$p(tags$b("Long (>10y):"), sprintf(" %.2f%%", long_yield))
+                tags$p(tags$b(short_label),
+                    format_curve_metric(buckets$short$avg_yield, "%", decimals = 2,
+                                        na_text = "No bonds")),
+                tags$p(tags$b(medium_label),
+                    format_curve_metric(buckets$medium$avg_yield, "%", decimals = 2,
+                                        na_text = "No bonds")),
+                tags$p(tags$b(long_label),
+                    format_curve_metric(buckets$long$avg_yield, "%", decimals = 2,
+                                        na_text = "No bonds"))
             ),
             hr(style = "margin: 10px 0;"),
 
@@ -7162,8 +7216,8 @@ server <- function(input, output, session) {
             # MODEL QUALITY SECTION
             # ═══════════════════════════════════════════════════════════
             tags$div(
-                tags$p(tags$b("Avg |Spread|:"), sprintf(" %.1f bps", avg_spread)),
-                tags$p(tags$b("Model R²:"), sprintf(" %.3f", ifelse(is.na(r_squared), 0, r_squared)))
+                tags$p(tags$b("Avg |Spread|:"), format_curve_metric(avg_spread, " bps", decimals = 1)),
+                tags$p(tags$b("Model R²:"), format_curve_metric(r_squared, "", decimals = 3, na_text = "0.000"))
             ),
             hr(style = "margin: 10px 0;"),
 
