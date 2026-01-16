@@ -853,9 +853,16 @@ server <- function(input, output, session) {
         req(values$filtered_df)
         curve_decomp <- decompose_curve(values$filtered_df)
 
+        # Handle NA/NaN gracefully for slope display
+        slope_text <- if (!is.na(curve_decomp$slope_bps) && !is.nan(curve_decomp$slope_bps)) {
+            paste0("Slope (", curve_decomp$slope_label, "): ", round(curve_decomp$slope_bps, 0), " bps")
+        } else {
+            "Slope: N/A"
+        }
+
         valueBox(
             value = curve_decomp$curve_shape,
-            subtitle = paste("Slope:", round(curve_decomp$slope_bps, 0), "bps"),
+            subtitle = slope_text,
             icon = icon("chart-area"),
             color = "blue"
         )

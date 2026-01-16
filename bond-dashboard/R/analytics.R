@@ -68,6 +68,7 @@ calculate_rolling_zscores <- function(df, windows = c(20, 60, 252)) {
 #' Calculate Curve Decomposition (Level, Slope, Curvature)
 #' @param df Bond dataframe
 #' @return List with curve components
+#' @note Uses adaptive buckets when standard 10y point unavailable (SA bond universe)
 decompose_curve <- function(df) {
     # Get latest data point for each bond
     latest <- df %>%
@@ -77,32 +78,85 @@ decompose_curve <- function(df) {
         arrange(modified_duration)
 
     if(nrow(latest) < 3) {
-        return(list(level = NA, slope = NA, curvature = NA))
+        return(list(
+            level = NA,
+            slope = NA,
+            curvature = NA,
+            level_percentile = NA,
+            slope_bps = NA,
+            curve_shape = "Unknown",
+            is_adaptive = FALSE,
+            slope_label = "N/A"
+        ))
     }
-
-    # Define maturity buckets
-    short_term <- latest %>% filter(modified_duration <= 5)
-    medium_term <- latest %>% filter(modified_duration > 5 & modified_duration <= 10)
-    long_term <- latest %>% filter(modified_duration > 10)
 
     # Calculate components
     level <- mean(latest$yield_to_maturity, na.rm = TRUE)
 
-    # Slope: long minus short
-    slope <- ifelse(
-        nrow(long_term) > 0 & nrow(short_term) > 0,
-        mean(long_term$yield_to_maturity, na.rm = TRUE) - mean(short_term$yield_to_maturity, na.rm = TRUE),
-        NA
-    )
+    # ════════════════════════════════════════════════════════════════════════
+    # FIX: Use adaptive bucket thresholds based on actual duration range
+    # SA Government Bond universe has max ModDur ~9.5y, no bonds with ModDur >10y
+    # ════════════════════════════════════════════════════════════════════════
+    max_dur <- max(latest$modified_duration, na.rm = TRUE)
+    min_dur <- min(latest$modified_duration, na.rm = TRUE)
 
-    # Curvature: 2*medium - short - long
-    curvature <- ifelse(
-        nrow(medium_term) > 0 & nrow(short_term) > 0 & nrow(long_term) > 0,
-        2 * mean(medium_term$yield_to_maturity, na.rm = TRUE) -
-            mean(short_term$yield_to_maturity, na.rm = TRUE) -
-            mean(long_term$yield_to_maturity, na.rm = TRUE),
+    # Determine bucket thresholds based on actual data
+    if (max_dur >= 10) {
+        # Standard buckets when 10y+ data available
+        short_max <- 5
+        medium_max <- 10
+        is_adaptive <- FALSE
+    } else if (max_dur >= 7) {
+        # Adaptive for SA bond universe (max ~9.5y)
+        short_max <- 4
+        medium_max <- 7
+        is_adaptive <- TRUE
+    } else if (max_dur >= 5) {
+        # Compressed curve
+        short_max <- 2.5
+        medium_max <- 4.5
+        is_adaptive <- TRUE
+    } else {
+        # Very short curve - divide into thirds
+        range_third <- (max_dur - min_dur) / 3
+        short_max <- min_dur + range_third
+        medium_max <- min_dur + 2 * range_third
+        is_adaptive <- TRUE
+    }
+
+    # Define buckets with adaptive thresholds
+    short_term <- latest %>% filter(modified_duration <= short_max)
+    medium_term <- latest %>% filter(modified_duration > short_max & modified_duration <= medium_max)
+    long_term <- latest %>% filter(modified_duration > medium_max)
+
+    # Calculate short and long yields for slope
+    short_yield <- if(nrow(short_term) > 0) mean(short_term$yield_to_maturity, na.rm = TRUE) else NA
+    long_yield <- if(nrow(long_term) > 0) mean(long_term$yield_to_maturity, na.rm = TRUE) else NA
+    medium_yield <- if(nrow(medium_term) > 0) mean(medium_term$yield_to_maturity, na.rm = TRUE) else NA
+
+    # Slope: long minus short (returns NA if either bucket empty)
+    slope <- if(!is.na(short_yield) && !is.na(long_yield)) {
+        long_yield - short_yield
+    } else {
         NA
-    )
+    }
+
+    # Build slope label
+    slope_label <- if(is_adaptive && !is.na(slope)) {
+        # Use approximate integer points for label
+        sprintf("%ds%ds", round(short_max), round(max_dur))
+    } else if(!is.na(slope)) {
+        "2s10s"
+    } else {
+        "N/A"
+    }
+
+    # Curvature: 2*medium - short - long (requires all three buckets)
+    curvature <- if(!is.na(short_yield) && !is.na(medium_yield) && !is.na(long_yield)) {
+        2 * medium_yield - short_yield - long_yield
+    } else {
+        NA
+    }
 
     # Historical context (percentile ranks)
     hist_data <- df %>%
@@ -114,17 +168,32 @@ decompose_curve <- function(df) {
 
     level_percentile <- ecdf(hist_data$hist_level)(level) * 100
 
+    # Determine curve shape
+    slope_bps <- if(!is.na(slope)) slope * 100 else NA
+    curve_shape <- case_when(
+        is.na(slope_bps) ~ "Unknown",
+        slope_bps > 100 ~ "Steep",
+        slope_bps > 50 ~ "Normal",
+        slope_bps > 0 ~ "Flat",
+        TRUE ~ "Inverted"
+    )
+
     return(list(
         level = level,
         slope = slope,
         curvature = curvature,
         level_percentile = level_percentile,
-        slope_bps = slope * 100,
-        curve_shape = case_when(
-            slope > 100 ~ "Steep",
-            slope > 50 ~ "Normal",
-            slope > 0 ~ "Flat",
-            TRUE ~ "Inverted"
+        slope_bps = slope_bps,
+        curve_shape = curve_shape,
+        is_adaptive = is_adaptive,
+        slope_label = slope_label,
+        short_max = short_max,
+        medium_max = medium_max,
+        max_duration = max_dur,
+        bucket_counts = list(
+            short = nrow(short_term),
+            medium = nrow(medium_term),
+            long = nrow(long_term)
         )
     ))
 }
@@ -496,13 +565,17 @@ generate_trading_signals <- function(df, z_score_data = NULL, liquidity_data = N
         filter(date == max(date)) %>%
         select(bond, momentum_score)
 
-    # Curve positioning
+    # Curve positioning - Handle NA gracefully when slope unavailable
     curve_data <- decompose_curve(df)
-    curve_score <- case_when(
-        curve_data$slope > 100 ~ 0.5,  # Prefer duration in steep curve
-        curve_data$slope < 50 ~ -0.5,   # Avoid duration in flat curve
-        TRUE ~ 0
-    )
+    curve_score <- if (!is.na(curve_data$slope_bps)) {
+        case_when(
+            curve_data$slope_bps > 100 ~ 0.5,  # Prefer duration in steep curve
+            curve_data$slope_bps < 50 ~ -0.5,   # Avoid duration in flat curve
+            TRUE ~ 0
+        )
+    } else {
+        0  # Neutral if slope unavailable
+    }
 
     # Combine all factors
     signals <- latest %>%

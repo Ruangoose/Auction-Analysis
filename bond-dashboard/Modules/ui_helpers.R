@@ -617,3 +617,278 @@ embed_logo <- function() {
     }
     return(NULL)
 }
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# CURVE METRICS HELPERS - Handle NaN/NA gracefully
+# ════════════════════════════════════════════════════════════════════════════════
+
+#' @export
+#' @title Format Curve Metric
+#' @description Format a numeric metric for display, handling NA/NaN/Inf gracefully
+#' @param value Numeric value to format
+#' @param suffix String suffix (e.g., "%" or " bps")
+#' @param decimals Number of decimal places
+#' @param na_text Text to display if value is NA/NaN/Inf
+#' @param prefix Optional prefix string
+#' @return Formatted string for display
+format_curve_metric <- function(value, suffix = "", decimals = 2,
+                                 na_text = "N/A", prefix = "") {
+    # Handle NULL, NA, NaN, and Inf
+    if (is.null(value) || length(value) == 0 ||
+        is.na(value) || is.nan(value) || is.infinite(value)) {
+        return(na_text)
+    }
+
+    paste0(prefix, format(round(value, decimals), nsmall = decimals), suffix)
+}
+
+#' @export
+#' @title Calculate Adaptive Slope
+#' @description Calculate curve slope using actual data endpoints when standard 2s10s unavailable
+#' @param data Bond data with x_value (duration) and yield columns
+#' @param x_col Column name for duration/x-axis values
+#' @param y_col Column name for yield values
+#' @param min_spread Minimum years between short and long points (default 4)
+#' @return List with slope value, label, and point details
+calculate_adaptive_slope <- function(data, x_col = "x_value", y_col = "yield_to_maturity",
+                                      min_spread = 4) {
+    if (is.null(data) || nrow(data) == 0) {
+        return(list(
+            slope = NA_real_,
+            label = "No data",
+            short_point = NA,
+            long_point = NA,
+            short_yield = NA_real_,
+            long_yield = NA_real_,
+            is_adaptive = FALSE,
+            is_standard = FALSE
+        ))
+    }
+
+    # Get actual duration range
+    min_dur <- min(data[[x_col]], na.rm = TRUE)
+    max_dur <- max(data[[x_col]], na.rm = TRUE)
+
+    # Check if standard 2s10s is available (data covers both points)
+    can_do_2s10s <- min_dur <= 2 && max_dur >= 10
+
+    # Define short and long points
+    if (can_do_2s10s) {
+        short_point <- 2
+        long_point <- 10
+        label <- "2s10s"
+        is_standard <- TRUE
+    } else {
+        # Adaptive: use actual curve endpoints
+        short_point <- max(2, ceiling(min_dur))  # At least 2y, or first whole year
+        long_point <- floor(max_dur)              # Furthest whole year available
+
+        # Ensure meaningful spread
+        if ((long_point - short_point) < min_spread) {
+            return(list(
+                slope = NA_real_,
+                label = sprintf("Range %.0f-%.0fy", min_dur, max_dur),
+                short_point = NA,
+                long_point = NA,
+                short_yield = NA_real_,
+                long_yield = NA_real_,
+                is_adaptive = TRUE,
+                is_standard = FALSE
+            ))
+        }
+
+        label <- sprintf("%ds%ds", short_point, long_point)
+        is_standard <- FALSE
+    }
+
+    # Interpolate yields at these points
+    # Simple linear interpolation between nearest bonds
+    yield_short <- interpolate_yield_at_point(data, short_point, x_col, y_col)
+    yield_long <- interpolate_yield_at_point(data, long_point, x_col, y_col)
+
+    if (is.na(yield_short) || is.na(yield_long)) {
+        return(list(
+            slope = NA_real_,
+            label = "Interpolation failed",
+            short_point = short_point,
+            long_point = long_point,
+            short_yield = yield_short,
+            long_yield = yield_long,
+            is_adaptive = !is_standard,
+            is_standard = is_standard
+        ))
+    }
+
+    slope_bps <- (yield_long - yield_short) * 100
+
+    return(list(
+        slope = slope_bps,
+        label = label,
+        short_point = short_point,
+        long_point = long_point,
+        short_yield = yield_short,
+        long_yield = yield_long,
+        is_adaptive = !is_standard,
+        is_standard = is_standard
+    ))
+}
+
+#' @export
+#' @title Interpolate Yield at Point
+#' @description Linearly interpolate yield at a specific duration point
+#' @param data Bond data
+#' @param target_point Target duration for interpolation
+#' @param x_col Column name for duration
+#' @param y_col Column name for yield
+#' @return Interpolated yield value
+interpolate_yield_at_point <- function(data, target_point, x_col = "x_value",
+                                        y_col = "yield_to_maturity") {
+    if (is.null(data) || nrow(data) == 0) return(NA_real_)
+
+    # Sort by duration
+    data <- data[order(data[[x_col]]), ]
+    x_vals <- data[[x_col]]
+    y_vals <- data[[y_col]]
+
+    # If target is outside data range, return NA (no extrapolation)
+    if (target_point < min(x_vals, na.rm = TRUE) ||
+        target_point > max(x_vals, na.rm = TRUE)) {
+        return(NA_real_)
+    }
+
+    # Find surrounding points
+    below_idx <- which(x_vals <= target_point)
+    above_idx <- which(x_vals >= target_point)
+
+    if (length(below_idx) == 0 || length(above_idx) == 0) return(NA_real_)
+
+    # Get nearest points
+    x1 <- x_vals[max(below_idx)]
+    x2 <- x_vals[min(above_idx)]
+    y1 <- y_vals[max(below_idx)]
+    y2 <- y_vals[min(above_idx)]
+
+    if (is.na(y1) || is.na(y2)) return(NA_real_)
+
+    # If exact match, return that value
+    if (x1 == x2) return(y1)
+
+    # Linear interpolation
+    weight <- (target_point - x1) / (x2 - x1)
+    return(y1 + weight * (y2 - y1))
+}
+
+#' @export
+#' @title Calculate Duration Bucket Yields
+#' @description Calculate average yields for duration buckets, adjusted for SA bond universe
+#' @param data Bond data with duration and yield columns
+#' @param x_col Column name for duration (modified duration or years to maturity)
+#' @param y_col Column name for yield
+#' @param bucket_type "adaptive" adjusts to actual data, "fixed" uses standard thresholds
+#' @return List with bucket yields, counts, and labels
+calculate_duration_bucket_yields <- function(data, x_col = "x_value",
+                                              y_col = "yield_to_maturity",
+                                              bucket_type = "adaptive") {
+    if (is.null(data) || nrow(data) == 0) {
+        return(list(
+            short = list(avg_yield = NA_real_, count = 0, label = "Short", range = "N/A"),
+            medium = list(avg_yield = NA_real_, count = 0, label = "Medium", range = "N/A"),
+            long = list(avg_yield = NA_real_, count = 0, label = "Long", range = "N/A"),
+            is_adaptive = FALSE
+        ))
+    }
+
+    # Get actual duration range
+    max_dur <- max(data[[x_col]], na.rm = TRUE)
+    min_dur <- min(data[[x_col]], na.rm = TRUE)
+
+    # Define buckets based on actual data availability
+    if (bucket_type == "adaptive" || max_dur < 10) {
+        # Adaptive buckets for SA bond universe (max ModDur ~9.5y)
+        # Divide curve into roughly equal thirds
+        if (max_dur >= 7) {
+            # Standard case: enough range for three distinct buckets
+            short_max <- 4
+            medium_max <- 7
+        } else if (max_dur >= 5) {
+            # Compressed curve
+            short_max <- 2.5
+            medium_max <- 4.5
+        } else {
+            # Very short curve - just divide into thirds
+            range_third <- (max_dur - min_dur) / 3
+            short_max <- min_dur + range_third
+            medium_max <- min_dur + 2 * range_third
+        }
+        is_adaptive <- TRUE
+    } else {
+        # Standard buckets when full curve available
+        short_max <- 5
+        medium_max <- 10
+        is_adaptive <- FALSE
+    }
+
+    # Calculate bucket statistics
+    calc_bucket <- function(lower, upper, name) {
+        bucket_data <- data[data[[x_col]] > lower & data[[x_col]] <= upper &
+                           !is.na(data[[y_col]]), ]
+        n <- nrow(bucket_data)
+
+        if (n == 0) {
+            return(list(
+                avg_yield = NA_real_,
+                count = 0,
+                label = name,
+                range = sprintf("%.0f-%.0fy", lower, upper),
+                na_text = sprintf("No bonds %.0f-%.0fy", lower, upper)
+            ))
+        }
+
+        return(list(
+            avg_yield = mean(bucket_data[[y_col]], na.rm = TRUE),
+            count = n,
+            label = name,
+            range = sprintf("%.0f-%.0fy", lower, upper),
+            na_text = NA
+        ))
+    }
+
+    return(list(
+        short = calc_bucket(0, short_max, "Short"),
+        medium = calc_bucket(short_max, medium_max, "Medium"),
+        long = calc_bucket(medium_max, Inf, "Long"),
+        is_adaptive = is_adaptive,
+        short_max = short_max,
+        medium_max = medium_max,
+        max_duration = max_dur
+    ))
+}
+
+#' @export
+#' @title Calculate Curvature
+#' @description Calculate curve curvature (butterfly) metric with graceful fallback
+#' @param short_yield Short bucket average yield
+#' @param medium_yield Medium bucket average yield
+#' @param long_yield Long bucket average yield
+#' @return List with curvature value and availability flag
+calculate_curvature <- function(short_yield, medium_yield, long_yield) {
+    # All three yields needed for curvature
+    if (is.na(short_yield) || is.na(medium_yield) || is.na(long_yield) ||
+        is.nan(short_yield) || is.nan(medium_yield) || is.nan(long_yield)) {
+        return(list(
+            value = NA_real_,
+            available = FALSE,
+            reason = "Requires Short, Medium, and Long bucket yields"
+        ))
+    }
+
+    # Curvature: 2*medium - short - long
+    curvature <- 2 * medium_yield - short_yield - long_yield
+
+    return(list(
+        value = curvature,
+        available = TRUE,
+        reason = NULL
+    ))
+}
