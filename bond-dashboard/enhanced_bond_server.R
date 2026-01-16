@@ -2115,10 +2115,42 @@ server <- function(input, output, session) {
         if(!is.null(p)) print(p)
     })
 
+    # ========================================================================
+    # SHARED REACTIVE: Active bonds for Relative Value charts
+    # Both Heatmap and Z-Score Distribution MUST use the same bond list
+    # This ensures data consistency between the two visualizations
+    # ========================================================================
+    active_bonds_for_relative_value <- reactive({
+        req(fitted_curve_data())
+        # Get active bonds from fitted_curve_data (which filters to global latest date)
+        # This automatically excludes matured bonds like R186 that don't have recent data
+        active_bonds <- unique(fitted_curve_data()$bonds$bond)
+        message(sprintf("[Relative Value] Active bonds for both charts: %d (%s)",
+                       length(active_bonds),
+                       paste(sort(active_bonds), collapse = ", ")))
+        return(active_bonds)
+    })
+
     # 2. Relative Value Heatmap
+    # ========================================================================
+    # CRITICAL FIX: Heatmap now uses same active bond list as Z-Score Distribution
+    # This ensures R186 and other matured bonds are excluded from both charts
+    # ========================================================================
     output$relative_value_heatmap <- renderPlot({
         req(filtered_data())
-        p <- generate_relative_value_heatmap(filtered_data(), list())
+        req(active_bonds_for_relative_value())
+
+        # Get the same active bonds used by Z-Score Distribution
+        active_bonds <- active_bonds_for_relative_value()
+
+        # Generate heatmap with active bond filter
+        p <- generate_relative_value_heatmap(
+            filtered_data(),
+            list(
+                active_bonds = active_bonds,
+                label_threshold = 1.5  # Show labels for |Z| > 1.5
+            )
+        )
         if(!is.null(p)) print(p)
     })
 
@@ -2132,6 +2164,29 @@ server <- function(input, output, session) {
         # Use bonds from fitted_curve_data which has recalculated z-scores
         p <- generate_enhanced_zscore_plot(fitted_curve_data()$bonds, list())
         if(!is.null(p)) print(p)
+    })
+
+    # ========================================================================
+    # VALIDATION: Log bond consistency between Heatmap and Z-Score Distribution
+    # ========================================================================
+    observe({
+        req(active_bonds_for_relative_value())
+        req(fitted_curve_data())
+
+        heatmap_bonds <- sort(active_bonds_for_relative_value())
+        zscore_bonds <- sort(unique(fitted_curve_data()$bonds$bond))
+
+        if (!setequal(heatmap_bonds, zscore_bonds)) {
+            warning("[BOND MISMATCH] Heatmap and Z-Score Distribution show different bonds!")
+            warning("  Heatmap: ", paste(heatmap_bonds, collapse = ", "))
+            warning("  Z-Score: ", paste(zscore_bonds, collapse = ", "))
+            only_in_heatmap <- setdiff(heatmap_bonds, zscore_bonds)
+            only_in_zscore <- setdiff(zscore_bonds, heatmap_bonds)
+            if (length(only_in_heatmap) > 0) warning("  Only in Heatmap: ", paste(only_in_heatmap, collapse = ", "))
+            if (length(only_in_zscore) > 0) warning("  Only in Z-Score: ", paste(only_in_zscore, collapse = ", "))
+        } else {
+            message(sprintf("[Relative Value] Both charts show same %d bonds", length(heatmap_bonds)))
+        }
     })
 
     # =========================================================================
