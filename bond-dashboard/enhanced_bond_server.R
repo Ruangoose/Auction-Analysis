@@ -6755,15 +6755,36 @@ server <- function(input, output, session) {
                 # Use the actual z_score, or NA if missing - let the UI show "N/A"
                 zscore = z_score,
 
-                # CORRECT signal logic based on spread (positive = cheap = buy)
-                # Handle NA z-scores gracefully
+                # ═══════════════════════════════════════════════════════════════════
+                # FIX #2: SYMMETRIC signal logic based on Z-Score thresholds
+                # Strong Buy/Sell: |Z| >= 2.0 (statistically significant mispricing)
+                # Buy/Sell: |Z| >= 1.5 (moderate mispricing)
+                # Weak Buy/Sell: |Z| >= 1.0 (mild mispricing)
+                # Hold: |Z| < 1.0 (fair value)
+                # Direction: positive spread = cheap = buy, negative = rich = sell
+                # ═══════════════════════════════════════════════════════════════════
                 signal = case_when(
-                    is.na(zscore) ~ "Insufficient Data",  # FIX: Show when z-score missing
-                    spread_bps > 10 & zscore > 1.5 ~ "Strong Buy",
-                    spread_bps > 5 ~ "Buy",
-                    spread_bps < -10 & zscore < -1.5 ~ "Strong Sell",
-                    spread_bps < -5 ~ "Sell",
+                    is.na(zscore) ~ "Insufficient Data",
+                    # Strong signals: |Z| >= 2.0
+                    zscore >= 2.0 ~ "Strong Buy",
+                    zscore <= -2.0 ~ "Strong Sell",
+                    # Regular signals: |Z| >= 1.5
+                    zscore >= 1.5 ~ "Buy",
+                    zscore <= -1.5 ~ "Sell",
+                    # Weak signals: |Z| >= 1.0
+                    zscore >= 1.0 ~ "Weak Buy",
+                    zscore <= -1.0 ~ "Weak Sell",
+                    # Hold: |Z| < 1.0
                     TRUE ~ "Hold"
+                ),
+
+                # Signal strength for sorting (higher = stronger signal)
+                signal_strength = case_when(
+                    signal %in% c("Strong Buy", "Strong Sell") ~ 3,
+                    signal %in% c("Buy", "Sell") ~ 2,
+                    signal %in% c("Weak Buy", "Weak Sell") ~ 1,
+                    signal == "Hold" ~ 0,
+                    TRUE ~ -1  # Insufficient Data
                 ),
 
                 # Get bid_to_cover if available
@@ -6775,7 +6796,21 @@ server <- function(input, output, session) {
                     spread_bps = spread_bps,
                     zscore = ifelse(is.na(zscore), 0, zscore),  # Use 0 only for score calc
                     bid_to_cover = btc
-                )
+                ),
+                # ═══════════════════════════════════════════════════════════════════
+                # FIX #4: Score breakdown for transparency
+                # Components: spread (0-4) + zscore (0-4) + liquidity (0-2) = 0-10
+                # ═══════════════════════════════════════════════════════════════════
+                score_spread = min(abs(spread_bps) / 5, 4),
+                score_zscore = if (!is.na(zscore) && sign(spread_bps) == sign(zscore)) {
+                    min(abs(zscore) * 2, 4)
+                } else if (!is.na(zscore)) {
+                    min(abs(zscore) * 0.5, 1)
+                } else {
+                    0
+                },
+                score_liquidity = if (!is.na(btc) && btc > 0) min(btc, 2) else 1,
+                score_breakdown = sprintf("%.1f+%.1f+%.1f", score_spread, score_zscore, score_liquidity)
             ) %>%
             ungroup() %>%
             mutate(
@@ -6783,28 +6818,51 @@ server <- function(input, output, session) {
                 signal_category = case_when(
                     signal == "Insufficient Data" ~ "insufficient",
                     signal %in% c("Strong Buy", "Strong Sell") ~ "strong",
-                    signal %in% c("Buy", "Sell") ~ "actionable",
+                    signal %in% c("Buy", "Sell", "Weak Buy", "Weak Sell") ~ "actionable",
                     TRUE ~ "hold"
                 )
             )
 
         # ═══════════════════════════════════════════════════════════════════════════
-        # ADD MATURITY INDICATOR: Flag bonds maturing in analysis period
+        # FIX #1: Calculate Years to Maturity (populate Maturity column)
+        # Shows actual time remaining, not just a warning flag
         # ═══════════════════════════════════════════════════════════════════════════
-        has_maturity_info <- "matures_in_period" %in% names(opportunities)
-        has_days_to_maturity <- "days_to_maturity" %in% names(opportunities)
+        has_mature_date <- "mature_date" %in% names(opportunities)
 
-        if (has_maturity_info || has_days_to_maturity) {
+        if (has_mature_date) {
             opportunities <- opportunities %>%
                 mutate(
-                    maturity_flag = case_when(
-                        has_maturity_info & !is.na(matures_in_period) & matures_in_period ~ "Matures in period",
-                        has_days_to_maturity & !is.na(days_to_maturity) & days_to_maturity >= 0 & days_to_maturity < 180 ~ "<6mo to maturity",
-                        TRUE ~ ""
+                    # Calculate years to maturity
+                    years_to_maturity = as.numeric(
+                        difftime(mature_date, Sys.Date(), units = "days")
+                    ) / 365.25,
+
+                    # Format for display (e.g., "4.0y", "11m" for < 1 year)
+                    maturity_display = case_when(
+                        is.na(years_to_maturity) ~ "N/A",
+                        years_to_maturity < 0 ~ "Matured",
+                        years_to_maturity < 1 ~ paste0(round(years_to_maturity * 12, 0), "m"),
+                        years_to_maturity < 10 ~ paste0(round(years_to_maturity, 1), "y"),
+                        TRUE ~ paste0(round(years_to_maturity, 0), "y")
                     )
                 )
         } else {
-            opportunities$maturity_flag <- ""
+            # Fallback: use time_to_maturity if available
+            if ("time_to_maturity" %in% names(opportunities)) {
+                opportunities <- opportunities %>%
+                    mutate(
+                        years_to_maturity = time_to_maturity,
+                        maturity_display = case_when(
+                            is.na(years_to_maturity) ~ "N/A",
+                            years_to_maturity < 1 ~ paste0(round(years_to_maturity * 12, 0), "m"),
+                            years_to_maturity < 10 ~ paste0(round(years_to_maturity, 1), "y"),
+                            TRUE ~ paste0(round(years_to_maturity, 0), "y")
+                        )
+                    )
+            } else {
+                opportunities$years_to_maturity <- NA_real_
+                opportunities$maturity_display <- "N/A"
+            }
         }
 
         # Apply filter based on user selection
@@ -6817,13 +6875,17 @@ server <- function(input, output, session) {
         }
         # "all" shows everything - no additional filter
 
-        # Sort by score descending
+        # ═══════════════════════════════════════════════════════════════════════════
+        # FIX #3: Sort by signal strength first, then by |Z-Score|
+        # This puts the most actionable opportunities at the top
+        # ═══════════════════════════════════════════════════════════════════════════
         opportunities <- opportunities %>%
-            arrange(desc(score))
+            arrange(desc(signal_strength), desc(abs(zscore)))
 
         cat("Filtered bonds:", nrow(opportunities), "\n")
 
         # Select columns - use x_value which is the DYNAMIC x-axis value
+        # FIX #4: Include score_breakdown for transparency
         display_data <- opportunities %>%
             select(
                 Bond = bond,
@@ -6833,7 +6895,8 @@ server <- function(input, output, session) {
                 ZScore = zscore,
                 Signal = signal,
                 Score = score,
-                Maturity = maturity_flag  # Add maturity indicator
+                ScoreBreakdown = score_breakdown,  # For tooltip
+                Maturity = maturity_display  # FIX #1: Now shows years to maturity
             )
 
         # Format the display - FIX: Handle NA z-scores properly
@@ -6843,8 +6906,10 @@ server <- function(input, output, session) {
                 Duration = sprintf("%.2f", Duration),
                 Spread = sprintf("%+.1f bps", Spread),  # Show sign
                 ZScore = ifelse(is.na(ZScore), "N/A", sprintf("%+.2f", ZScore)),  # FIX: Show N/A for missing
-                Score = ifelse(is.na(Score), "N/A", sprintf("%.1f", Score))  # FIX: Handle NA scores
-            )
+                # FIX #4: Show score with breakdown in parentheses
+                Score = ifelse(is.na(Score), "N/A", sprintf("%.1f (%s)", Score, ScoreBreakdown))
+            ) %>%
+            select(-ScoreBreakdown)  # Remove the breakdown column after formatting
 
         # Dynamic column name based on x-axis selection
         duration_col_name <- switch(x_var,
@@ -6868,28 +6933,43 @@ server <- function(input, output, session) {
             class = 'table-striped table-bordered',
             colnames = c("Bond", "Yield", duration_col_name, "Spread", "Z-Score", "Signal", "Score", "Maturity")
         ) %>%
+            # FIX #2: Add colors for Weak Buy/Weak Sell signals (symmetric with Strong)
             formatStyle(
                 "Signal",
                 backgroundColor = styleEqual(
-                    c("Strong Buy", "Buy", "Hold", "Sell", "Strong Sell", "Insufficient Data"),
-                    c("#1B5E20", "#4CAF50", "#9E9E9E", "#EF5350", "#B71C1C", "#757575")  # Gray for insufficient
+                    c("Strong Buy", "Buy", "Weak Buy", "Hold", "Weak Sell", "Sell", "Strong Sell", "Insufficient Data"),
+                    c("#1B5E20",     # Dark green - Strong Buy
+                      "#4CAF50",     # Green - Buy
+                      "#81C784",     # Light green - Weak Buy
+                      "#9E9E9E",     # Gray - Hold
+                      "#EF9A9A",     # Light red - Weak Sell
+                      "#EF5350",     # Red - Sell
+                      "#B71C1C",     # Dark red - Strong Sell
+                      "#757575")     # Gray - Insufficient Data
                 ),
                 color = styleEqual(
-                    c("Strong Buy", "Buy", "Hold", "Sell", "Strong Sell", "Insufficient Data"),
-                    c("white", "white", "white", "white", "white", "white")
+                    c("Strong Buy", "Buy", "Weak Buy", "Hold", "Weak Sell", "Sell", "Strong Sell", "Insufficient Data"),
+                    c("white", "white", "black", "white", "black", "white", "white", "white")
                 ),
                 fontWeight = "bold"
             ) %>%
+            # Z-Score column: color-code based on value
+            formatStyle(
+                "Z-Score",
+                color = styleInterval(
+                    c(-2, -1.5, -1, 1, 1.5, 2),
+                    c("#B71C1C", "#EF5350", "#EF9A9A", "#666666", "#81C784", "#4CAF50", "#1B5E20")
+                ),
+                fontWeight = "bold"
+            ) %>%
+            # Maturity column: highlight short maturities
             formatStyle(
                 "Maturity",
                 backgroundColor = styleEqual(
-                    c("Matures in period", "<6mo to maturity", ""),
-                    c("#FFA726", "#FFE0B2", "transparent")  # Orange shades for maturity warnings
+                    c("Matured"),
+                    c("#FFCDD2")  # Light red for matured bonds
                 ),
-                fontWeight = styleEqual(
-                    c("Matures in period", "<6mo to maturity", ""),
-                    c("bold", "normal", "normal")
-                )
+                fontWeight = "normal"
             )
     })
 

@@ -778,8 +778,8 @@ ui <- dashboardPage(
                                                   label = "Show Signals:",
                                                   choices = c(
                                                       "All Bonds" = "all",
-                                                      "Actionable Only (Buy/Sell)" = "actionable",
-                                                      "Strong Signals Only" = "strong"
+                                                      "Actionable (|Z| \u2265 1.0)" = "actionable",
+                                                      "Strong Only (|Z| \u2265 2.0)" = "strong"
                                                   ),
                                                   selected = "all"
                                               )
@@ -788,8 +788,10 @@ ui <- dashboardPage(
                                               tags$div(
                                                   class = "pull-right small text-muted",
                                                   style = "margin-top: 25px;",
+                                                  tags$strong("Signals: "),
+                                                  "|Z| \u2265 2.0 = Strong, \u2265 1.5 = Regular, \u2265 1.0 = Weak. ",
                                                   tags$strong("Score: "),
-                                                  "0-10 scale combining spread magnitude (0-4), Z-Score confirmation (0-4), and liquidity (0-2)."
+                                                  "Spread (0-4) + Z-Score (0-4) + Liquidity (0-2) shown as X.X (a+b+c)."
                                               )
                                        )
                                    ),
