@@ -565,14 +565,14 @@ server <- function(input, output, session) {
                 dplyr::mutate(
                     # Days to maturity from the end of the analysis period
                     days_to_maturity = as.numeric(difftime(final_maturity_date, end_date, units = "days")),
-                    # Flag bonds that mature WITHIN or SHORTLY AFTER the analysis period
-                    # This captures:
-                    # 1. Bonds that mature during the analysis period (definitely exclude)
-                    # 2. Bonds that mature within 365 days after the period ends (short-dated, different risk profile)
-                    # The expanded logic ensures short-dated bonds like R186 are properly flagged
+                    # CORRECTED LOGIC: Flag bonds that mature WITHIN the analysis period ONLY
+                    # Per user requirements:
+                    # - Bonds maturing AFTER end_date = "Active" (circle marker)
+                    # - Bonds maturing BETWEEN start_date and end_date = "Maturing" (triangle marker)
+                    # - Bonds maturing BEFORE start_date are already excluded by get_active_bonds()
                     matures_in_period = !is.na(final_maturity_date) &
                                         final_maturity_date >= start_date &
-                                        (final_maturity_date <= end_date | days_to_maturity <= 365)
+                                        final_maturity_date <= end_date
                 )
 
             # Debug logging for maturity filtering

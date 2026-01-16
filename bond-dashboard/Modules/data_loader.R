@@ -2061,11 +2061,13 @@ create_bond_metadata <- function(full_df, auction_df = NULL, excel_path = NULL) 
 }
 
 
-#' Get list of active (non-matured) bonds for a given date range
+#' Get list of bonds to include in analysis for a given date range
 #'
-#' A bond is considered ACTIVE if:
-#' 1. It has NOT matured before the END of the selected period, OR
-#' 2. We don't know when it matures (assume active - conservative approach)
+#' INCLUSION LOGIC (per user requirements):
+#' - Bonds maturing BEFORE start_date: EXCLUDE (already matured, no longer tradeable)
+#' - Bonds maturing BETWEEN start_date and end_date: INCLUDE (will be marked as "Maturing")
+#' - Bonds maturing AFTER end_date: INCLUDE (will be marked as "Active")
+#' - Unknown maturity: INCLUDE (conservative approach - assume active)
 #'
 #' IMPORTANT: Bonds with unknown maturity are ALWAYS included. The SA bond
 #' naming convention does NOT encode maturity dates, so we cannot infer
@@ -2075,22 +2077,25 @@ create_bond_metadata <- function(full_df, auction_df = NULL, excel_path = NULL) 
 #' @param start_date Start of the analysis period (Date)
 #' @param end_date End of the analysis period (Date)
 #' @param include_unknown Whether to include bonds with unknown maturity (default TRUE, should stay TRUE!)
-#' @return Character vector of active bond names
+#' @return Character vector of bond names to include in analysis
 get_active_bonds <- function(bond_metadata, start_date, end_date, include_unknown = TRUE) {
-    # A bond is ACTIVE if:
+    # Include bonds that:
     # 1. Unknown maturity = assume active (we can't infer from names!)
-    # 2. Known maturity that is ON or AFTER the analysis period end
+    # 2. Known maturity that is ON or AFTER the start_date (not already matured)
+    #    - This includes bonds maturing DURING the period (will be marked "Maturing")
+    #    - And bonds maturing AFTER the period (will be marked "Active")
 
     active_bonds <- bond_metadata %>%
         dplyr::filter(
             # Unknown maturity = always assume active
             is.na(final_maturity_date) |
-            # Known maturity that is AFTER or ON the analysis period end
-            final_maturity_date >= end_date
+            # Include if maturity is ON or AFTER the analysis START date
+            # (Only exclude bonds that already matured BEFORE the analysis period)
+            final_maturity_date >= start_date
         ) %>%
         dplyr::pull(bond)
 
-    message(sprintf("  Active bonds for period %s to %s: %d of %d",
+    message(sprintf("  Bonds for analysis period %s to %s: %d of %d (excluding already-matured)",
                     start_date, end_date, length(active_bonds), nrow(bond_metadata)))
 
     return(active_bonds)

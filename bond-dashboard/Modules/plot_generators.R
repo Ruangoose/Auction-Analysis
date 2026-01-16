@@ -104,6 +104,30 @@ generate_enhanced_yield_curve <- function(data, params) {
                        n_before - n_after, n_after))
     }
 
+    # ═══════════════════════════════════════════════════════════════════════════
+    # FIX 2: YIELD CURVE DATE SELECTION
+    # Use the LATEST date available in the data for a coherent curve snapshot
+    # This ensures all bonds shown on the curve are from the same date
+    # ═══════════════════════════════════════════════════════════════════════════
+    if ("date" %in% names(data) && !all(is.na(data$date))) {
+        # Find the latest date in the data
+        latest_curve_date <- max(data$date, na.rm = TRUE)
+
+        # Filter to only the latest date
+        data <- data %>%
+            filter(date == latest_curve_date)
+
+        message(sprintf("  [Yield Curve] Using data from: %s (%d bonds)",
+                       format(latest_curve_date, "%Y-%m-%d"), nrow(data)))
+    } else {
+        # No date column - use all data (shouldn't happen normally)
+        latest_curve_date <- Sys.Date()
+        warning("[Yield Curve] No date column found - using all available data")
+    }
+
+    # Store the curve date in params for subtitle use
+    params$curve_date <- latest_curve_date
+
     # VALIDATION: Ensure spread_to_curve exists
     if(!"spread_to_curve" %in% names(data)) {
         warning("spread_to_curve not found in data - calculating it")
@@ -428,19 +452,23 @@ generate_enhanced_yield_curve <- function(data, params) {
     # ================================================================================
     # MATURITY STATUS: Add shape variable for maturing bonds
     # ================================================================================
+    # LOGIC (per user requirements):
+    # - Bonds maturing AFTER end_date = "Active" (circle marker)
+    # - Bonds maturing BETWEEN start_date and end_date = "Maturing" (triangle marker)
+    # - Bonds maturing BEFORE start_date should already be excluded by get_active_bonds()
+    #
     # Check if maturity info is already calculated in the data (preferred - from filtered_data)
     if ("matures_in_period" %in% names(data)) {
         data$maturity_status <- ifelse(data$matures_in_period, "Maturing", "Active")
     } else if ("final_maturity_date" %in% names(data) && !is.null(params$end_date)) {
         # Fallback: Calculate matures_in_period from final_maturity_date if available
-        # Uses same expanded logic as server: bonds maturing WITHIN or SHORTLY AFTER the analysis period
-        # This captures bonds that mature during the period OR within 365 days after period end
+        # CORRECTED: Only mark as "Maturing" if bond matures WITHIN the analysis period
         data <- data %>%
             dplyr::mutate(
                 days_to_maturity_calc = as.numeric(difftime(final_maturity_date, params$end_date, units = "days")),
                 matures_in_period = !is.na(final_maturity_date) &
                                     final_maturity_date >= params$start_date &
-                                    (final_maturity_date <= params$end_date | days_to_maturity_calc <= 365)
+                                    final_maturity_date <= params$end_date
             )
         data$maturity_status <- ifelse(data$matures_in_period, "Maturing", "Active")
     } else {
@@ -597,7 +625,8 @@ generate_enhanced_yield_curve <- function(data, params) {
                 paste(
                     "Model:", params$curve_model, "|",
                     "X-Axis:", gsub("_", " ", tools::toTitleCase(x_var)), "|",
-                    "Date:", format(max(data$date), "%d %B %Y"), "|",
+                    # Use the stored curve_date from params (set during date filtering)
+                    "Date:", format(params$curve_date, "%d %B %Y"), "|",
                     "Bonds:", length(unique(data$bond)), "|",
                     spread_summary  # Use dynamic spread summary
                 )
