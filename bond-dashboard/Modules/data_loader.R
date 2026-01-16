@@ -700,13 +700,15 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
     message("  All modified duration values in valid range (0-40)")
   }
 
-  # Check for placeholder values (the bug we're fixing)
+  # Check for placeholder values (should be none - filtered at source)
   placeholder_values <- full_df %>%
-    dplyr::filter(yield_to_maturity == 1 | modified_duration == 1)
+    dplyr::filter(yield_to_maturity <= 1.5 | modified_duration <= 0.1 | modified_duration == 1)
   if (nrow(placeholder_values) > 0) {
-    warning("Found ", nrow(placeholder_values), " rows with placeholder values (1.0)")
+    warning("UNEXPECTED: Found ", nrow(placeholder_values), " rows with placeholder values - these should have been filtered at source!")
+    unique_bonds <- unique(placeholder_values$bond)
+    warning("Affected bonds: ", paste(unique_bonds, collapse = ", "))
   } else {
-    message("  No placeholder values detected")
+    message("  ✓ No placeholder values detected (filtering working correctly)")
   }
 
   message("\n=== DATA LOADING COMPLETE ===\n")
@@ -782,7 +784,8 @@ load_time_series_sheet <- function(excel_path, sheet_name, value_name, available
     message(sprintf("  Loading sheet: %s -> %s", sheet_name, value_name))
 
     tryCatch({
-        df <- readxl::read_excel(excel_path, sheet = sheet_name)
+        df <- readxl::read_excel(excel_path, sheet = sheet_name,
+                                 na = c("", "NA", "#N/A", "N/A", "#VALUE!", "#REF!", "#DIV/0!"))
 
         # Get columns that exist in this sheet and are in available_bonds (or date)
         valid_cols <- intersect(names(df), c("date", available_bonds))
@@ -801,6 +804,36 @@ load_time_series_sheet <- function(excel_path, sheet_name, value_name, available
                 values_to = value_name
             ) %>%
             dplyr::filter(!is.na(.data[[value_name]]))
+
+        # =====================================================================
+        # CRITICAL FIX: Filter out placeholder values for YTM and ModDur
+        # New bonds (R2033, R2038, R2042, R187, R188) have placeholder values
+        # (1.0 or 0.0) in Excel before their issuance dates.
+        # These are NOT real data and must be excluded.
+        # =====================================================================
+        if (value_name == "yield_to_maturity") {
+            rows_before <- nrow(result)
+            # SA bonds never have YTM below 2% - filter out placeholder values
+            result <- result %>%
+                dplyr::filter(yield_to_maturity > 1.5)
+            rows_after <- nrow(result)
+            if (rows_before != rows_after) {
+                message(sprintf("    Filtered out %d placeholder YTM values (<=1.5%%)",
+                                rows_before - rows_after))
+            }
+        }
+
+        if (value_name == "modified_duration") {
+            rows_before <- nrow(result)
+            # Valid duration is always > 0.1 for SA bonds - filter out placeholder values
+            result <- result %>%
+                dplyr::filter(modified_duration > 0.1 & modified_duration != 1.0)
+            rows_after <- nrow(result)
+            if (rows_before != rows_after) {
+                message(sprintf("    Filtered out %d placeholder ModDur values (<=0.1 or exactly 1.0)",
+                                rows_before - rows_after))
+            }
+        }
 
         message(sprintf("    Loaded %d rows for %s", nrow(result), value_name))
         return(result)
@@ -1069,14 +1102,42 @@ load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
 
     # DIAGNOSTIC CHECKPOINT 1: Verify YTM loaded correctly
     if (run_diagnostics && !is.null(ts_data_list[["ytm"]])) {
+        # Show bond data availability summary
+        ytm_summary <- ts_data_list[["ytm"]] %>%
+            dplyr::group_by(bond) %>%
+            dplyr::summarise(
+                first_date = min(date),
+                last_date = max(date),
+                min_ytm = min(yield_to_maturity),
+                max_ytm = max(yield_to_maturity),
+                n_obs = dplyr::n(),
+                .groups = "drop"
+            )
+
+        # Show new bonds (data starts after 2024-01-01)
+        new_bonds <- ytm_summary %>%
+            dplyr::filter(first_date > as.Date("2024-01-01"))
+        if (nrow(new_bonds) > 0) {
+            message("\n  📊 New bonds (data starts after 2024-01-01):")
+            for (i in 1:nrow(new_bonds)) {
+                row <- new_bonds[i, ]
+                message(sprintf("    %s: %s to %s (%d obs, YTM %.1f%%-%.1f%%)",
+                                row$bond, row$first_date, row$last_date, row$n_obs,
+                                row$min_ytm, row$max_ytm))
+            }
+        }
+
+        # Check for unusual YTM values on latest date (after placeholder filtering)
         ytm_check <- ts_data_list[["ytm"]] %>%
             dplyr::filter(date == max(date)) %>%
             dplyr::filter(yield_to_maturity < 5 | yield_to_maturity > 15)
         if (nrow(ytm_check) > 0) {
-            message("\n  ⚠ WARNING: Bonds with unusual YTM values:")
+            message("\n  ⚠ WARNING: Bonds with unusual YTM values on latest date:")
             for (i in 1:min(nrow(ytm_check), 5)) {
                 message(sprintf("    %s: %.2f%%", ytm_check$bond[i], ytm_check$yield_to_maturity[i]))
             }
+        } else {
+            message("    ✓ All YTM values on latest date are within normal range (5-15%)")
         }
     }
 
