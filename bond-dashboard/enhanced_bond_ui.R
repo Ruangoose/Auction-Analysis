@@ -298,6 +298,14 @@ ui <- dashboardPage(
                     width = "100%"
                 ),
 
+                # Exclude bonds maturing within analysis period
+                checkboxInput(
+                    inputId = "exclude_maturing_bonds",
+                    label = "Exclude bonds maturing in period",
+                    value = FALSE,
+                    width = "100%"
+                ),
+
                 br(),
                 actionButton(
                     "reset_defaults",
