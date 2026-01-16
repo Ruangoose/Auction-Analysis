@@ -119,6 +119,10 @@ generate_enhanced_yield_curve <- function(data, params) {
 
         message(sprintf("  [Yield Curve] Using data from: %s (%d bonds)",
                        format(latest_curve_date, "%Y-%m-%d"), nrow(data)))
+
+        # DEBUG: Log bond list for comparison with Trading Signals
+        bonds_in_curve <- sort(unique(data$bond))
+        message(sprintf("  [YIELD CURVE] Bond list: %s", paste(bonds_in_curve, collapse = ", ")))
     } else {
         # No date column - use all data (shouldn't happen normally)
         latest_curve_date <- Sys.Date()
