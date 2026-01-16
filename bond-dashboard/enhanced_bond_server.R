@@ -6954,8 +6954,9 @@ server <- function(input, output, session) {
                 fontWeight = "bold"
             ) %>%
             # Z-Score column: color-code based on value
+            # NOTE: Use actual column name "ZScore" (not display name "Z-Score")
             formatStyle(
-                "Z-Score",
+                "ZScore",
                 color = styleInterval(
                     c(-2, -1.5, -1, 1, 1.5, 2),
                     c("#B71C1C", "#EF5350", "#EF9A9A", "#666666", "#81C784", "#4CAF50", "#1B5E20")
