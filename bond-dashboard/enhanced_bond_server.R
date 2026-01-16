@@ -2253,7 +2253,8 @@ server <- function(input, output, session) {
 
     # =========================================================================
     # Data quality assessment for VaR calculations
-    # Flags bonds with insufficient history for reliable VaR estimates
+    # FIXED: Now scales thresholds with lookback period
+    # Longer lookback → more observations needed for "Good" quality
     # =========================================================================
     assess_var_data_quality <- reactive({
         req(filtered_data())
@@ -2271,45 +2272,73 @@ server <- function(input, output, session) {
             data <- data %>% filter(date >= cutoff_date)
         }
 
-        # Count observations per bond
-        min_observations <- 60   # Minimum for any VaR calculation
-        recommended_observations <- 252  # 1 year for reliable estimates
+        # Use the new function that properly scales with lookback period
+        obs_count <- assess_data_quality_for_var(data, lookback_days, min_ratio = 0.8)
 
-        obs_count <- data %>%
-            group_by(bond) %>%
-            summarise(
-                n_observations = n(),
-                date_range_days = as.numeric(max(date) - min(date)),
-                first_date = min(date),
-                last_date = max(date),
-                .groups = "drop"
-            ) %>%
-            mutate(
-                data_quality = case_when(
-                    n_observations >= recommended_observations ~ "Good",
-                    n_observations >= min_observations ~ "Limited",
-                    TRUE ~ "Insufficient"
-                ),
-                quality_note = case_when(
-                    data_quality == "Good" ~ "",
-                    data_quality == "Limited" ~ paste0("(", n_observations, " obs)"),
-                    TRUE ~ paste0("UNRELIABLE (", n_observations, " obs)")
-                )
-            )
+        return(obs_count)
+    })
 
-        # Log warnings for limited data bonds
-        limited <- obs_count %>% filter(data_quality != "Good")
-        if (nrow(limited) > 0) {
-            message("[VaR Data Quality] Bonds with limited history:")
-            for (i in 1:nrow(limited)) {
-                message(sprintf("  %s: %d observations (%s)",
-                               limited$bond[i],
-                               limited$n_observations[i],
-                               limited$data_quality[i]))
+    # =========================================================================
+    # CENTRALIZED VALID VAR DATA REACTIVE
+    # CRITICAL: This is the single source of truth for both VaR charts
+    # Ensures distribution and ladder plots show IDENTICAL bonds
+    # =========================================================================
+    valid_var_data_for_plotting <- reactive({
+        req(var_data())
+        req(assess_var_data_quality())
+
+        # Get the raw VaR data
+        raw_var_data <- var_data()
+
+        # Apply comprehensive NA/invalid filtering using the new function
+        valid_data <- prepare_var_data_for_plotting(raw_var_data, source = "VaR Ladder")
+
+        # Get current parameters for logging
+        method <- input$var_method %||% "historical"
+        lookback_days <- input$var_lookback %||% 252
+        horizon_days <- as.numeric(input$var_horizon) %||% 1
+
+        # Log what was filtered
+        original_bonds <- unique(raw_var_data$bond)
+        valid_bonds <- unique(valid_data$bond)
+        excluded_bonds <- setdiff(original_bonds, valid_bonds)
+
+        if (length(excluded_bonds) > 0) {
+            message(sprintf("[Valid VaR Data] Excluded %d bonds from %s method (%d-day lookback, %d-day horizon):",
+                           length(excluded_bonds), method, lookback_days, horizon_days))
+            for (b in excluded_bonds) {
+                message(sprintf("  - %s", b))
             }
         }
 
-        return(obs_count)
+        message(sprintf("[Valid VaR Data] %d valid bonds for both charts", nrow(valid_data)))
+
+        return(valid_data)
+    })
+
+    # =========================================================================
+    # BONDS EXCLUDED FROM VAR - for warning display
+    # =========================================================================
+    var_excluded_bonds <- reactive({
+        req(active_bonds_for_risk_analytics())
+
+        # Get active bonds and valid VaR bonds
+        active_bonds <- active_bonds_for_risk_analytics()
+
+        # Get valid VaR bonds (handle case where valid_var_data might be empty)
+        valid_var_bonds <- tryCatch({
+            valid_data <- valid_var_data_for_plotting()
+            if (is.null(valid_data) || nrow(valid_data) == 0) {
+                character(0)
+            } else {
+                unique(valid_data$bond)
+            }
+        }, error = function(e) character(0))
+
+        # Find excluded bonds
+        excluded <- setdiff(active_bonds, valid_var_bonds)
+
+        return(excluded)
     })
 
     # Reactive to store the VaR distribution plot and its bond ordering
@@ -2317,17 +2346,28 @@ server <- function(input, output, session) {
         req(filtered_data())
         req(active_bonds_for_risk_analytics())
 
-        # CRITICAL: Filter to active bonds only (same as other sections)
-        active_bonds <- active_bonds_for_risk_analytics()
-
         # Get parameters from UI controls
         horizon_days <- as.numeric(input$var_horizon) %||% 1
         lookback_days <- input$var_lookback %||% 252
         method <- input$var_method %||% "historical"
 
-        # Filter data to active bonds and lookback period
+        # CRITICAL: Get the set of valid bonds from centralized reactive
+        # This ensures distribution plot only includes bonds that will also appear in ladder
+        valid_var_bonds <- tryCatch({
+            valid_data <- valid_var_data_for_plotting()
+            if (!is.null(valid_data) && nrow(valid_data) > 0) {
+                unique(valid_data$bond)
+            } else {
+                # Fallback to active bonds if valid_var_data not available yet
+                active_bonds_for_risk_analytics()
+            }
+        }, error = function(e) {
+            active_bonds_for_risk_analytics()
+        })
+
+        # Filter data to ONLY valid VaR bonds and lookback period
         data <- filtered_data() %>%
-            filter(bond %in% active_bonds)
+            filter(bond %in% valid_var_bonds)
 
         if (!is.null(lookback_days) && lookback_days < 504) {
             cutoff_date <- max(data$date, na.rm = TRUE) - lookback_days
@@ -2335,10 +2375,11 @@ server <- function(input, output, session) {
         }
 
         # Get data quality assessment for annotations
-        data_quality <- assess_var_data_quality()
+        data_quality <- assess_var_data_quality() %>%
+            filter(bond %in% valid_var_bonds)  # Only include quality for valid bonds
 
-        message(sprintf("[VaR Distribution] Using %d active bonds (filtered from %d in data)",
-                       length(active_bonds), n_distinct(filtered_data()$bond)))
+        message(sprintf("[VaR Distribution] Using %d valid bonds (filtered from %d active)",
+                       length(valid_var_bonds), length(active_bonds_for_risk_analytics())))
 
         # Generate the plot with parameters
         params <- list(
@@ -2356,7 +2397,8 @@ server <- function(input, output, session) {
             plot = p,
             bond_order = attr(p, "bond_order"),
             var_summary = attr(p, "var_summary"),
-            data_quality = data_quality
+            data_quality = data_quality,
+            valid_bonds = valid_var_bonds  # Include for verification
         )
     })
 
@@ -2367,9 +2409,13 @@ server <- function(input, output, session) {
         if(!is.null(p)) print(p)
     })
 
-    # 5. VaR Ladder Plot - uses SAME bond ordering and data quality as distribution plot
+    # 5. VaR Ladder Plot - uses SAME filtered data as distribution plot
+    # CRITICAL: Uses valid_var_data_for_plotting() to ensure identical bonds
     output$var_ladder_plot <- renderPlot({
-        req(var_data(), var_distribution_results())
+        req(valid_var_data_for_plotting(), var_distribution_results())
+
+        # Use the centralized valid VaR data (already filtered for NA/invalid values)
+        valid_var_data <- valid_var_data_for_plotting()
 
         # Pass the bond order and data quality from distribution plot for consistency
         params <- list(
@@ -2377,8 +2423,46 @@ server <- function(input, output, session) {
             data_quality = var_distribution_results()$data_quality  # Same quality info as distribution
         )
 
-        p <- generate_var_ladder_plot(var_data(), params)
+        p <- generate_var_ladder_plot(valid_var_data, params)
         if(!is.null(p)) print(p)
+    })
+
+    # =========================================================================
+    # VAR EXCLUSION WARNING UI
+    # Shows warning when bonds are excluded due to insufficient data
+    # =========================================================================
+    output$var_exclusion_warning <- renderUI({
+        # Get excluded bonds
+        excluded <- var_excluded_bonds()
+
+        # If no exclusions, return nothing
+        if (length(excluded) == 0) {
+            return(NULL)
+        }
+
+        # Get current method for suggestion
+        method <- input$var_method %||% "historical"
+        lookback_days <- input$var_lookback %||% 252
+
+        # Build warning HTML
+        warning_html <- paste0(
+            "<div class='alert alert-warning' style='margin: 10px 0; padding: 10px; border-radius: 5px;'>",
+            "<strong>\u26A0\uFE0F ", length(excluded), " bond(s) excluded</strong> from VaR analysis ",
+            "due to insufficient data for current parameters:<br>",
+            "<ul style='margin-top: 5px; margin-bottom: 5px; padding-left: 20px;'>",
+            paste0("<li>", excluded, "</li>", collapse = ""),
+            "</ul>",
+            "<small><em>",
+            if (method == "parametric") {
+                "Try using Historical Simulation method (requires fewer observations) or reducing the lookback period."
+            } else {
+                paste0("Try reducing the lookback period below ", lookback_days, " days.")
+            },
+            "</em></small>",
+            "</div>"
+        )
+
+        HTML(warning_html)
     })
 
     # =========================================================================

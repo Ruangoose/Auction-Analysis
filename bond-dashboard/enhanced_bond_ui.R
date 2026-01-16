@@ -936,6 +936,9 @@ ui <- dashboardPage(
                                    solidHeader = TRUE,
                                    width = 12,
 
+                                   # Warning displayed when bonds are excluded
+                                   uiOutput("var_exclusion_warning"),
+
                                    fluidRow(
                                        column(6,
                                               plotOutput("var_distribution_plot", height = "450px")
