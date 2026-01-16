@@ -37,9 +37,9 @@ is_cache_corrupted <- function(cache_data) {
     na.rm = TRUE
   )
 
-  # Check for unrealistic YTM range (SA bonds should be 5-15%)
+  # Check for unrealistic YTM range (valid bonds should have YTM > 1.5%)
   ytm_out_of_range <- any(
-    cache_data$yield_to_maturity < 2 | cache_data$yield_to_maturity > 20,
+    cache_data$yield_to_maturity < 1.5 | cache_data$yield_to_maturity > 20,
     na.rm = TRUE
   )
 
@@ -94,9 +94,9 @@ validate_data_before_cache <- function(df) {
   )
   checks$no_placeholder_dur <- placeholder_dur_count == 0
 
-  # Check 3: YTM in reasonable range (2% to 20% for SA bonds)
+  # Check 3: YTM in reasonable range (1.5% to 20% for SA bonds)
   checks$ytm_in_range <- all(
-    df$yield_to_maturity > 2 & df$yield_to_maturity < 20,
+    df$yield_to_maturity > 1.5 & df$yield_to_maturity < 20,
     na.rm = TRUE
   )
 
@@ -183,6 +183,41 @@ debug_bond_values <- function(df, stage_name) {
 # MATURITY DATE LOADING FROM DEDICATED SHEET
 # Added 2026-01-15 to fix incorrect maturity inference from auction data
 # ==============================================================================
+
+#' Debug helper to trace bond counts through the loading process
+#'
+#' Logs the number of unique bonds and checks for specific expected bonds
+#' to help identify where bonds might be getting dropped.
+#'
+#' @param data Data frame with a 'bond' column
+#' @param step_name Name of the current processing step
+#' @param expected_bonds Optional vector of bond names to check for
+#' @export
+debug_bond_count <- function(data, step_name, expected_bonds = NULL) {
+    if (is.null(data) || nrow(data) == 0) {
+        message(sprintf("[DEBUG %s] No data (NULL or 0 rows)", step_name))
+        return(invisible(NULL))
+    }
+
+    n_bonds <- dplyr::n_distinct(data$bond)
+    bonds <- sort(unique(data$bond))
+    message(sprintf("[DEBUG %s] Bonds: %d -> %s", step_name, n_bonds, paste(bonds, collapse = ", ")))
+
+    # Check for specific missing bonds (commonly dropped in past issues)
+    if (is.null(expected_bonds)) {
+        # Default set of bonds that have been problematic in the past
+        expected_bonds <- c("R2032", "R2033", "R2035", "R2038", "R2039",
+                           "R2040", "R2042", "R2044", "R2053", "R187", "R188")
+    }
+
+    missing <- setdiff(expected_bonds, bonds)
+    if (length(missing) > 0) {
+        message(sprintf("[DEBUG %s] ⚠ MISSING: %s", step_name, paste(missing, collapse = ", ")))
+    }
+
+    return(invisible(n_bonds))
+}
+
 
 #' Load maturity dates from dedicated maturity_date sheet
 #'
@@ -509,24 +544,27 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
       dplyr::inner_join(mod_dur_df, by = c("date", "bond"))
     rows_after <- nrow(full_df)
     message(sprintf("    - Inner join with mod_dur: %d -> %d rows", rows_before, rows_after))
+    debug_bond_count(full_df, "robust: after INNER join")
   }
 
   # CRITICAL FIX: Validate immediately after core join
   # Filter out any rows with invalid YTM or ModDur values
+  # NOTE: Changed YTM threshold from 2% to 1.5% to keep bonds with lower but valid yields
   rows_before_filter <- nrow(full_df)
   full_df <- full_df %>%
     dplyr::filter(
       !is.na(yield_to_maturity),
       !is.na(modified_duration),
-      yield_to_maturity > 2,   # SA bonds never below 2%
-      yield_to_maturity < 20,  # SA bonds never above 20%
-      modified_duration > 0.1  # Duration must be positive and reasonable
+      yield_to_maturity > 1.5,  # Filter out placeholder values only (was 2%)
+      yield_to_maturity < 20,   # SA bonds never above 20%
+      modified_duration > 0.1   # Duration must be positive and reasonable
     )
   rows_after_filter <- nrow(full_df)
   if (rows_before_filter != rows_after_filter) {
     message(sprintf("    - Filtered out %d rows with invalid YTM/ModDur values",
                     rows_before_filter - rows_after_filter))
   }
+  debug_bond_count(full_df, "robust: after quality filter")
 
   # Debug checkpoint: Check for suspicious values after core join
   debug_bond_values(full_df, "After YTM+ModDur join")
@@ -635,6 +673,7 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
 
   message("  - Final rows after maturity filter: ", nrow(full_df))
   message("  - Final unique bonds: ", dplyr::n_distinct(full_df$bond))
+  debug_bond_count(full_df, "robust: FINAL OUTPUT")
 
   # --------------------------------------------------------------------------
   # Create Summary Tables
@@ -826,11 +865,12 @@ load_time_series_sheet <- function(excel_path, sheet_name, value_name, available
         if (value_name == "modified_duration") {
             rows_before <- nrow(result)
             # Valid duration is always > 0.1 for SA bonds - filter out placeholder values
+            # NOTE: Removed modified_duration != 1.0 filter as it was dropping legitimate data
             result <- result %>%
-                dplyr::filter(modified_duration > 0.1 & modified_duration != 1.0)
+                dplyr::filter(modified_duration > 0.1)
             rows_after <- nrow(result)
             if (rows_before != rows_after) {
-                message(sprintf("    Filtered out %d placeholder ModDur values (<=0.1 or exactly 1.0)",
+                message(sprintf("    Filtered out %d placeholder ModDur values (<=0.1)",
                                 rows_before - rows_after))
             }
         }
@@ -1100,6 +1140,14 @@ load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
     })
     names(ts_data_list) <- names(time_series_sheets)
 
+    # DEBUG: Track bond counts after loading time series sheets
+    if (!is.null(ts_data_list[["mod_dur"]])) {
+        debug_bond_count(ts_data_list[["mod_dur"]], "after mod_dur load")
+    }
+    if (!is.null(ts_data_list[["ytm"]])) {
+        debug_bond_count(ts_data_list[["ytm"]], "after ytm load")
+    }
+
     # DIAGNOSTIC CHECKPOINT 1: Verify YTM loaded correctly
     if (run_diagnostics && !is.null(ts_data_list[["ytm"]])) {
         # Show bond data availability summary
@@ -1173,25 +1221,28 @@ load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
         full_df <- full_df %>%
             dplyr::inner_join(ytm_data, by = c("date", "bond"))
         message(sprintf("    After INNER join with ytm: %d rows (was %d)", nrow(full_df), rows_before))
+        debug_bond_count(full_df, "after INNER join")
     } else {
         stop("Failed to load YTM data - cannot proceed")
     }
 
     # CRITICAL FIX: Filter out invalid values immediately after core join
+    # NOTE: Changed YTM threshold from 2% to 1.5% to keep bonds with lower but valid yields
     rows_before_filter <- nrow(full_df)
     full_df <- full_df %>%
         dplyr::filter(
             !is.na(yield_to_maturity),
             !is.na(modified_duration),
-            yield_to_maturity > 2,   # SA bonds never below 2%
-            yield_to_maturity < 20,  # SA bonds never above 20%
-            modified_duration > 0.1  # Duration must be positive and reasonable
+            yield_to_maturity > 1.5,  # Filter out placeholder values only (was 2%)
+            yield_to_maturity < 20,   # SA bonds never above 20%
+            modified_duration > 0.1   # Duration must be positive and reasonable
         )
     rows_after_filter <- nrow(full_df)
     if (rows_before_filter != rows_after_filter) {
         message(sprintf("    Filtered out %d rows with invalid YTM/ModDur values",
                         rows_before_filter - rows_after_filter))
     }
+    debug_bond_count(full_df, "after quality filter")
 
     # Debug checkpoint for critical fields
     debug_bond_values(full_df, "After YTM+ModDur core join")
@@ -1313,6 +1364,9 @@ load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
     }
 
     rows_after <- nrow(full_df)
+
+    # DEBUG: Final bond count check
+    debug_bond_count(full_df, "FINAL OUTPUT")
 
     # Summary
     message("\n╔════════════════════════════════════════════════════════╗")
