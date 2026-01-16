@@ -675,7 +675,7 @@ generate_enhanced_yield_curve <- function(data, params) {
             legend.text = element_text(size = 10),  # Increased from default
             legend.title = element_text(size = 11, face = "bold"),
             legend.key.size = unit(1.2, "lines"),
-            legend.margin = margin(t = 10, b = 5, l = 0, r = 0),
+            legend.margin = ggplot2::margin(t = 10, b = 5, l = 0, r = 0),
 
             # Caption improvements - make it more readable
             plot.caption = element_text(
@@ -683,11 +683,11 @@ generate_enhanced_yield_curve <- function(data, params) {
                 color = insele_palette$medium_gray,
                 hjust = 0.5,  # Center the caption
                 lineheight = 1.3,
-                margin = margin(t = 10, b = 0)
+                margin = ggplot2::margin(t = 10, b = 0)
             ),
 
             # Add some padding around the plot for labels that extend beyond
-            plot.margin = margin(t = 15, r = 15, b = 10, l = 10)
+            plot.margin = ggplot2::margin(t = 15, r = 15, b = 10, l = 10)
         )
 
     return(p)
