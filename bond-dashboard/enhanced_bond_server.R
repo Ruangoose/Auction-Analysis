@@ -2417,10 +2417,68 @@ server <- function(input, output, session) {
         # Use the centralized valid VaR data (already filtered for NA/invalid values)
         valid_var_data <- valid_var_data_for_plotting()
 
+        # Get distribution results
+        distribution_results <- var_distribution_results()
+
+        # =========================================================================
+        # CRITICAL FIX: Filter ladder data to SAME bonds as distribution plot
+        # =========================================================================
+        # The distribution plot filters bonds based on data sufficiency for the
+        # current horizon (e.g., 5-day returns require 5 consecutive observations).
+        # The ladder must use the EXACT same set of bonds to prevent:
+        # 1. Bond count mismatch (e.g., distribution shows 12, ladder shows 17)
+        # 2. NA rows appearing when bond_order factor levels don't match data
+        # =========================================================================
+        if (!is.null(distribution_results$valid_bonds) && length(distribution_results$valid_bonds) > 0) {
+            valid_bonds_from_dist <- distribution_results$valid_bonds
+
+            # Log what we're filtering
+            original_bonds <- unique(valid_var_data$bond)
+            bonds_to_exclude <- setdiff(original_bonds, valid_bonds_from_dist)
+
+            if (length(bonds_to_exclude) > 0) {
+                message(sprintf("[Risk Ladder] FILTERING to match distribution: %d -> %d bonds",
+                               length(original_bonds), length(valid_bonds_from_dist)))
+                message(sprintf("[Risk Ladder] Excluding %d bonds not in distribution: %s",
+                               length(bonds_to_exclude), paste(bonds_to_exclude, collapse = ", ")))
+            }
+
+            valid_var_data <- valid_var_data %>%
+                filter(bond %in% valid_bonds_from_dist)
+        }
+
+        # Secondary safety check: Ensure no NA bonds remain
+        valid_var_data <- valid_var_data %>%
+            filter(
+                !is.na(bond),
+                bond != "",
+                bond != "NA",
+                as.character(bond) != "NA"
+            )
+
+        # Verify we have data
+        if (nrow(valid_var_data) == 0) {
+            warning("[Risk Ladder] No valid bonds after filtering to match distribution")
+            return(
+                ggplot() +
+                    annotate("text", x = 0.5, y = 0.5,
+                             label = "No bonds with sufficient data\nfor current VaR parameters",
+                             size = 5, color = "#666666") +
+                    theme_void() +
+                    labs(title = "Risk Ladder: VaR & Expected Shortfall")
+            )
+        }
+
+        # Log final bond count for verification
+        message(sprintf("[Risk Ladder] Plotting %d bonds (matching distribution)",
+                       nrow(valid_var_data)))
+        message(sprintf("[Risk Ladder] Bond list: %s",
+                       paste(valid_var_data$bond, collapse = ", ")))
+
         # Pass the bond order and data quality from distribution plot for consistency
         params <- list(
-            bond_order = var_distribution_results()$bond_order,
-            data_quality = var_distribution_results()$data_quality  # Same quality info as distribution
+            bond_order = distribution_results$bond_order,
+            data_quality = distribution_results$data_quality  # Same quality info as distribution
         )
 
         p <- generate_var_ladder_plot(valid_var_data, params)
