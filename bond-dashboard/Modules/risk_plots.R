@@ -80,6 +80,7 @@ generate_var_distribution_plot <- function(data, params = list()) {
     max_daily_return <- params$max_daily_return %||% 10  # Cap at 10% daily return
     recalculate_volatility_if_low <- params$recalculate_volatility_if_low %||% TRUE  # Failsafe for upstream bugs
     bond_order <- params$bond_order  # Optional: pre-specified bond order for consistency
+    data_quality <- params$data_quality  # Optional: data quality assessment for annotations
 
     # Validate required columns
     required_cols <- c("bond", "date", "yield_to_maturity", "modified_duration", "convexity")
@@ -782,7 +783,64 @@ generate_var_distribution_plot <- function(data, params = list()) {
             pull(bond)
     }
 
-    # Apply bond ordering to returns data
+    # =========================================================================
+    # ADD DATA QUALITY INDICATORS TO BOND LABELS
+    # =========================================================================
+    # Join data quality info if provided, and create bond labels with indicators
+    # * = Limited history (<252 obs)
+    # ** = Insufficient history (<60 obs)
+    # =========================================================================
+    has_quality_issues <- FALSE
+    if (!is.null(data_quality) && nrow(data_quality) > 0) {
+        # Merge quality info with var_levels
+        var_levels <- var_levels %>%
+            left_join(
+                data_quality %>% select(bond, data_quality, quality_note, n_observations),
+                by = "bond",
+                suffix = c("", "_quality")
+            ) %>%
+            mutate(
+                # Use n_observations from quality if not already present
+                n_observations = coalesce(n_observations, n_observations_quality),
+                # Create display label with quality indicator
+                bond_label = case_when(
+                    data_quality == "Limited" ~ paste0(bond, " *"),
+                    data_quality == "Insufficient" ~ paste0(bond, " **"),
+                    TRUE ~ as.character(bond)
+                )
+            ) %>%
+            select(-any_of(c("n_observations_quality")))
+
+        # Check if there are any quality issues to show in subtitle
+        has_quality_issues <- any(var_levels$data_quality %in% c("Limited", "Insufficient"), na.rm = TRUE)
+
+        # Create bond label order (matching bond_order but with labels)
+        bond_label_order <- var_levels %>%
+            arrange(match(bond, bond_order)) %>%
+            pull(bond_label)
+
+        # Apply to returns data - need to match original bond to labeled bond
+        bond_to_label <- var_levels %>%
+            select(bond, bond_label) %>%
+            distinct()
+
+        returns_data <- returns_data %>%
+            left_join(bond_to_label, by = "bond") %>%
+            mutate(bond_display = factor(bond_label, levels = bond_label_order))
+
+        # Update var_levels for plotting
+        var_levels <- var_levels %>%
+            mutate(bond_display = factor(bond_label, levels = bond_label_order))
+    } else {
+        # No quality data - use plain bond names
+        returns_data <- returns_data %>%
+            mutate(bond_display = factor(bond, levels = bond_order))
+
+        var_levels <- var_levels %>%
+            mutate(bond_display = factor(bond, levels = bond_order))
+    }
+
+    # Apply bond ordering to returns data (keep original bond factor too)
     returns_data <- returns_data %>%
         mutate(bond = factor(bond, levels = bond_order))
 
@@ -841,9 +899,9 @@ generate_var_distribution_plot <- function(data, params = list()) {
                    linetype = "solid",
                    linewidth = 1) +
 
-        # Facet by bond - SAME ORDER as Risk Ladder
+        # Facet by bond_display - SAME ORDER as Risk Ladder, with quality indicators
         facet_wrap(
-            ~ bond,
+            ~ bond_display,
             ncol = n_cols,
             scales = "free_y"  # Free y, but we'll constrain x
         ) +
@@ -858,17 +916,28 @@ generate_var_distribution_plot <- function(data, params = list()) {
             expand = c(0, 0, 0.1, 0)
         ) +
 
-        # Labels
+        # Labels - include data quality legend if applicable
         labs(
             title = "Daily Return Distributions",
-            subtitle = sprintf(
-                "%s Method | %d-day horizon | Dashed orange = 95%% VaR | Solid red = 99%% VaR",
-                str_to_title(method),
-                horizon_days
-            ),
+            subtitle = if (has_quality_issues) {
+                sprintf(
+                    "%s Method | %d-day horizon | Dashed orange = 95%% VaR | Solid red = 99%% VaR\n* Limited history (<252 obs) | ** Insufficient history (<60 obs)",
+                    str_to_title(method),
+                    horizon_days
+                )
+            } else {
+                sprintf(
+                    "%s Method | %d-day horizon | Dashed orange = 95%% VaR | Solid red = 99%% VaR",
+                    str_to_title(method),
+                    horizon_days
+                )
+            },
             x = "Daily Price Return (%)",
             y = "Density",
-            caption = "Returns calculated using modified duration and convexity adjustment | Bonds ordered by 95% VaR (highest risk first)"
+            caption = sprintf(
+                "Returns calculated using modified duration and convexity | %d active bonds ordered by 95%% VaR (highest risk first, top-left to bottom-right)",
+                n_bonds
+            )
         ) +
 
         create_insele_theme() +
@@ -912,6 +981,7 @@ generate_var_ladder_plot <- function(var_data, params = list()) {
 
     # Extract parameters with defaults
     bond_order <- params$bond_order  # Optional: pre-specified bond order for consistency
+    data_quality <- params$data_quality  # Optional: data quality info for annotations
 
     # Validate input
     if (is.null(var_data) || nrow(var_data) == 0) {
@@ -968,22 +1038,59 @@ generate_var_ladder_plot <- function(var_data, params = list()) {
     var_ladder <- var_ladder %>%
         arrange(VaR_95_bps)
 
+    # =========================================================================
+    # MERGE DATA QUALITY INFO IF PROVIDED
+    # =========================================================================
+    has_quality_issues <- FALSE
+    if (!is.null(data_quality) && nrow(data_quality) > 0) {
+        var_ladder <- var_ladder %>%
+            left_join(
+                data_quality %>% select(bond, data_quality, quality_note, n_observations),
+                by = "bond"
+            ) %>%
+            mutate(
+                # Create display label with quality indicator
+                bond_label = case_when(
+                    data_quality == "Limited" ~ paste0(bond, " *"),
+                    data_quality == "Insufficient" ~ paste0(bond, " **"),
+                    TRUE ~ as.character(bond)
+                )
+            )
+
+        has_quality_issues <- any(var_ladder$data_quality %in% c("Limited", "Insufficient"), na.rm = TRUE)
+    } else {
+        var_ladder <- var_ladder %>%
+            mutate(
+                data_quality = "Good",
+                quality_note = "",
+                bond_label = as.character(bond)
+            )
+    }
+
     # Apply bond ordering - create factor with levels locked in order
     if (!is.null(bond_order)) {
+        # Create label order matching bond_order
+        label_lookup <- var_ladder %>% select(bond, bond_label) %>% distinct()
+        bond_label_order <- tibble(bond = bond_order) %>%
+            left_join(label_lookup, by = "bond") %>%
+            filter(!is.na(bond_label)) %>%
+            pull(bond_label)
+
         # Use provided order (reversed for coord_flip so highest at top)
         var_ladder <- var_ladder %>%
-            mutate(bond = factor(bond, levels = rev(bond_order)))
+            mutate(bond_display = factor(bond_label, levels = rev(bond_label_order)))
     } else {
         # Lock in current order (sorted by VaR_95_bps ascending)
         var_ladder <- var_ladder %>%
-            mutate(bond = factor(bond, levels = bond))
+            mutate(bond_display = factor(bond_label, levels = bond_label))
     }
 
-    # Calculate portfolio average
+    # Calculate portfolio average (only from active bonds)
+    n_bonds <- nrow(var_ladder)
     avg_var_95 <- mean(var_ladder$VaR_95_bps, na.rm = TRUE)
 
-    # Build plot using x = bond with coord_flip() for horizontal bars
-    p <- ggplot(var_ladder, aes(x = bond)) +
+    # Build plot using x = bond_display with coord_flip() for horizontal bars
+    p <- ggplot(var_ladder, aes(x = bond_display)) +
 
         # 95% VaR bar (wide, orange)
         geom_col(
@@ -1028,7 +1135,7 @@ generate_var_ladder_plot <- function(var_data, params = list()) {
         # Portfolio average label
         annotate(
             "text",
-            x = nrow(var_ladder) + 0.5,
+            x = n_bonds + 0.5,
             y = avg_var_95,
             label = sprintf("Portfolio Avg\n%.0f bps", avg_var_95),
             hjust = 0,
@@ -1048,9 +1155,16 @@ generate_var_ladder_plot <- function(var_data, params = list()) {
             labels = function(x) paste0(x, " bps")
         ) +
 
+        # Labels - include quality indicators and bond count
         labs(
             title = "Risk Ladder: VaR & Expected Shortfall",
-            subtitle = "Sorted by 95% VaR (highest risk at top) | Daily horizon",
+            subtitle = if (has_quality_issues) {
+                sprintf("n = %d active bonds | Sorted by 95%% VaR (highest risk at top) | Daily horizon\n* Limited history (<252 obs) | ** Insufficient history (<60 obs)",
+                       n_bonds)
+            } else {
+                sprintf("n = %d active bonds | Sorted by 95%% VaR (highest risk at top) | Daily horizon",
+                       n_bonds)
+            },
             x = NULL,
             y = "Risk (basis points of price)",
             caption = "Wide bar = 95% VaR | Narrow bar = 99% VaR | \u25C6 = CVaR (Expected Shortfall)"
@@ -1059,7 +1173,7 @@ generate_var_ladder_plot <- function(var_data, params = list()) {
         theme_minimal(base_size = 11) +
         theme(
             plot.title = element_text(face = "bold", color = "#1B3A6B", size = 14),
-            plot.subtitle = element_text(color = "#666666", size = 10),
+            plot.subtitle = element_text(color = "#666666", size = 10, lineheight = 1.2),
             axis.text.y = element_text(face = "bold", size = 10),
             panel.grid.major.x = element_line(color = "#E0E0E0"),
             panel.grid.major.y = element_blank(),

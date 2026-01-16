@@ -1443,11 +1443,43 @@ server <- function(input, output, session) {
     })
 
 
-    # Calculate VaR
+    # Calculate VaR - CRITICAL: Uses active bonds filter for consistency
     var_data <- reactive({
         req(filtered_data())
 
-        calculate_var(filtered_data(),
+        # CRITICAL: Use active bonds from Risk Analytics filter
+        # This ensures consistency with VaR Distribution plot and other sections
+        active_bonds <- tryCatch({
+            # Try to use the dedicated Risk Analytics active bonds reactive
+            active_bonds_for_risk_analytics()
+        }, error = function(e) {
+            # Fallback: Get active bonds from fitted_curve_data if available
+            tryCatch({
+                unique(fitted_curve_data()$bonds$bond)
+            }, error = function(e2) {
+                # Final fallback: use all bonds but warn
+                warning("[VaR] Could not get active bonds list - using all bonds")
+                unique(filtered_data()$bond)
+            })
+        })
+
+        # Filter data to active bonds only
+        data <- filtered_data() %>%
+            filter(bond %in% active_bonds)
+
+        # Additional safety check: Remove known matured bonds
+        known_matured_bonds <- c("R157", "R186", "R197", "R203", "R204", "R207", "R208", "R212", "R2023")
+        found_matured <- intersect(unique(data$bond), known_matured_bonds)
+        if (length(found_matured) > 0) {
+            warning(sprintf("[VaR Calculation] REMOVING matured bonds: %s",
+                           paste(found_matured, collapse = ", ")))
+            data <- data %>% filter(!bond %in% known_matured_bonds)
+        }
+
+        message(sprintf("[VaR Calculation] Processing %d active bonds",
+                       n_distinct(data$bond)))
+
+        calculate_var(data,
                       confidence_levels = c(input$confidence_level/100, 0.99))
     })
 
@@ -2193,28 +2225,128 @@ server <- function(input, output, session) {
     # VaR ANALYSIS REACTIVES AND OUTPUTS
     # =========================================================================
 
+    # =========================================================================
+    # SHARED REACTIVE: Active bonds for Risk Analytics
+    # CRITICAL: Uses same filtering as Relative Value to ensure consistency
+    # This ensures R186 and other matured bonds are excluded
+    # =========================================================================
+    active_bonds_for_risk_analytics <- reactive({
+        req(fitted_curve_data())
+        # Get active bonds from fitted_curve_data (which filters to global latest date)
+        # This automatically excludes matured bonds like R186 that don't have recent data
+        active_bonds <- unique(fitted_curve_data()$bonds$bond)
+
+        # Additional safety check: Remove any known matured bonds
+        known_matured_bonds <- c("R157", "R186", "R197", "R203", "R204", "R207", "R208", "R212", "R2023")
+        found_matured <- intersect(active_bonds, known_matured_bonds)
+        if (length(found_matured) > 0) {
+            warning(sprintf("[Risk Analytics] REMOVING known matured bonds: %s",
+                           paste(found_matured, collapse = ", ")))
+            active_bonds <- setdiff(active_bonds, known_matured_bonds)
+        }
+
+        message(sprintf("[Risk Analytics] Active bonds: %d (%s)",
+                       length(active_bonds),
+                       paste(sort(active_bonds), collapse = ", ")))
+        return(active_bonds)
+    })
+
+    # =========================================================================
+    # Data quality assessment for VaR calculations
+    # Flags bonds with insufficient history for reliable VaR estimates
+    # =========================================================================
+    assess_var_data_quality <- reactive({
+        req(filtered_data())
+        req(active_bonds_for_risk_analytics())
+
+        active_bonds <- active_bonds_for_risk_analytics()
+        lookback_days <- input$var_lookback %||% 252
+
+        data <- filtered_data() %>%
+            filter(bond %in% active_bonds)
+
+        # Apply lookback filter
+        if (!is.null(lookback_days) && lookback_days < 504) {
+            cutoff_date <- max(data$date, na.rm = TRUE) - lookback_days
+            data <- data %>% filter(date >= cutoff_date)
+        }
+
+        # Count observations per bond
+        min_observations <- 60   # Minimum for any VaR calculation
+        recommended_observations <- 252  # 1 year for reliable estimates
+
+        obs_count <- data %>%
+            group_by(bond) %>%
+            summarise(
+                n_observations = n(),
+                date_range_days = as.numeric(max(date) - min(date)),
+                first_date = min(date),
+                last_date = max(date),
+                .groups = "drop"
+            ) %>%
+            mutate(
+                data_quality = case_when(
+                    n_observations >= recommended_observations ~ "Good",
+                    n_observations >= min_observations ~ "Limited",
+                    TRUE ~ "Insufficient"
+                ),
+                quality_note = case_when(
+                    data_quality == "Good" ~ "",
+                    data_quality == "Limited" ~ paste0("(", n_observations, " obs)"),
+                    TRUE ~ paste0("UNRELIABLE (", n_observations, " obs)")
+                )
+            )
+
+        # Log warnings for limited data bonds
+        limited <- obs_count %>% filter(data_quality != "Good")
+        if (nrow(limited) > 0) {
+            message("[VaR Data Quality] Bonds with limited history:")
+            for (i in 1:nrow(limited)) {
+                message(sprintf("  %s: %d observations (%s)",
+                               limited$bond[i],
+                               limited$n_observations[i],
+                               limited$data_quality[i]))
+            }
+        }
+
+        return(obs_count)
+    })
+
     # Reactive to store the VaR distribution plot and its bond ordering
     var_distribution_results <- reactive({
         req(filtered_data())
+        req(active_bonds_for_risk_analytics())
+
+        # CRITICAL: Filter to active bonds only (same as other sections)
+        active_bonds <- active_bonds_for_risk_analytics()
 
         # Get parameters from UI controls
         horizon_days <- as.numeric(input$var_horizon) %||% 1
         lookback_days <- input$var_lookback %||% 252
         method <- input$var_method %||% "historical"
 
-        # Filter data based on lookback period
-        data <- filtered_data()
+        # Filter data to active bonds and lookback period
+        data <- filtered_data() %>%
+            filter(bond %in% active_bonds)
+
         if (!is.null(lookback_days) && lookback_days < 504) {
             cutoff_date <- max(data$date, na.rm = TRUE) - lookback_days
             data <- data %>% filter(date >= cutoff_date)
         }
+
+        # Get data quality assessment for annotations
+        data_quality <- assess_var_data_quality()
+
+        message(sprintf("[VaR Distribution] Using %d active bonds (filtered from %d in data)",
+                       length(active_bonds), n_distinct(filtered_data()$bond)))
 
         # Generate the plot with parameters
         params <- list(
             horizon_days = horizon_days,
             method = method,
             show_stats = FALSE,  # Stats are in separate table now
-            enable_diagnostics = FALSE
+            enable_diagnostics = FALSE,
+            data_quality = data_quality  # Pass quality info for annotations
         )
 
         p <- generate_var_distribution_plot(data, params)
@@ -2223,7 +2355,8 @@ server <- function(input, output, session) {
         list(
             plot = p,
             bond_order = attr(p, "bond_order"),
-            var_summary = attr(p, "var_summary")
+            var_summary = attr(p, "var_summary"),
+            data_quality = data_quality
         )
     })
 
@@ -2234,17 +2367,75 @@ server <- function(input, output, session) {
         if(!is.null(p)) print(p)
     })
 
-    # 5. VaR Ladder Plot - uses SAME bond ordering as distribution plot
+    # 5. VaR Ladder Plot - uses SAME bond ordering and data quality as distribution plot
     output$var_ladder_plot <- renderPlot({
         req(var_data(), var_distribution_results())
 
-        # Pass the bond order from distribution plot for consistency
+        # Pass the bond order and data quality from distribution plot for consistency
         params <- list(
-            bond_order = var_distribution_results()$bond_order
+            bond_order = var_distribution_results()$bond_order,
+            data_quality = var_distribution_results()$data_quality  # Same quality info as distribution
         )
 
         p <- generate_var_ladder_plot(var_data(), params)
         if(!is.null(p)) print(p)
+    })
+
+    # =========================================================================
+    # VALIDATION: Log bond consistency between Risk Analytics and other sections
+    # =========================================================================
+    observe({
+        # Validate that Risk Analytics uses the same bond universe as other sections
+        req(active_bonds_for_risk_analytics())
+        req(var_data())
+
+        risk_bonds <- sort(active_bonds_for_risk_analytics())
+        var_bonds <- sort(unique(var_data()$bond))
+
+        # Get relative value bonds for comparison
+        rel_val_bonds <- tryCatch({
+            sort(active_bonds_for_relative_value())
+        }, error = function(e) NULL)
+
+        # Check consistency between Risk Analytics filter and VaR data
+        if (!setequal(risk_bonds, var_bonds)) {
+            warning("[RISK ANALYTICS BOND MISMATCH] Filter and VaR calculation have different bonds!")
+            warning("  Active filter: ", paste(risk_bonds, collapse = ", "))
+            warning("  VaR data: ", paste(var_bonds, collapse = ", "))
+        }
+
+        # Check consistency with Relative Value section
+        if (!is.null(rel_val_bonds)) {
+            if (!setequal(risk_bonds, rel_val_bonds)) {
+                warning("[BOND COUNT MISMATCH] Risk Analytics has different bonds than Relative Value!")
+                warning("  Risk Analytics: ", length(risk_bonds), " bonds")
+                warning("  Relative Value: ", length(rel_val_bonds), " bonds")
+                only_in_risk <- setdiff(risk_bonds, rel_val_bonds)
+                only_in_rv <- setdiff(rel_val_bonds, risk_bonds)
+                if (length(only_in_risk) > 0) warning("  Only in Risk: ", paste(only_in_risk, collapse = ", "))
+                if (length(only_in_rv) > 0) warning("  Only in RelVal: ", paste(only_in_rv, collapse = ", "))
+            } else {
+                message(sprintf("[Risk Analytics] \u2713 %d active bonds (matches Relative Value section)",
+                               length(risk_bonds)))
+            }
+        }
+
+        # CRITICAL: Verify no matured bonds are present
+        known_matured_bonds <- c("R157", "R186", "R197", "R203", "R204", "R207", "R208", "R212", "R2023")
+        found_matured_in_risk <- intersect(risk_bonds, known_matured_bonds)
+        found_matured_in_var <- intersect(var_bonds, known_matured_bonds)
+
+        if (length(found_matured_in_risk) > 0 || length(found_matured_in_var) > 0) {
+            warning("[CRITICAL] MATURED BONDS FOUND IN RISK ANALYTICS!")
+            if (length(found_matured_in_risk) > 0) {
+                warning("  In active filter: ", paste(found_matured_in_risk, collapse = ", "))
+            }
+            if (length(found_matured_in_var) > 0) {
+                warning("  In VaR data: ", paste(found_matured_in_var, collapse = ", "))
+            }
+        } else {
+            message("[Risk Analytics] \u2713 No known matured bonds present")
+        }
     })
 
     # 6. VaR Statistics Table - FIXED VERSION
