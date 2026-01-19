@@ -725,45 +725,54 @@ calculate_advanced_technicals <- function(data) {
                 # ═══════════════════════════════════════════════════════════
 
                 # RSI Signal Score (-2 to +2)
-                # For YIELDS: overbought RSI = yields may fall = bullish for bond prices
+                # PRICE PERSPECTIVE (trend-following):
+                # - Low RSI on yields = yields falling = bond prices rising = BUY
+                # - High RSI on yields = yields rising = bond prices falling = SELL
                 rsi_signal_score = case_when(
                     is.na(rsi_14) ~ 0L,
-                    rsi_14 > 80 ~ 2L,        # Extremely overbought - yields likely to fall
-                    rsi_14 > 70 ~ 1L,        # Overbought
-                    rsi_14 < 20 ~ -2L,       # Extremely oversold - yields likely to rise
-                    rsi_14 < 30 ~ -1L,       # Oversold
+                    rsi_14 < 20 ~ 2L,        # Extremely oversold yields = prices rising fast = Strong Buy
+                    rsi_14 < 30 ~ 1L,        # Oversold yields = prices rising = Buy
+                    rsi_14 > 80 ~ -2L,       # Extremely overbought yields = prices falling fast = Strong Sell
+                    rsi_14 > 70 ~ -1L,       # Overbought yields = prices falling = Sell
                     TRUE ~ 0L                 # Neutral zone (30-70)
                 ),
 
                 # Bollinger Band Signal Score (-2 to +2)
-                # Position > 1 = above upper band = overbought = may fall
+                # PRICE PERSPECTIVE (trend-following):
+                # - bb_position < 0 = yields below lower band = yields falling = prices rising = BUY
+                # - bb_position > 1 = yields above upper band = yields rising = prices falling = SELL
                 bb_signal_score = case_when(
                     is.na(bb_position) ~ 0L,
-                    bb_position > 1.0 ~ 2L,   # Above upper band - overbought
-                    bb_position > 0.8 ~ 1L,   # Near upper band
-                    bb_position < 0 ~ -2L,    # Below lower band - oversold
-                    bb_position < 0.2 ~ -1L,  # Near lower band
+                    bb_position < 0 ~ 2L,     # Below lower band - yields falling strongly = prices rising = Strong Buy
+                    bb_position < 0.2 ~ 1L,   # Near lower band - yields falling = prices rising = Buy
+                    bb_position > 1.0 ~ -2L,  # Above upper band - yields rising strongly = prices falling = Strong Sell
+                    bb_position > 0.8 ~ -1L,  # Near upper band - yields rising = prices falling = Sell
                     TRUE ~ 0L                  # Within bands
                 ),
 
                 # MACD Signal Score (-2 to +2)
-                # Positive histogram = bullish momentum for yields
+                # PRICE PERSPECTIVE:
+                # - Positive histogram = bullish yield momentum = prices falling = SELL
+                # - Negative histogram = bearish yield momentum = prices rising = BUY
                 macd_signal_score = case_when(
                     is.na(macd_histogram) ~ 0L,
-                    macd_histogram > 0.05 ~ -2L,   # Strong bullish momentum (yields rising = bad for bonds)
-                    macd_histogram > 0 ~ -1L,      # Bullish
-                    macd_histogram < -0.05 ~ 2L,   # Strong bearish momentum (yields falling = good for bonds)
-                    macd_histogram < 0 ~ 1L,       # Bearish
+                    macd_histogram > 0.05 ~ -2L,   # Strong bullish yields = prices falling fast = Strong Sell
+                    macd_histogram > 0 ~ -1L,      # Bullish yields = prices falling = Sell
+                    macd_histogram < -0.05 ~ 2L,   # Strong bearish yields = prices rising fast = Strong Buy
+                    macd_histogram < 0 ~ 1L,       # Bearish yields = prices rising = Buy
                     TRUE ~ 0L
                 ),
 
                 # Momentum/ROC Signal Score (-2 to +2)
+                # PRICE PERSPECTIVE:
+                # - Positive ROC = yields rising = prices falling = SELL
+                # - Negative ROC = yields falling = prices rising = BUY
                 momentum_signal_score = case_when(
                     is.na(roc_20) ~ 0L,
-                    roc_20 > 5 ~ -2L,         # Strong positive momentum (yields rising fast = bad)
-                    roc_20 > 2 ~ -1L,         # Positive momentum
-                    roc_20 < -5 ~ 2L,         # Strong negative momentum (yields falling = good)
-                    roc_20 < -2 ~ 1L,         # Negative momentum
+                    roc_20 > 5 ~ -2L,         # Strong yield rise = prices falling fast = Strong Sell
+                    roc_20 > 2 ~ -1L,         # Yield rise = prices falling = Sell
+                    roc_20 < -5 ~ 2L,         # Strong yield decline = prices rising fast = Strong Buy
+                    roc_20 < -2 ~ 1L,         # Yield decline = prices rising = Buy
                     TRUE ~ 0L
                 ),
 
