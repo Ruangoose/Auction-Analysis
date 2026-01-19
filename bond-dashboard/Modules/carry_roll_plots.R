@@ -756,6 +756,17 @@ calculate_butterfly_spreads <- function(bond_data, lookback_days = 365) {
 generate_butterfly_chart <- function(bf, zscore_threshold = 2.0) {
     if (is.null(bf)) return(NULL)
 
+    # Validate spread_ts data
+    if (is.null(bf$spread_ts) || nrow(bf$spread_ts) == 0) {
+        return(
+            ggplot() +
+                annotate("text", x = 0.5, y = 0.5,
+                         label = "No historical data available for this spread",
+                         size = 5, color = "grey50") +
+                theme_void()
+        )
+    }
+
     # Check if yields were in percentage form (spread already in % points)
     yields_in_pct <- isTRUE(bf$yields_in_pct)
 
@@ -764,73 +775,108 @@ generate_butterfly_chart <- function(bf, zscore_threshold = 2.0) {
     conversion_factor <- if (yields_in_pct) 1 else 100
 
     spread_ts <- bf$spread_ts %>%
-        mutate(butterfly_pct = butterfly_spread * conversion_factor)
+        mutate(
+            date = as.Date(date),
+            butterfly_pct = butterfly_spread * conversion_factor
+        )
 
     mean_pct <- bf$mean * conversion_factor
     sd_pct <- bf$sd * conversion_factor
     current_pct <- bf$current * conversion_factor
+    current_date <- max(spread_ts$date, na.rm = TRUE)
 
     # Determine y-axis limits
     y_min <- min(spread_ts$butterfly_pct, mean_pct - 2.5 * sd_pct, na.rm = TRUE)
     y_max <- max(spread_ts$butterfly_pct, mean_pct + 2.5 * sd_pct, na.rm = TRUE)
 
+    # Determine appropriate date breaks based on actual data range
+    date_range <- as.numeric(diff(range(spread_ts$date, na.rm = TRUE)))
+
+    date_breaks <- dplyr::case_when(
+        date_range <= 90 ~ "2 weeks",
+        date_range <= 180 ~ "1 month",
+        date_range <= 365 ~ "2 months",
+        date_range <= 730 ~ "3 months",
+        TRUE ~ "6 months"
+    )
+
+    date_format <- dplyr::case_when(
+        date_range <= 90 ~ "%d %b",
+        date_range <= 365 ~ "%b %Y",
+        TRUE ~ "%b %Y"
+    )
+
     p <- ggplot(spread_ts, aes(x = date, y = butterfly_pct)) +
 
-        # ±2 Std Dev band (outer)
+        # ±2 Std Dev band (outer) - slightly more visible
         geom_ribbon(
             aes(ymin = mean_pct - 2 * sd_pct, ymax = mean_pct + 2 * sd_pct),
-            fill = "#E3F2FD",
-            alpha = 0.5
+            fill = "#1B3A6B",
+            alpha = 0.08
         ) +
 
         # ±1 Std Dev band (inner)
         geom_ribbon(
             aes(ymin = mean_pct - 1 * sd_pct, ymax = mean_pct + 1 * sd_pct),
-            fill = "#BBDEFB",
-            alpha = 0.5
+            fill = "#1B3A6B",
+            alpha = 0.12
         ) +
 
         # Mean line
-        geom_hline(yintercept = mean_pct, linetype = "dashed", color = "#1B3A6B", linewidth = 1) +
+        geom_hline(yintercept = mean_pct, linetype = "dashed", color = "#1B3A6B", linewidth = 0.8) +
 
         # ±1 Std Dev lines
-        geom_hline(yintercept = mean_pct + sd_pct, linetype = "dotted", color = "#90A4AE") +
-        geom_hline(yintercept = mean_pct - sd_pct, linetype = "dotted", color = "#90A4AE") +
+        geom_hline(yintercept = mean_pct + sd_pct, linetype = "dotted", color = "#1B3A6B", alpha = 0.4, linewidth = 0.5) +
+        geom_hline(yintercept = mean_pct - sd_pct, linetype = "dotted", color = "#1B3A6B", alpha = 0.4, linewidth = 0.5) +
 
         # ±2 Std Dev lines
-        geom_hline(yintercept = mean_pct + 2 * sd_pct, linetype = "dotted", color = "#78909C") +
-        geom_hline(yintercept = mean_pct - 2 * sd_pct, linetype = "dotted", color = "#78909C") +
+        geom_hline(yintercept = mean_pct + 2 * sd_pct, linetype = "dotted", color = "#1B3A6B", alpha = 0.6, linewidth = 0.5) +
+        geom_hline(yintercept = mean_pct - 2 * sd_pct, linetype = "dotted", color = "#1B3A6B", alpha = 0.6, linewidth = 0.5) +
 
         # Spread line
-        geom_line(color = "#1976D2", linewidth = 0.8) +
+        geom_line(color = "#2196F3", linewidth = 0.8) +
 
-        # Current point
+        # Current point - double circle marker for visibility
         geom_point(
             data = tail(spread_ts, 1),
             aes(x = date, y = butterfly_pct),
-            color = ifelse(abs(bf$z_score) > 2, "#C62828", "#FF9800"),
-            size = 4
+            color = "#E53935",
+            size = 4,
+            shape = 16
+        ) +
+        geom_point(
+            data = tail(spread_ts, 1),
+            aes(x = date, y = butterfly_pct),
+            color = "#E53935",
+            size = 6,
+            shape = 1,
+            stroke = 1.5
         ) +
 
-        # Current value annotation (positioned to the left of the point to stay within plot area)
+        # Current value annotation (positioned to the right with space)
         annotate(
-            "label",
-            x = max(spread_ts$date),
+            "text",
+            x = current_date,
             y = current_pct,
-            label = sprintf("%.3f%%\nZ: %.2f", current_pct, bf$z_score),
-            hjust = 1.1,
-            fill = ifelse(abs(bf$z_score) > 2, "#FFCDD2", "#FFF9C4"),
-            size = 3
+            label = sprintf("%.3f%%", current_pct),
+            hjust = -0.15,
+            vjust = 0.5,
+            size = 3.5,
+            fontface = "bold",
+            color = "#E53935"
         ) +
 
-        # Axis formatting
+        # X-axis with proper dynamic date formatting
+        scale_x_date(
+            date_breaks = date_breaks,
+            date_labels = date_format,
+            expand = expansion(mult = c(0.02, 0.12))  # Extra space on right for annotation
+        ) +
+
+        # Y-axis formatting
         scale_y_continuous(
             labels = function(x) sprintf("%.2f%%", x),
-            limits = c(y_min * 0.95, y_max * 1.05)
-        ) +
-        scale_x_date(
-            date_breaks = "3 months",
-            date_labels = "%b-%Y"
+            expand = expansion(mult = c(0.1, 0.1))
         ) +
 
         labs(
@@ -839,15 +885,20 @@ generate_butterfly_chart <- function(bf, zscore_threshold = 2.0) {
                                mean_pct, current_pct, (bf$diff_from_mean * conversion_factor)),
             x = NULL,
             y = "Butterfly Spread (%)",
-            caption = "Dashed = Mean | Dotted = +/-1 and +/-2 sigma | Shaded bands show standard deviation zones"
+            caption = "Dashed = Mean | Dotted = \u00b11 and \u00b12 sigma | Shaded bands show standard deviation zones"
         ) +
 
         create_insele_theme() +
         theme(
-            plot.title = element_text(face = "bold", color = "#1B3A6B"),
-            plot.subtitle = element_text(color = "#666666"),
+            plot.title = element_text(face = "bold", size = 13, color = "#1B3A6B"),
+            plot.subtitle = element_text(size = 10, color = "grey40"),
+            plot.caption = element_text(size = 8, color = "grey50", hjust = 0),
             panel.grid.minor = element_blank(),
-            axis.text.x = element_text(angle = 45, hjust = 1)
+            panel.grid.major.x = element_line(color = "grey90", linewidth = 0.3),
+            panel.grid.major.y = element_line(color = "grey90", linewidth = 0.3),
+            axis.text.x = element_text(angle = 0, hjust = 0.5, size = 9),
+            axis.text.y = element_text(size = 9),
+            axis.title.y = element_text(size = 10)
         )
 
     return(p)

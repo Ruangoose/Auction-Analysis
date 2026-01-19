@@ -162,6 +162,43 @@ ui <- dashboardPage(
         .main-header .navbar-brand {
           overflow: visible !important;
         }
+
+        /* ════════════════════════════════════════════════════════════════════════
+           Butterfly Spread Analyzer Table Styling
+           ════════════════════════════════════════════════════════════════════════ */
+
+        /* Row selection highlighting */
+        #butterfly_table tbody tr.selected {
+          background-color: #E3F2FD !important;
+          border-left: 4px solid #1B3A6B;
+        }
+
+        /* Hover effect for clickable rows */
+        #butterfly_table tbody tr:hover {
+          background-color: #F5F5F5 !important;
+          cursor: pointer;
+        }
+
+        /* Filter input styling */
+        #butterfly_table_filter input {
+          border: 1px solid #dee2e6;
+          border-radius: 4px;
+          padding: 5px 10px;
+        }
+
+        /* Column header tooltips styling */
+        #butterfly_table th[title] {
+          cursor: help;
+        }
+
+        /* Summary card styling */
+        .butterfly-summary-card {
+          transition: box-shadow 0.2s ease;
+        }
+
+        .butterfly-summary-card:hover {
+          box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
       ")))
         ),
 
@@ -1474,22 +1511,55 @@ ui <- dashboardPage(
                                    width = 12,
                                    collapsible = TRUE,
 
-                                   # Educational header
+                                   # Educational header - enhanced with Insele branding
                                    tags$div(
-                                       class = "alert alert-info",
-                                       style = "margin-bottom: 15px;",
-                                       tags$strong("What is a Butterfly Spread?"),
+                                       class = "info-box",
+                                       style = "background: linear-gradient(135deg, #1B3A6B 0%, #2E5090 100%);
+                                                color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px;",
+
+                                       tags$h4(
+                                           style = "color: white; margin-top: 0;",
+                                           icon("question-circle"),
+                                           " What is a Butterfly Spread?"
+                                       ),
+
                                        tags$p(
-                                           style = "margin: 5px 0;",
+                                           style = "margin: 10px 0;",
                                            "A butterfly measures yield curve curvature using 3 bonds: ",
-                                           tags$code("Spread = Short Wing - 2 x Body + Long Wing"),
+                                           tags$code(
+                                               style = "background: rgba(255,255,255,0.2); padding: 3px 8px; border-radius: 4px;",
+                                               "Spread = Short Wing - 2 \u00d7 Body + Long Wing"
+                                           ),
                                            ". When stationary (mean-reverting), extreme Z-scores suggest trading opportunities."
                                        ),
-                                       tags$ul(
-                                           style = "margin: 5px 0; font-size: 13px;",
-                                           tags$li(tags$strong("Z-Score > +2:"), " Spread is HIGH - Sell wings, buy body (expect compression)"),
-                                           tags$li(tags$strong("Z-Score < -2:"), " Spread is LOW - Buy wings, sell body (expect expansion)"),
-                                           tags$li(tags$strong("ADF p < 0.05:"), " Spread is stationary (mean-reverting) - Trade is valid")
+
+                                       # Trading signals with colored backgrounds
+                                       tags$div(
+                                           style = "margin-top: 15px;",
+                                           fluidRow(
+                                               column(6,
+                                                   tags$div(
+                                                       style = "background: rgba(46, 125, 50, 0.3); padding: 10px; border-radius: 4px; margin-bottom: 10px;",
+                                                       tags$strong(style = "color: #A5D6A7;", "Z-Score < -2: "),
+                                                       "Spread unusually LOW \u2192 Buy wings, sell body (expect spread to widen)"
+                                                   )
+                                               ),
+                                               column(6,
+                                                   tags$div(
+                                                       style = "background: rgba(198, 40, 40, 0.3); padding: 10px; border-radius: 4px; margin-bottom: 10px;",
+                                                       tags$strong(style = "color: #EF9A9A;", "Z-Score > +2: "),
+                                                       "Spread unusually HIGH \u2192 Sell wings, buy body (expect spread to narrow)"
+                                                   )
+                                               )
+                                           ),
+
+                                           # Stationarity explanation
+                                           tags$div(
+                                               style = "background: rgba(255,255,255,0.1); padding: 10px; border-radius: 4px;",
+                                               tags$strong(style = "color: #90CAF9;", "ADF p < 0.05: "),
+                                               "Spread is stationary (mean-reverting) - Trade is valid. ",
+                                               tags$em("Higher p-values suggest the spread may trend rather than revert.")
+                                           )
                                        )
                                    ),
 
