@@ -3732,113 +3732,234 @@ fit_nss_model <- memoise(function(data, lambda1 = 0.0609, lambda2 = 0.0609) {
 })
 
 #' @export
-# ARIMA-based Bid-to-Cover Prediction with ETS fallback for degenerate models
+#' @title Calculate Forecast Quality Score
+#' @description Calculates a quality score (0-100) for forecasts based on data and model
+#' @param n_obs Number of valid observations
+#' @param model_type Type of model used
+#' @param historical_values Vector of historical bid-to-cover values
+#' @return Integer quality score 0-100
+calculate_forecast_quality <- function(n_obs, model_type, historical_values) {
+    # Base score from observation count
+    obs_score <- min(40, n_obs * 4)  # Max 40 points for 10+ obs
+
+    # Model sophistication score
+    model_score <- switch(model_type,
+        "ARIMA" = 30,
+        "ETS" = 25,
+        "Linear Trend" = 15,
+        "Weighted Average" = 10,
+        "Simple Average" = 5,
+        5
+    )
+
+    # Also match partial model type strings (e.g., "ARIMA(1,0,1)")
+    if (grepl("^ARIMA", model_type)) model_score <- 30
+    if (grepl("^ETS", model_type)) model_score <- 25
+
+    # Consistency score (lower CV = higher score)
+    if (length(historical_values) > 1 && mean(historical_values, na.rm = TRUE) != 0) {
+        cv <- sd(historical_values, na.rm = TRUE) / abs(mean(historical_values, na.rm = TRUE))
+        consistency_score <- max(0, min(30, 30 - cv * 30))
+    } else {
+        consistency_score <- 15  # Default for single observation
+    }
+
+    total <- round(obs_score + model_score + consistency_score)
+    return(min(100, max(0, total)))
+}
+
+#' @export
+# ARIMA-based Bid-to-Cover Prediction with TIERED FALLBACKS
+# TIER 1: ARIMA/ETS for 10+ observations
+# TIER 2: Linear Trend for 5-9 observations
+# TIER 3: Weighted Average for 3-4 observations
+# TIER 4: Simple Average for 1-2 observations
 predict_btc_arima <- function(historical_data, bond_name, h = 1) {
     safe_execute({
+        # Try to find data using offer_date (auction data) or date column
+        date_col <- if ("offer_date" %in% names(historical_data)) "offer_date" else "date"
+
         bond_data <- historical_data %>%
             filter(bond == bond_name, !is.na(bid_to_cover)) %>%
-            arrange(date)
+            arrange(!!sym(date_col))
 
-        if (nrow(bond_data) < 10) {
-            return(list(
-                forecast = NA,
-                lower_80 = NA,
-                upper_80 = NA,
-                lower_95 = NA,
-                upper_95 = NA,
-                confidence = "Insufficient Data",
-                model_type = "None"
-            ))
-        }
+        n_valid <- nrow(bond_data)
+        btc_values <- bond_data$bid_to_cover
 
-        # Create time series
-        ts_data <- ts(bond_data$bid_to_cover, frequency = 12)
+        message(sprintf("[FORECAST %s] Starting with %d valid observations", bond_name, n_valid))
 
-        # Fit ARIMA model with auto selection
-        model <- auto.arima(
-            ts_data,
-            seasonal = TRUE,
-            stepwise = FALSE,
-            approximation = FALSE,
-            trace = FALSE
+        # Initialize result
+        result <- list(
+            forecast = NA,
+            lower_80 = NA,
+            upper_80 = NA,
+            lower_95 = NA,
+            upper_95 = NA,
+            confidence = "Insufficient Data",
+            model_type = "None",
+            quality_score = 0
         )
 
-        # Check if model is degenerate (0,0,0) - ARIMA(0,0,0) is just a mean model
-        # arma indices: [1]=p, [2]=q, [3]=P, [4]=Q, [5]=frequency, [6]=d, [7]=D
-        is_degenerate <- (model$arma[1] == 0 && model$arma[6] == 0 && model$arma[2] == 0 &&
-                         model$arma[3] == 0 && model$arma[7] == 0 && model$arma[4] == 0)
+        if (n_valid == 0) {
+            message(sprintf("[FORECAST %s] No valid bid-to-cover values", bond_name))
+            return(result)
+        }
 
-        model_type <- ""
+        # ═══════════════════════════════════════════════════════════════
+        # TIER 1: Full time series model (requires 10+ observations)
+        # ═══════════════════════════════════════════════════════════════
+        if (n_valid >= 10) {
+            message(sprintf("[FORECAST %s] Using TIER 1: Time series model", bond_name))
 
-        if (is_degenerate) {
-            # Fallback to ETS for degenerate ARIMA models
-            message(sprintf("WARNING: ARIMA(0,0,0) detected for %s - falling back to ETS", bond_name))
-            model <- tryCatch({
-                ets(ts_data)
+            # Create time series
+            ts_data <- ts(btc_values, frequency = 12)
+
+            # Try ARIMA first
+            arima_result <- tryCatch({
+                model <- forecast::auto.arima(
+                    ts_data,
+                    max.p = 2, max.q = 2, max.d = 1,
+                    seasonal = FALSE,
+                    stepwise = TRUE,
+                    approximation = TRUE,
+                    trace = FALSE
+                )
+
+                # Check if model is degenerate (0,0,0)
+                is_degenerate <- (model$arma[1] == 0 && model$arma[6] == 0 && model$arma[2] == 0 &&
+                                 model$arma[3] == 0 && model$arma[7] == 0 && model$arma[4] == 0)
+
+                if (is_degenerate) {
+                    message(sprintf("[FORECAST %s] WARNING: ARIMA(0,0,0) detected - falling back to ETS", bond_name))
+                    NULL
+                } else {
+                    fc <- forecast::forecast(model, h = h, level = c(80, 95))
+                    model_type <- paste0("ARIMA(", model$arma[1], ",", model$arma[6], ",", model$arma[2], ")")
+                    list(fc = fc, model_type = model_type)
+                }
             }, error = function(e) {
-                # If ETS also fails, use simple mean forecast
+                message(sprintf("[FORECAST %s] ARIMA failed: %s", bond_name, e$message))
                 NULL
             })
 
-            if (is.null(model)) {
-                # Simple mean forecast as last resort
-                mean_val <- mean(ts_data, na.rm = TRUE)
-                sd_val <- sd(ts_data, na.rm = TRUE)
-                return(list(
-                    forecast = mean_val,
-                    lower_80 = mean_val - 1.28 * sd_val,
-                    upper_80 = mean_val + 1.28 * sd_val,
-                    lower_95 = mean_val - 1.96 * sd_val,
-                    upper_95 = mean_val + 1.96 * sd_val,
-                    confidence = "Low",
-                    model_type = "Mean"
-                ))
-            }
+            # If ARIMA failed or degenerate, try ETS
+            if (is.null(arima_result)) {
+                ets_result <- tryCatch({
+                    model <- forecast::ets(ts_data, model = "ZZN")  # Auto-select, no seasonality
+                    fc <- forecast::forecast(model, h = h, level = c(80, 95))
+                    model_type <- sprintf("ETS(%s)", model$method)
+                    list(fc = fc, model_type = model_type)
+                }, error = function(e) {
+                    message(sprintf("[FORECAST %s] ETS failed: %s", bond_name, e$message))
+                    NULL
+                })
 
-            # Build ETS model type string
-            model_type <- sprintf("ETS(%s)", model$method)
-        } else {
-            # Build ARIMA model type string
-            model_type <- paste0("ARIMA(", model$arma[1], ",", model$arma[6], ",", model$arma[2], ")")
-            if (model$arma[3] > 0 || model$arma[7] > 0 || model$arma[4] > 0) {
-                model_type <- paste0(model_type, "(", model$arma[3], ",", model$arma[7], ",", model$arma[4], ")")
+                if (!is.null(ets_result)) {
+                    result$forecast <- as.numeric(ets_result$fc$mean)[1]
+                    result$lower_80 <- as.numeric(ets_result$fc$lower[1, 1])
+                    result$upper_80 <- as.numeric(ets_result$fc$upper[1, 1])
+                    result$lower_95 <- as.numeric(ets_result$fc$lower[1, 2])
+                    result$upper_95 <- as.numeric(ets_result$fc$upper[1, 2])
+                    result$model_type <- ets_result$model_type
+                }
+            } else {
+                result$forecast <- as.numeric(arima_result$fc$mean)[1]
+                result$lower_80 <- as.numeric(arima_result$fc$lower[1, 1])
+                result$upper_80 <- as.numeric(arima_result$fc$upper[1, 1])
+                result$lower_95 <- as.numeric(arima_result$fc$lower[1, 2])
+                result$upper_95 <- as.numeric(arima_result$fc$upper[1, 2])
+                result$model_type <- arima_result$model_type
             }
         }
+        # ═══════════════════════════════════════════════════════════════
+        # TIER 2: Simple regression/trend (requires 5-9 observations)
+        # ═══════════════════════════════════════════════════════════════
+        else if (n_valid >= 5) {
+            message(sprintf("[FORECAST %s] Using TIER 2: Linear trend model", bond_name))
 
-        # Generate forecast
-        fc <- forecast(model, h = h, level = c(80, 95))
+            # Fit simple linear trend
+            df <- data.frame(x = seq_along(btc_values), y = btc_values)
+            lm_model <- lm(y ~ x, data = df)
 
-        # Calculate confidence based on model fit
-        accuracy_metrics <- tryCatch({
-            accuracy(model)
-        }, error = function(e) {
-            # Return default high MAPE if accuracy fails
-            matrix(25, nrow = 1, ncol = 1, dimnames = list(NULL, "MAPE"))
-        })
+            # Predict next value
+            next_x <- nrow(df) + 1
+            pred <- predict(lm_model, newdata = data.frame(x = next_x),
+                           interval = "prediction", level = 0.80)
+            pred_95 <- predict(lm_model, newdata = data.frame(x = next_x),
+                              interval = "prediction", level = 0.95)
 
-        mape <- if ("MAPE" %in% colnames(accuracy_metrics)) {
-            accuracy_metrics[, "MAPE"]
-        } else {
-            25  # Default moderate MAPE
+            result$forecast <- pred[1, "fit"]
+            result$lower_80 <- pred[1, "lwr"]
+            result$upper_80 <- pred[1, "upr"]
+            result$lower_95 <- pred_95[1, "lwr"]
+            result$upper_95 <- pred_95[1, "upr"]
+            result$model_type <- "Linear Trend"
+        }
+        # ═══════════════════════════════════════════════════════════════
+        # TIER 3: Weighted average with uncertainty (requires 3-4 observations)
+        # ═══════════════════════════════════════════════════════════════
+        else if (n_valid >= 3) {
+            message(sprintf("[FORECAST %s] Using TIER 3: Weighted average", bond_name))
+
+            # Weighted average (more recent = higher weight)
+            weights <- seq(0.5, 1, length.out = n_valid)
+            weights <- weights / sum(weights)
+
+            weighted_mean <- sum(btc_values * weights)
+            weighted_sd <- sqrt(sum(weights * (btc_values - weighted_mean)^2))
+
+            result$forecast <- weighted_mean
+            result$lower_80 <- weighted_mean - 1.28 * weighted_sd
+            result$upper_80 <- weighted_mean + 1.28 * weighted_sd
+            result$lower_95 <- weighted_mean - 1.96 * weighted_sd
+            result$upper_95 <- weighted_mean + 1.96 * weighted_sd
+            result$model_type <- "Weighted Average"
+        }
+        # ═══════════════════════════════════════════════════════════════
+        # TIER 4: Simple average (requires 1-2 observations)
+        # ═══════════════════════════════════════════════════════════════
+        else if (n_valid >= 1) {
+            message(sprintf("[FORECAST %s] Using TIER 4: Simple average", bond_name))
+
+            mean_val <- mean(btc_values, na.rm = TRUE)
+            # Wide confidence interval for low data
+            sd_est <- if (n_valid > 1) sd(btc_values, na.rm = TRUE) else mean_val * 0.3
+
+            result$forecast <- mean_val
+            result$lower_80 <- mean_val - 1.5 * sd_est
+            result$upper_80 <- mean_val + 1.5 * sd_est
+            result$lower_95 <- mean_val - 2.0 * sd_est
+            result$upper_95 <- mean_val + 2.0 * sd_est
+            result$model_type <- "Simple Average"
         }
 
-        confidence <- case_when(
-            mape < 10 ~ "High",
-            mape < 20 ~ "Medium",
-            mape < 30 ~ "Low",
-            TRUE ~ "Very Low"
-        )
+        # Validate and bound forecast results (bid-to-cover typically 1.0-8.0)
+        if (!is.na(result$forecast)) {
+            result$forecast <- pmax(1.0, pmin(10.0, result$forecast))
+            result$lower_80 <- pmax(0.5, result$lower_80)
+            result$upper_80 <- pmin(12.0, result$upper_80)
+            result$lower_95 <- pmax(0.3, result$lower_95)
+            result$upper_95 <- pmin(15.0, result$upper_95)
 
-        return(list(
-            forecast = as.numeric(fc$mean)[1],
-            lower_80 = as.numeric(fc$lower[1, 1]),
-            upper_80 = as.numeric(fc$upper[1, 1]),
-            lower_95 = as.numeric(fc$lower[1, 2]),
-            upper_95 = as.numeric(fc$upper[1, 2]),
-            confidence = confidence,
-            model_type = model_type
-        ))
-    }, default = list(forecast = NA, lower_80 = NA, upper_80 = NA, lower_95 = NA, upper_95 = NA, confidence = "Error", model_type = "None"))
+            # Calculate quality score
+            result$quality_score <- calculate_forecast_quality(n_valid, result$model_type, btc_values)
+
+            # Determine confidence level based on quality score
+            result$confidence <- dplyr::case_when(
+                result$quality_score >= 70 ~ "High",
+                result$quality_score >= 50 ~ "Medium",
+                result$quality_score >= 30 ~ "Low",
+                TRUE ~ "Very Low"
+            )
+
+            message(sprintf("[FORECAST %s] SUCCESS: %.2fx [%.2f-%.2f] using %s (quality=%d)",
+                           bond_name, result$forecast, result$lower_80, result$upper_80,
+                           result$model_type, result$quality_score))
+        }
+
+        return(result)
+    }, default = list(forecast = NA, lower_80 = NA, upper_80 = NA, lower_95 = NA, upper_95 = NA,
+                      confidence = "Error", model_type = "None", quality_score = 0))
 }
 
 
