@@ -6519,6 +6519,102 @@ server <- function(input, output, session) {
         return(enhanced)
     })
 
+    # ═══════════════════════════════════════════════════════════════════════════
+    # AUCTION QUALITY METRICS VALIDATION DEBUG OUTPUT
+    # ═══════════════════════════════════════════════════════════════════════════
+    observe({
+        req(enhanced_auction_data())
+        auction_data <- enhanced_auction_data()
+
+        # Only log when there's actual data
+        if (is.null(auction_data) || nrow(auction_data) == 0) return()
+
+        message("\n=== AUCTION QUALITY METRICS VALIDATION ===")
+
+        # Sample raw values
+        sample_cols <- c("bond", "offer_date", "clearing_yield", "bid_to_cover",
+                         "auction_tail_bps", "non_comp_ratio", "auction_concession_bps")
+        available_cols <- intersect(sample_cols, names(auction_data))
+
+        if (length(available_cols) > 0) {
+            sample <- auction_data %>%
+                dplyr::select(dplyr::all_of(available_cols)) %>%
+                utils::head(5)
+
+            message("Sample auction data (first 5 rows):")
+            print(sample)
+        }
+
+        # Check concession calculation
+        if ("auction_concession_bps" %in% names(auction_data)) {
+            concession_data <- auction_data$auction_concession_bps[!is.na(auction_data$auction_concession_bps)]
+
+            if (length(concession_data) > 0) {
+                message("\nConcession calculation check:")
+                message(sprintf("  Count: %d auctions with concession data", length(concession_data)))
+                message(sprintf("  Range: %.1f to %.1f bps",
+                                min(concession_data), max(concession_data)))
+                message(sprintf("  Median: %.1f bps", median(concession_data)))
+                message(sprintf("  Mean: %.1f bps", mean(concession_data)))
+
+                # Flag if concession seems wrong (outside normal range)
+                pct_in_range <- mean(abs(concession_data) <= 50) * 100
+                if (pct_in_range < 80) {
+                    message(sprintf("  ⚠️ WARNING: Only %.0f%% of concessions are within ±50 bps normal range!",
+                                    pct_in_range))
+                } else {
+                    message(sprintf("  ✓ %.0f%% of concessions within ±50 bps (normal)", pct_in_range))
+                }
+            }
+        } else {
+            message("\n⚠️ auction_concession_bps column not found - check data pipeline")
+        }
+
+        # Check non_comp_ratio interpretation
+        if ("non_comp_ratio" %in% names(auction_data)) {
+            non_comp_data <- auction_data$non_comp_ratio[!is.na(auction_data$non_comp_ratio)]
+
+            if (length(non_comp_data) > 0) {
+                message("\nNon-competitive ratio check:")
+                message(sprintf("  Range: %.1f%% to %.1f%%",
+                                min(non_comp_data), max(non_comp_data)))
+                message(sprintf("  Mean: %.1f%%", mean(non_comp_data)))
+
+                # Flag if values seem wrong (should be 0-100%)
+                if (min(non_comp_data) < 0 || max(non_comp_data) > 100) {
+                    message("  ⚠️ WARNING: Non-comp ratio outside 0-100% range!")
+                } else {
+                    message("  ✓ Non-comp ratio within expected range")
+                }
+            }
+        }
+
+        # Quality score check
+        if ("auction_quality_score" %in% names(auction_data)) {
+            quality_data <- auction_data$auction_quality_score[!is.na(auction_data$auction_quality_score)]
+
+            if (length(quality_data) > 0) {
+                message("\nQuality score check:")
+                message(sprintf("  Range: %.0f to %.0f", min(quality_data), max(quality_data)))
+                message(sprintf("  Mean: %.1f", mean(quality_data)))
+
+                # Distribution by grade
+                grades <- dplyr::case_when(
+                    quality_data >= 85 ~ "A",
+                    quality_data >= 70 ~ "B",
+                    quality_data >= 55 ~ "C",
+                    quality_data >= 40 ~ "D",
+                    TRUE ~ "F"
+                )
+                grade_counts <- table(grades)
+                message(sprintf("  Grade distribution: %s",
+                                paste(names(grade_counts), grade_counts, sep = "=", collapse = ", ")))
+            }
+        }
+
+        message("==========================================\n")
+    }) %>% bindEvent(enhanced_auction_data(), ignoreInit = TRUE)
+
     # KPI: Average Quality Score
     output$avg_quality_score_text <- renderText({
         req(enhanced_auction_data())
@@ -6621,18 +6717,18 @@ server <- function(input, output, session) {
         }
     })
 
-    # KPI: Institutional Interpretation
+    # KPI: Non-Competitive % Interpretation (renamed from Institutional)
     output$institutional_interpretation <- renderText({
         req(enhanced_auction_data())
 
         if ("non_comp_ratio" %in% names(enhanced_auction_data())) {
-            avg_inst <- mean(enhanced_auction_data()$non_comp_ratio, na.rm = TRUE)
+            avg_non_comp <- mean(enhanced_auction_data()$non_comp_ratio, na.rm = TRUE)
             dplyr::case_when(
-                is.na(avg_inst) ~ "No data",
-                avg_inst >= 30 ~ "Very strong anchor demand",
-                avg_inst >= 20 ~ "Healthy institutional base",
-                avg_inst >= 10 ~ "Moderate participation",
-                TRUE ~ "Low institutional interest"
+                is.na(avg_non_comp) ~ "No data",
+                avg_non_comp >= 30 ~ "High (strong standing order base)",
+                avg_non_comp >= 20 ~ "Healthy participation",
+                avg_non_comp >= 10 ~ "Moderate standing orders",
+                TRUE ~ "Low non-competitive interest"
             )
         } else {
             "No data"
@@ -6673,17 +6769,126 @@ server <- function(input, output, session) {
         }
     })
 
-    # Auction Quality Heatmap
+    # Auction Quality Heatmap - OLD ggplot version (kept for download report)
     output$auction_quality_heatmap <- renderPlot({
         req(enhanced_auction_data())
         p <- create_auction_quality_heatmap(enhanced_auction_data())
         if (!is.null(p)) print(p)
     })
 
-    # Concession Trend Chart
+    # Auction Quality Heatmap - NEW DT version with highlighting
+    output$auction_quality_heatmap_dt <- DT::renderDT({
+        req(enhanced_auction_data())
+
+        # Get selected bonds from auction predictions
+        selected_bonds <- if (!is.null(input$auction_bonds_select)) {
+            input$auction_bonds_select
+        } else {
+            character(0)
+        }
+
+        # Aggregate by bond - latest 6 months
+        six_months_ago <- Sys.Date() - 180
+
+        bond_quality <- enhanced_auction_data() %>%
+            dplyr::filter(offer_date >= six_months_ago, !is.na(bid_to_cover)) %>%
+            dplyr::group_by(bond) %>%
+            dplyr::summarise(
+                n_auctions = dplyr::n(),
+                avg_btc = mean(bid_to_cover, na.rm = TRUE),
+                avg_tail = if ("auction_tail_bps" %in% names(.)) mean(auction_tail_bps, na.rm = TRUE) else NA_real_,
+                avg_non_comp = if ("non_comp_ratio" %in% names(.)) mean(non_comp_ratio, na.rm = TRUE) else NA_real_,
+                avg_concession = if ("auction_concession_bps" %in% names(.)) mean(auction_concession_bps, na.rm = TRUE) else NA_real_,
+                avg_quality = if ("auction_quality_score" %in% names(.)) mean(auction_quality_score, na.rm = TRUE) else NA_real_,
+                .groups = "drop"
+            ) %>%
+            dplyr::filter(n_auctions >= 2) %>%
+            dplyr::mutate(
+                is_selected = bond %in% selected_bonds,
+                sort_order = ifelse(is_selected, 0, 1)
+            ) %>%
+            dplyr::arrange(sort_order, dplyr::desc(avg_quality))
+
+        if (nrow(bond_quality) == 0) {
+            return(NULL)
+        }
+
+        # Create display table with formatted values
+        display_data <- bond_quality %>%
+            dplyr::transmute(
+                Bond = bond,
+                `Bid-to-Cover` = sprintf("%.2fx", avg_btc),
+                `Tail (bps)` = ifelse(is.na(avg_tail), "—", sprintf("%.1f", avg_tail)),
+                `Non-Comp %%` = ifelse(is.na(avg_non_comp), "—", sprintf("%.0f%%", avg_non_comp)),
+                `Concession` = ifelse(is.na(avg_concession), "—", sprintf("%+.1f bps", avg_concession)),
+                `Quality` = ifelse(is.na(avg_quality), "—", sprintf("%.0f", avg_quality)),
+                is_selected = is_selected
+            )
+
+        # Get row indices for selected bonds (1-based for DT)
+        selected_rows <- which(display_data$is_selected)
+
+        # Create the datatable
+        dt <- DT::datatable(
+            display_data %>% dplyr::select(-is_selected),
+            options = list(
+                dom = 't',
+                paging = FALSE,
+                ordering = FALSE,
+                scrollY = "300px",
+                scrollCollapse = TRUE,
+                columnDefs = list(
+                    list(className = 'dt-center', targets = 1:5)
+                )
+            ),
+            rownames = FALSE,
+            class = 'compact stripe hover',
+            selection = 'none'
+        )
+
+        # Apply highlighting to selected bonds
+        if (length(selected_rows) > 0) {
+            dt <- dt %>%
+                DT::formatStyle(
+                    'Bond',
+                    target = 'row',
+                    backgroundColor = DT::styleRow(
+                        selected_rows,
+                        '#1B3A6B15'
+                    )
+                ) %>%
+                DT::formatStyle(
+                    columns = 1,  # Bond column
+                    fontWeight = DT::styleRow(selected_rows, 'bold'),
+                    borderLeft = DT::styleRow(selected_rows, '4px solid #1B3A6B')
+                )
+        }
+
+        # Add color bars to Quality column
+        dt <- dt %>%
+            DT::formatStyle(
+                'Quality',
+                background = DT::styleColorBar(c(0, 100), '#28a74540'),
+                backgroundSize = '98% 70%',
+                backgroundRepeat = 'no-repeat',
+                backgroundPosition = 'left center'
+            )
+
+        return(dt)
+    })
+
+    # Concession Trend Chart - with selected bonds highlighting
     output$concession_trend_chart <- renderPlot({
         req(enhanced_auction_data())
-        p <- create_concession_trend_chart(enhanced_auction_data())
+
+        # Get selected bonds from auction predictions
+        selected_bonds <- if (!is.null(input$auction_bonds_select)) {
+            input$auction_bonds_select
+        } else {
+            character(0)
+        }
+
+        p <- create_concession_trend_chart(enhanced_auction_data(), selected_bonds)
         if (!is.null(p)) print(p)
     })
 

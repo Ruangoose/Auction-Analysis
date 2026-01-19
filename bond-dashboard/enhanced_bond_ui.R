@@ -1937,14 +1937,35 @@ ui <- dashboardPage(
                                    width = 12,
                                    collapsible = TRUE,
 
-                                   # KPI Cards Row
+                                   # Section header with explanation
+                                   tags$div(
+                                       style = "margin-bottom: 15px; padding: 10px; background: #f8f9fa; border-radius: 6px; border-left: 4px solid #1B3A6B;",
+                                       tags$p(
+                                           style = "color: #666; font-size: 0.95em; margin: 0;",
+                                           "Analyzes recent auction performance to assess market demand and pricing efficiency. ",
+                                           tags$strong("Highlighted bonds", style = "color: #1B3A6B;"),
+                                           " are selected for the upcoming auction forecast in the ML Predictions section above."
+                                       )
+                                   ),
+
+                                   # KPI Cards Row with tooltips
                                    fluidRow(
                                        column(3,
                                               tags$div(
                                                   class = "kpi-card",
                                                   style = "background: linear-gradient(135deg, #1B3A6B 0%, #2E5090 100%);
                                                            color: white; padding: 20px; border-radius: 8px; text-align: center;",
-                                                  tags$p("Avg Auction Quality", style = "margin-bottom: 5px; opacity: 0.9;"),
+                                                  tags$div(
+                                                      style = "display: flex; align-items: center; justify-content: center; gap: 5px;",
+                                                      tags$p("Avg Auction Quality", style = "margin-bottom: 0; opacity: 0.9;"),
+                                                      tags$span(
+                                                          `data-toggle` = "tooltip",
+                                                          `data-placement` = "top",
+                                                          title = "Composite score (0-100) combining bid-to-cover, tail, participation, and concession. A=85+, B=70-84, C=55-69, D=40-54, F=<40",
+                                                          style = "cursor: help; opacity: 0.8;",
+                                                          icon("info-circle")
+                                                      )
+                                                  ),
                                                   tags$h2(textOutput("avg_quality_score_text", inline = TRUE),
                                                           style = "margin: 5px 0;"),
                                                   uiOutput("avg_quality_grade_badge")
@@ -1955,7 +1976,17 @@ ui <- dashboardPage(
                                                   class = "kpi-card",
                                                   style = "background: #f8f9fa; padding: 20px; border-radius: 8px;
                                                            text-align: center; border: 1px solid #dee2e6;",
-                                                  tags$p("Avg Auction Tail", class = "text-muted", style = "margin-bottom: 5px;"),
+                                                  tags$div(
+                                                      style = "display: flex; align-items: center; justify-content: center; gap: 5px;",
+                                                      tags$p("Avg Auction Tail", class = "text-muted", style = "margin-bottom: 0;"),
+                                                      tags$span(
+                                                          `data-toggle` = "tooltip",
+                                                          `data-placement` = "top",
+                                                          title = "Spread between highest accepted yield and average yield. Lower tail = tighter pricing and stronger consensus. <3bps=Tight, 3-6bps=Normal, >6bps=Wide",
+                                                          style = "cursor: help;",
+                                                          icon("info-circle", class = "text-muted")
+                                                      )
+                                                  ),
                                                   tags$h2(textOutput("avg_tail_text", inline = TRUE),
                                                           style = "margin: 5px 0; color: #1B3A6B;"),
                                                   tags$span(textOutput("tail_interpretation", inline = TRUE),
@@ -1967,7 +1998,17 @@ ui <- dashboardPage(
                                                   class = "kpi-card",
                                                   style = "background: #f8f9fa; padding: 20px; border-radius: 8px;
                                                            text-align: center; border: 1px solid #dee2e6;",
-                                                  tags$p("Institutional Participation", class = "text-muted", style = "margin-bottom: 5px;"),
+                                                  tags$div(
+                                                      style = "display: flex; align-items: center; justify-content: center; gap: 5px;",
+                                                      tags$p("Non-Competitive %", class = "text-muted", style = "margin-bottom: 0;"),
+                                                      tags$span(
+                                                          `data-toggle` = "tooltip",
+                                                          `data-placement` = "top",
+                                                          title = "Percentage of allocation to non-competitive (standing order) bids, typically from large institutions with pre-committed demand. Higher = more stable demand base.",
+                                                          style = "cursor: help;",
+                                                          icon("info-circle", class = "text-muted")
+                                                      )
+                                                  ),
                                                   tags$h2(textOutput("avg_institutional_text", inline = TRUE),
                                                           style = "margin: 5px 0; color: #1B3A6B;"),
                                                   tags$span(textOutput("institutional_interpretation", inline = TRUE),
@@ -1979,7 +2020,17 @@ ui <- dashboardPage(
                                                   class = "kpi-card",
                                                   style = "background: #f8f9fa; padding: 20px; border-radius: 8px;
                                                            text-align: center; border: 1px solid #dee2e6;",
-                                                  tags$p("Avg Concession", class = "text-muted", style = "margin-bottom: 5px;"),
+                                                  tags$div(
+                                                      style = "display: flex; align-items: center; justify-content: center; gap: 5px;",
+                                                      tags$p("Avg Concession", class = "text-muted", style = "margin-bottom: 0;"),
+                                                      tags$span(
+                                                          `data-toggle` = "tooltip",
+                                                          `data-placement` = "top",
+                                                          title = "Difference between auction clearing yield and pre-auction secondary market yield. Positive = weak demand (discount), Negative = strong demand (premium). Normal range: +/-5 bps.",
+                                                          style = "cursor: help;",
+                                                          icon("info-circle", class = "text-muted")
+                                                      )
+                                                  ),
                                                   tags$h2(textOutput("avg_concession_text", inline = TRUE),
                                                           style = "margin: 5px 0; color: #1B3A6B;"),
                                                   tags$span(textOutput("concession_interpretation", inline = TRUE),
@@ -1990,12 +2041,19 @@ ui <- dashboardPage(
 
                                    tags$hr(style = "margin: 20px 0;"),
 
-                                   # Charts Row
+                                   # Charts Row - updated to use DT for heatmap with highlighting
                                    fluidRow(
                                        column(6,
-                                              tags$h5("Auction Quality by Bond",
-                                                      style = "color: #1B3A6B; font-weight: bold;"),
-                                              plotOutput("auction_quality_heatmap", height = "350px")
+                                              tags$div(
+                                                  style = "display: flex; align-items: center; gap: 8px; margin-bottom: 10px;",
+                                                  tags$h5("Auction Quality by Bond",
+                                                          style = "color: #1B3A6B; font-weight: bold; margin: 0;"),
+                                                  tags$span(
+                                                      style = "font-size: 0.85em; color: #666; font-style: italic;",
+                                                      "(Selected bonds highlighted)"
+                                                  )
+                                              ),
+                                              DT::DTOutput("auction_quality_heatmap_dt", height = "350px")
                                        ),
                                        column(6,
                                               tags$h5("Auction Concession Trend",
