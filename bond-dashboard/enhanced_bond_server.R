@@ -6654,6 +6654,45 @@ server <- function(input, output, session) {
                 } else {
                     message(sprintf("  ✓ %.0f%% of concessions within ±50 bps (normal)", pct_in_range))
                 }
+
+                # Per-bond concession breakdown for diagnosis
+                message("\n  Per-bond concession breakdown (most recent auction per bond):")
+                per_bond_sample <- auction_data %>%
+                    dplyr::filter(!is.na(auction_concession_bps)) %>%
+                    dplyr::group_by(bond) %>%
+                    dplyr::slice_max(offer_date, n = 1) %>%
+                    dplyr::ungroup() %>%
+                    dplyr::select(dplyr::any_of(c("bond", "offer_date", "clearing_yield",
+                                                   "pre_auction_ytm", "auction_concession_bps",
+                                                   "auction_concession_bps_raw", "concession_is_outlier")))
+
+                if (nrow(per_bond_sample) > 0) {
+                    for (i in 1:min(10, nrow(per_bond_sample))) {
+                        s <- per_bond_sample[i, ]
+                        raw_val <- if ("auction_concession_bps_raw" %in% names(s)) s$auction_concession_bps_raw else s$auction_concession_bps
+                        outlier_flag <- if ("concession_is_outlier" %in% names(s) && !is.na(s$concession_is_outlier) && s$concession_is_outlier) " [OUTLIER-CAPPED]" else ""
+                        message(sprintf("    %s (%s): clearing=%.3f%%, pre_auction=%.3f%% → concession=%+.1f bps%s",
+                                        s$bond, format(s$offer_date, "%Y-%m-%d"),
+                                        ifelse(is.na(s$clearing_yield), NA, s$clearing_yield),
+                                        ifelse(is.na(s$pre_auction_ytm), NA, s$pre_auction_ytm),
+                                        s$auction_concession_bps,
+                                        outlier_flag))
+                    }
+                }
+
+                # Check yield units
+                if ("clearing_yield" %in% names(auction_data)) {
+                    avg_clearing <- mean(auction_data$clearing_yield, na.rm = TRUE)
+                    message(sprintf("\n  Yield units check: avg clearing yield = %.3f", avg_clearing))
+                    if (avg_clearing < 0.2) {
+                        message("    ⚠️ WARNING: Yields appear to be in decimal form (e.g., 0.08 = 8%%)!")
+                        message("    Expected: percent form (e.g., 8.0 = 8%%)")
+                    } else if (avg_clearing > 5 && avg_clearing < 20) {
+                        message("    ✓ Yields appear to be in percent form (normal)")
+                    } else {
+                        message("    ⚠️ WARNING: Unusual yield range - please verify data")
+                    }
+                }
             }
         } else {
             message("\n⚠️ auction_concession_bps column not found - check data pipeline")
@@ -6935,22 +6974,43 @@ server <- function(input, output, session) {
             selection = 'none'
         )
 
-        # Apply highlighting to selected bonds
-        if (length(selected_rows) > 0) {
-            dt <- dt %>%
-                DT::formatStyle(
-                    'Bond',
-                    target = 'row',
-                    backgroundColor = DT::styleRow(
-                        selected_rows,
-                        '#1B3A6B15'
+        # Apply highlighting to selected bonds using styleEqual
+        # Note: DT::styleRow doesn't work with formatStyle, must use styleEqual with actual values
+        if (length(selected_bonds) > 0) {
+            # Get the bond names that are both selected AND in the current data
+            bonds_to_highlight <- intersect(selected_bonds, display_data$Bond)
+
+            if (length(bonds_to_highlight) > 0) {
+                message(sprintf("[AUCTION QUALITY TABLE] Highlighting bonds: %s",
+                                paste(bonds_to_highlight, collapse = ", ")))
+
+                dt <- dt %>%
+                    # Row background highlighting for selected bonds
+                    DT::formatStyle(
+                        'Bond',
+                        target = 'row',
+                        backgroundColor = DT::styleEqual(
+                            bonds_to_highlight,
+                            rep('#1B3A6B15', length(bonds_to_highlight))
+                        )
+                    ) %>%
+                    # Bold font and left border for Bond column
+                    DT::formatStyle(
+                        'Bond',
+                        fontWeight = DT::styleEqual(
+                            bonds_to_highlight,
+                            rep('bold', length(bonds_to_highlight))
+                        ),
+                        color = DT::styleEqual(
+                            bonds_to_highlight,
+                            rep('#1B3A6B', length(bonds_to_highlight))
+                        ),
+                        borderLeft = DT::styleEqual(
+                            bonds_to_highlight,
+                            rep('4px solid #1B3A6B', length(bonds_to_highlight))
+                        )
                     )
-                ) %>%
-                DT::formatStyle(
-                    columns = 1,  # Bond column
-                    fontWeight = DT::styleRow(selected_rows, 'bold'),
-                    borderLeft = DT::styleRow(selected_rows, '4px solid #1B3A6B')
-                )
+            }
         }
 
         # Add color bars to Quality column
@@ -6989,9 +7049,19 @@ server <- function(input, output, session) {
         content = function(file) {
             req(enhanced_auction_data())
 
-            # Create combined plot
-            p1 <- create_auction_quality_heatmap(enhanced_auction_data())
-            p2 <- create_concession_trend_chart(enhanced_auction_data())
+            # Get selected bonds from auction predictions (same as app display)
+            selected_bonds <- if (!is.null(input$auction_bonds_select)) {
+                input$auction_bonds_select
+            } else {
+                character(0)
+            }
+
+            message(sprintf("[DOWNLOAD REPORT] Generating with selected bonds: %s",
+                            if(length(selected_bonds) > 0) paste(selected_bonds, collapse = ", ") else "none"))
+
+            # Create combined plot with selected bonds highlighting (matches app)
+            p1 <- create_auction_quality_heatmap(enhanced_auction_data(), selected_bonds)
+            p2 <- create_concession_trend_chart(enhanced_auction_data(), selected_bonds)
 
             combined <- gridExtra::arrangeGrob(
                 p1, p2,

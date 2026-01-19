@@ -599,7 +599,7 @@ generate_auction_pattern_analysis <- function(data, params, selected_bonds = cha
             panel.grid.minor = element_blank(),
             panel.grid.major.x = element_blank(),
             legend.position = "none",
-            plot.margin = margin(10, 35, 10, 10)  # Extra right margin for labels
+            plot.margin = margin(t = 10, r = 35, b = 10, l = 10, unit = "pt")  # Extra right margin for labels
         )
 
     # Combine with patchwork if available, otherwise use arrangeGrob
@@ -1772,9 +1772,10 @@ generate_btc_decomposition_plot <- function(data, params) {
 #' @title Create Auction Quality Heatmap
 #' @description Creates a heatmap showing auction quality metrics by bond
 #' @param auction_data Enhanced auction data with quality metrics
+#' @param selected_bonds Character vector of bonds to highlight (optional)
 #' @return ggplot object
 #' @export
-create_auction_quality_heatmap <- function(auction_data) {
+create_auction_quality_heatmap <- function(auction_data, selected_bonds = character(0)) {
 
     # Aggregate by bond - latest 6 months
     six_months_ago <- Sys.Date() - 180
@@ -1804,7 +1805,12 @@ create_auction_quality_heatmap <- function(auction_data) {
             avg_quality = if ("auction_quality_score" %in% names(.)) mean(auction_quality_score, na.rm = TRUE) else NA_real_,
             .groups = "drop"
         ) %>%
-        filter(n_auctions >= 2)  # Minimum 2 auctions for reliability
+        filter(n_auctions >= 2) %>%  # Minimum 2 auctions for reliability
+        mutate(
+            # Add selection flag for ordering and highlighting
+            is_selected = bond %in% selected_bonds
+        ) %>%
+        arrange(desc(is_selected), desc(avg_quality))
 
     if (nrow(bond_quality) == 0) {
         return(
@@ -1855,16 +1861,24 @@ create_auction_quality_heatmap <- function(auction_data) {
             )
         )
 
-    # Order bonds by quality score
+    # Order bonds: selected first (sorted by quality), then rest by quality
     bond_order <- bond_quality %>%
-        arrange(desc(avg_quality)) %>%
+        arrange(desc(is_selected), desc(avg_quality)) %>%
         pull(bond)
 
     heatmap_data <- heatmap_data %>%
         mutate(bond = factor(bond, levels = rev(bond_order)))
 
+    # Build subtitle based on selection
+    subtitle_text <- if (length(selected_bonds) > 0) {
+        sprintf("Last 6 months | %d bonds with 2+ auctions | Selected: %s",
+                nrow(bond_quality), paste(selected_bonds, collapse = ", "))
+    } else {
+        sprintf("Last 6 months | %d bonds with 2+ auctions", nrow(bond_quality))
+    }
+
     # Build heatmap
-    ggplot(heatmap_data, aes(x = metric, y = bond, fill = value_normalized)) +
+    p <- ggplot(heatmap_data, aes(x = metric, y = bond, fill = value_normalized)) +
         geom_tile(color = "white", linewidth = 1) +
         geom_text(aes(label = display_value), size = 3.2, fontface = "bold") +
         scale_fill_gradientn(
@@ -1877,7 +1891,7 @@ create_auction_quality_heatmap <- function(auction_data) {
         ) +
         labs(
             title = "Auction Quality Metrics by Bond",
-            subtitle = sprintf("Last 6 months | %d bonds with 2+ auctions", nrow(bond_quality)),
+            subtitle = subtitle_text,
             x = NULL,
             y = NULL
         ) +
@@ -1888,8 +1902,27 @@ create_auction_quality_heatmap <- function(auction_data) {
             axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
             axis.text.y = element_text(size = 10),
             legend.position = "right",
-            panel.grid = element_blank()
+            panel.grid = element_blank(),
+            plot.margin = margin(t = 10, r = 10, b = 10, l = 10, unit = "pt")
         )
+
+    # Add border highlighting for selected bonds
+    if (length(selected_bonds) > 0) {
+        selected_in_data <- intersect(selected_bonds, bond_quality$bond)
+        if (length(selected_in_data) > 0) {
+            highlight_data <- heatmap_data %>%
+                filter(bond %in% selected_in_data)
+
+            p <- p +
+                geom_tile(
+                    data = highlight_data,
+                    aes(x = metric, y = bond),
+                    fill = NA, color = "#1B3A6B", linewidth = 1.5
+                )
+        }
+    }
+
+    return(p)
 }
 
 #' @title Create Concession Trend Chart
@@ -1927,13 +1960,18 @@ create_concession_trend_chart <- function(auction_data, selected_bonds = charact
         )
     }
 
-    # Add selection flags for highlighting
+    # Add selection flags for highlighting and check for outliers
     concession_data <- concession_data %>%
         mutate(
             is_selected = bond %in% selected_bonds,
             point_size = ifelse(is_selected, 4, 2),
-            point_alpha = ifelse(is_selected, 1.0, 0.5)
+            point_alpha = ifelse(is_selected, 1.0, 0.5),
+            # Check if concession was capped (outlier column may exist from data processor)
+            was_capped = if ("concession_is_outlier" %in% names(.)) concession_is_outlier else FALSE
         )
+
+    # Count capped values for caption
+    n_capped <- sum(concession_data$was_capped, na.rm = TRUE)
 
     # Calculate rolling average - focus on selected bonds if any
     if (length(selected_bonds) > 0 && sum(concession_data$is_selected) >= 3) {
@@ -2030,9 +2068,28 @@ create_concession_trend_chart <- function(auction_data, selected_bonds = charact
                  label = "Weak demand\n(discount)", color = "#D32F2F",
                  size = 2.5, hjust = 0, fontface = "italic")
 
-    # Labels and scales
+    # Mark outliers that were capped with X markers
+    if (n_capped > 0) {
+        capped_points <- concession_data %>% filter(was_capped)
+        p <- p +
+            geom_point(
+                data = capped_points,
+                aes(x = offer_date, y = auction_concession_bps),
+                shape = 4, size = 3, color = "#D32F2F", stroke = 2
+            )
+    }
+
+    # Build caption with outlier note if applicable
+    caption_text <- "Green zone = Strong (below market) | Red zone = Weak (premium required)"
+    if (n_capped > 0) {
+        caption_text <- paste0(caption_text, sprintf(" | %d outlier(s) capped at ±100 bps (marked with X)", n_capped))
+    }
+
+    # Labels and scales with fixed y-axis limits
     p <- p +
         scale_y_continuous(
+            limits = c(-120, 120),  # Fixed limits to prevent extreme outliers from distorting view
+            breaks = seq(-100, 100, by = 50),
             labels = function(x) sprintf("%+.0f", x)
         ) +
         scale_x_date(
@@ -2046,7 +2103,7 @@ create_concession_trend_chart <- function(auction_data, selected_bonds = charact
             subtitle = subtitle_text,
             x = NULL,
             y = "Concession (bps)",
-            caption = "Green zone = Strong (below market) | Red zone = Weak (premium required)"
+            caption = caption_text
         ) +
         theme_minimal(base_size = 11) +
         theme(
@@ -2055,7 +2112,8 @@ create_concession_trend_chart <- function(auction_data, selected_bonds = charact
             plot.caption = element_text(size = 8, color = "grey50", hjust = 0),
             legend.position = "bottom",
             legend.title = element_blank(),
-            axis.text.x = element_text(angle = 45, hjust = 1)
+            axis.text.x = element_text(angle = 45, hjust = 1),
+            plot.margin = margin(t = 10, r = 10, b = 10, l = 10, unit = "pt")
         )
 
     return(p)

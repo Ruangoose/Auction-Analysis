@@ -3572,10 +3572,22 @@ calculate_enhanced_auction_metrics <- function(auction_data, bond_data = NULL) {
             enhanced_data <- enhanced_data %>%
                 left_join(pre_auction_ytm, by = c("bond", "offer_date")) %>%
                 mutate(
-                    auction_concession_bps = ifelse(
+                    # Raw concession calculation
+                    auction_concession_bps_raw = ifelse(
                         !is.na(clearing_yield) & !is.na(pre_auction_ytm),
                         (clearing_yield - pre_auction_ytm) * 100,
                         NA_real_
+                    ),
+
+                    # Flag outliers (|concession| > 100 bps is suspicious)
+                    concession_is_outlier = !is.na(auction_concession_bps_raw) & abs(auction_concession_bps_raw) > 100,
+
+                    # Cap extreme values at ±100 bps for display/analysis
+                    auction_concession_bps = case_when(
+                        is.na(auction_concession_bps_raw) ~ NA_real_,
+                        auction_concession_bps_raw > 100 ~ 100,
+                        auction_concession_bps_raw < -100 ~ -100,
+                        TRUE ~ auction_concession_bps_raw
                     ),
 
                     concession_category = case_when(
@@ -3588,6 +3600,29 @@ calculate_enhanced_auction_metrics <- function(auction_data, bond_data = NULL) {
                         TRUE ~ "Unknown"
                     )
                 )
+
+            # Report outliers in console
+            outlier_count <- sum(enhanced_data$concession_is_outlier, na.rm = TRUE)
+            if (outlier_count > 0) {
+                outliers <- enhanced_data %>%
+                    filter(concession_is_outlier) %>%
+                    select(bond, offer_date, clearing_yield, pre_auction_ytm, auction_concession_bps_raw) %>%
+                    arrange(desc(abs(auction_concession_bps_raw)))
+
+                message("\n=== CONCESSION OUTLIERS DETECTED ===")
+                message(sprintf("  %d auctions have |concession| > 100 bps (capped at ±100):", outlier_count))
+                for (i in 1:min(5, nrow(outliers))) {
+                    o <- outliers[i, ]
+                    message(sprintf("    %s (%s): clearing=%.3f%%, pre-auction=%.3f%% → raw concession=%+.1f bps",
+                                    o$bond, format(o$offer_date, "%Y-%m-%d"),
+                                    o$clearing_yield, o$pre_auction_ytm, o$auction_concession_bps_raw))
+                }
+                if (nrow(outliers) > 5) {
+                    message(sprintf("    ... and %d more outliers", nrow(outliers) - 5))
+                }
+                message("  These values have been capped at ±100 bps. Please investigate source data.")
+                message("=====================================\n")
+            }
         }
     } else {
         # Add placeholder columns if no secondary market data
