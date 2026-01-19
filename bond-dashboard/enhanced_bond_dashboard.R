@@ -251,6 +251,32 @@ ui <- dashboardPage(
                     100% { transform: rotate(360deg); }
                 }
 
+                /* ════════════════════════════════════════════════════════════════════
+                   CHART WIDTH FIX - Ensure all plots fill their containers
+                   This prevents charts from being too narrow with empty space
+                   ════════════════════════════════════════════════════════════════════ */
+                .shiny-plot-output {
+                    width: 100% !important;
+                    max-width: 100% !important;
+                }
+
+                .shiny-plot-output img {
+                    width: 100% !important;
+                    max-width: 100% !important;
+                }
+
+                /* Ensure plotOutput containers expand */
+                .box-body .shiny-plot-output,
+                .panel-body .shiny-plot-output,
+                .well .shiny-plot-output {
+                    width: 100% !important;
+                }
+
+                /* Technical Analysis specific chart panels */
+                .panel .shiny-plot-output {
+                    width: 100% !important;
+                }
+
                 /* Skeleton screens */
                 .skeleton {
                     background: linear-gradient(90deg, #1a1a2e 25%, #2a2a3e 50%, #1a1a2e 75%);
