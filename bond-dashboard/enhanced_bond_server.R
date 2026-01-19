@@ -771,6 +771,18 @@ server <- function(input, output, session) {
         # Get the full technical data
         data <- filtered_data_with_technicals()
 
+        # ════════════════════════════════════════════════════════════════════════
+        # CRITICAL FIX: Filter out matured bonds for consistent 17 active bonds
+        # Same filtering as Risk Analytics for consistency across all sections
+        # ════════════════════════════════════════════════════════════════════════
+        known_matured_bonds <- c("R157", "R186", "R197", "R203", "R204", "R207", "R208", "R212", "R2023")
+        found_matured <- intersect(unique(data$bond), known_matured_bonds)
+        if (length(found_matured) > 0) {
+            message(sprintf("[Technical Analysis] Excluding matured bonds: %s",
+                           paste(found_matured, collapse = ", ")))
+            data <- data %>% filter(!bond %in% known_matured_bonds)
+        }
+
         # Get latest data per bond (most recent date for each bond)
         latest_data <- data %>%
             group_by(bond) %>%
@@ -4623,7 +4635,7 @@ server <- function(input, output, session) {
     })
 
     # ════════════════════════════════════════════════════════════════════════
-    # SIGNAL HISTORY MINI CHART - Shows RSI history over 30 days
+    # SIGNAL HISTORY CHART - Shows RSI history over 60 days (IMPROVED SIZE)
     # ════════════════════════════════════════════════════════════════════════
     output$signal_history_mini <- renderUI({
         req(input$tech_bond_select)
@@ -4640,19 +4652,23 @@ server <- function(input, output, session) {
                 tags$h6(
                     style = "margin: 0;",
                     icon("history"),
-                    " Signal History (30d)"
+                    " RSI Signal History (60 days)"
                 )
             ),
 
             tags$div(
                 class = "panel-body",
                 style = "padding: 10px;",
-                plotOutput("signal_history_sparkline", height = "100px")
+                plotOutput("signal_history_sparkline", height = "180px"),  # INCREASED from 100px
+                tags$div(
+                    style = "font-size: 10px; color: #888; margin-top: 5px; text-align: center;",
+                    HTML("&#x1F7E2; Oversold (buy zone) | &#x1F534; Overbought (sell zone)")
+                )
             )
         )
     })
 
-    # Signal History Sparkline Plot
+    # Signal History Sparkline Plot - ENHANCED with 60 days and zone shading
     output$signal_history_sparkline <- renderPlot({
         req(input$tech_bond_select, filtered_data_with_technicals())
 
@@ -4660,13 +4676,15 @@ server <- function(input, output, session) {
         data <- filtered_data_with_technicals() %>%
             filter(bond == !!bond) %>%
             arrange(date) %>%
-            tail(30) %>%
+            tail(60) %>%  # INCREASED from 30 to 60 days
             mutate(
                 signal_color = case_when(
                     rsi_14 > 70 ~ "overbought",
                     rsi_14 < 30 ~ "oversold",
                     TRUE ~ "neutral"
-                )
+                ),
+                # Detect signal changes
+                signal_change = signal_color != lag(signal_color, default = first(signal_color))
             )
 
         if(nrow(data) < 5 || all(is.na(data$rsi_14))) {
@@ -4678,31 +4696,187 @@ server <- function(input, output, session) {
             )
         }
 
+        # Get latest RSI for annotation
+        latest_rsi <- tail(data$rsi_14[!is.na(data$rsi_14)], 1)
+
         ggplot(data, aes(x = date, y = rsi_14)) +
-            # Overbought/oversold zones
+            # Zone shading - IMPROVED VISIBILITY
+            annotate("rect",
+                    xmin = min(data$date, na.rm = TRUE),
+                    xmax = max(data$date, na.rm = TRUE),
+                    ymin = 70, ymax = 100,
+                    fill = "#FFCDD2", alpha = 0.5) +  # Light red - overbought
+            annotate("rect",
+                    xmin = min(data$date, na.rm = TRUE),
+                    xmax = max(data$date, na.rm = TRUE),
+                    ymin = 0, ymax = 30,
+                    fill = "#C8E6C9", alpha = 0.5) +  # Light green - oversold
+
+            # Zone lines
             geom_hline(yintercept = 30, linetype = "dashed",
-                      color = "#388E3C", alpha = 0.5, size = 0.5) +
+                      color = "#388E3C", alpha = 0.7, linewidth = 0.6) +
             geom_hline(yintercept = 70, linetype = "dashed",
-                      color = "#D32F2F", alpha = 0.5, size = 0.5) +
+                      color = "#D32F2F", alpha = 0.7, linewidth = 0.6) +
             geom_hline(yintercept = 50, linetype = "dotted",
-                      color = "#9E9E9E", alpha = 0.5, size = 0.5) +
-            # RSI line
-            geom_line(color = "#1B3A6B", size = 0.8, na.rm = TRUE) +
-            # Points colored by signal
-            geom_point(aes(color = signal_color), size = 1.5, na.rm = TRUE) +
+                      color = "#9E9E9E", alpha = 0.5, linewidth = 0.5) +
+
+            # RSI line - thicker for visibility
+            geom_line(color = "#1B3A6B", linewidth = 1, na.rm = TRUE) +
+
+            # Points colored by signal - larger for visibility
+            geom_point(aes(color = signal_color), size = 2, na.rm = TRUE) +
+
+            # Highlight signal changes
+            geom_point(data = data %>% filter(signal_change),
+                      aes(color = signal_color), size = 3.5, shape = 18, na.rm = TRUE) +
+
+            # Current value annotation
+            geom_point(data = tail(data, 1),
+                      color = "#1B3A6B", size = 3, na.rm = TRUE) +
+            geom_text(data = tail(data, 1),
+                     aes(label = sprintf("%.0f", rsi_14)),
+                     hjust = -0.3, vjust = 0.5, size = 3.5, fontface = "bold",
+                     color = "#1B3A6B", na.rm = TRUE) +
+
             scale_color_manual(
                 values = c("overbought" = "#D32F2F",
                           "oversold" = "#388E3C",
                           "neutral" = "#1B3A6B"),
                 guide = "none"
             ) +
-            scale_y_continuous(limits = c(0, 100), breaks = c(30, 50, 70)) +
-            theme_void() +
+            scale_y_continuous(limits = c(0, 100),
+                             breaks = c(0, 30, 50, 70, 100),
+                             labels = c("0", "30\nOversold", "50", "70\nOverbought", "100")) +
+            scale_x_date(date_breaks = "2 weeks", date_labels = "%b %d") +
+            labs(x = NULL, y = NULL) +
+            theme_minimal() +
             theme(
-                axis.text.y = element_text(size = 8, color = "#666666"),
+                axis.text.y = element_text(size = 9, color = "#666666"),
+                axis.text.x = element_text(size = 8, color = "#888888"),
+                panel.grid.major.y = element_line(color = "#E0E0E0", linewidth = 0.3),
+                panel.grid.minor = element_blank(),
+                panel.grid.major.x = element_blank(),
+                plot.margin = ggplot2::margin(t = 5, r = 15, b = 5, l = 5, unit = "pt")
+            )
+    }, bg = "transparent")
+
+    # ════════════════════════════════════════════════════════════════════════
+    # YIELD CHART WITH TECHNICAL LEVELS - Shows yield with BB bands and MAs
+    # ════════════════════════════════════════════════════════════════════════
+    output$yield_technicals_chart <- renderPlot({
+        req(input$tech_bond_select, filtered_data_with_technicals())
+
+        bond <- input$tech_bond_select
+        data <- filtered_data_with_technicals() %>%
+            filter(bond == !!bond) %>%
+            arrange(date) %>%
+            tail(90)  # Last 90 days
+
+        if(nrow(data) < 10) {
+            return(
+                ggplot() +
+                    annotate("text", x = 0.5, y = 0.5, label = "Insufficient data",
+                            color = "#666", size = 4) +
+                    theme_void()
+            )
+        }
+
+        # Calculate support/resistance from recent data
+        support <- min(data$yield_to_maturity, na.rm = TRUE)
+        resistance <- max(data$yield_to_maturity, na.rm = TRUE)
+        current <- tail(data$yield_to_maturity, 1)
+
+        # Get latest values for annotation
+        latest <- tail(data, 1)
+
+        ggplot(data, aes(x = date, y = yield_to_maturity)) +
+            # Bollinger Bands - if available
+            {
+                if ("bb_lower" %in% names(data) && !all(is.na(data$bb_lower))) {
+                    geom_ribbon(aes(ymin = bb_lower, ymax = bb_upper),
+                               fill = "#1B3A6B", alpha = 0.1, na.rm = TRUE)
+                }
+            } +
+
+            # Moving Averages - if available
+            {
+                if ("sma_50" %in% names(data) && !all(is.na(data$sma_50))) {
+                    geom_line(aes(y = sma_50), color = "#f39c12",
+                             linewidth = 0.8, linetype = "solid", alpha = 0.8, na.rm = TRUE)
+                }
+            } +
+            {
+                if ("sma_200" %in% names(data) && !all(is.na(data$sma_200))) {
+                    geom_line(aes(y = sma_200), color = "#3498db",
+                             linewidth = 0.8, linetype = "dashed", alpha = 0.8, na.rm = TRUE)
+                }
+            } +
+
+            # Yield line
+            geom_line(color = "#1B3A6B", linewidth = 1.2, na.rm = TRUE) +
+
+            # Support/Resistance lines
+            geom_hline(yintercept = support, color = "#388E3C",
+                      linetype = "dashed", linewidth = 0.6) +
+            geom_hline(yintercept = resistance, color = "#D32F2F",
+                      linetype = "dashed", linewidth = 0.6) +
+
+            # Current point highlight
+            geom_point(data = latest, color = "#1B3A6B", size = 3) +
+
+            # Annotations for S/R levels
+            annotate("text", x = min(data$date, na.rm = TRUE), y = support,
+                    label = sprintf("Support: %.2f%%", support),
+                    hjust = 0, vjust = 1.5, size = 2.8, color = "#388E3C") +
+            annotate("text", x = min(data$date, na.rm = TRUE), y = resistance,
+                    label = sprintf("Resistance: %.2f%%", resistance),
+                    hjust = 0, vjust = -0.5, size = 2.8, color = "#D32F2F") +
+
+            scale_y_continuous(labels = function(x) paste0(sprintf("%.2f", x), "%")) +
+            scale_x_date(date_breaks = "3 weeks", date_labels = "%b %d") +
+
+            labs(
+                title = NULL,
+                subtitle = "BB bands (shaded) | SMA50 (orange) | SMA200 (blue dashed)",
+                x = NULL, y = NULL
+            ) +
+            theme_minimal() +
+            theme(
+                plot.subtitle = element_text(size = 8, color = "#888"),
+                axis.text = element_text(size = 9, color = "#666"),
+                panel.grid.minor = element_blank(),
+                panel.grid.major = element_line(color = "#E8E8E8", linewidth = 0.3),
                 plot.margin = ggplot2::margin(t = 5, r = 10, b = 5, l = 5, unit = "pt")
             )
     }, bg = "transparent")
+
+    # ════════════════════════════════════════════════════════════════════════
+    # YIELD CHART UI WRAPPER - Panel with title
+    # ════════════════════════════════════════════════════════════════════════
+    output$yield_technicals_panel <- renderUI({
+        req(input$tech_bond_select)
+
+        tags$div(
+            class = "panel panel-default",
+            style = "margin-top: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);",
+
+            tags$div(
+                class = "panel-heading",
+                style = "background-color: #37474F; color: white; padding: 8px 15px;",
+                tags$h6(
+                    style = "margin: 0;",
+                    icon("chart-line"),
+                    " Yield with Technical Levels (90 days)"
+                )
+            ),
+
+            tags$div(
+                class = "panel-body",
+                style = "padding: 10px;",
+                plotOutput("yield_technicals_chart", height = "200px")
+            )
+        )
+    })
 
     # ════════════════════════════════════════════════════════════════════════
     # TECHNICAL SUMMARY PANEL - Main panel with signal synthesis
@@ -4833,7 +5007,12 @@ server <- function(input, output, session) {
                             ),
                             tags$div(
                                 style = "font-size: 11px; color: #888;",
-                                sprintf("Confidence: %d%%", confidence_pct)
+                                sprintf("Signal Strength: %d%%", confidence_pct),
+                                tags$span(
+                                    style = sprintf("margin-left: 5px; padding: 2px 6px; background: %s; color: white; border-radius: 3px; font-size: 9px;",
+                                                   ifelse(confidence_pct >= 60, "#388E3C", ifelse(confidence_pct >= 40, "#FF9800", "#9E9E9E"))),
+                                    ifelse(confidence_pct >= 60, "Strong", ifelse(confidence_pct >= 40, "Moderate", "Weak"))
+                                )
                             )
                         )
                     )
@@ -4845,60 +5024,68 @@ server <- function(input, output, session) {
                 ),
 
                 # ═══════════════════════════════════════════════════════════════
-                # FIX 4: Component Breakdown - VISIBLE BY DEFAULT (not collapsed)
+                # Component Breakdown with Scale Context
                 # ═══════════════════════════════════════════════════════════════
                 tags$div(
                     style = "margin-top: 12px; padding: 10px; background: #FAFAFA; border-radius: 4px;",
-                    tags$strong("Component Breakdown:", style = "font-size: 12px; color: #1B3A6B;"),
+                    tags$div(
+                        style = "display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;",
+                        tags$strong("Component Breakdown:", style = "font-size: 12px; color: #1B3A6B;"),
+                        tags$span(style = "font-size: 10px; color: #999;", "Range: -25 to +30 each | Total: -100 to +100")
+                    ),
                     tags$div(
                         style = "display: flex; justify-content: space-between; margin-top: 8px; font-size: 11px;",
 
-                        # RSI
+                        # RSI (±25 scale)
                         tags$div(
-                            style = "text-align: center; flex: 1;",
+                            style = "text-align: center; flex: 1; padding: 5px; border-right: 1px solid #E0E0E0;",
                             tags$div(
-                                style = sprintf("color: %s; font-weight: bold; font-size: 14px;",
+                                style = sprintf("color: %s; font-weight: bold; font-size: 16px;",
                                                ifelse(overall_signal$components$rsi > 0, "#D32F2F",
                                                      ifelse(overall_signal$components$rsi < 0, "#388E3C", "#9E9E9E"))),
                                 sprintf("%+d", overall_signal$components$rsi)
                             ),
-                            tags$div(style = "color: #888;", "RSI")
+                            tags$div(style = "color: #666; font-size: 11px; font-weight: 500;", "RSI"),
+                            tags$div(style = "color: #AAA; font-size: 9px;", "±25")
                         ),
 
-                        # MACD
+                        # MACD (±30 scale)
                         tags$div(
-                            style = "text-align: center; flex: 1;",
+                            style = "text-align: center; flex: 1; padding: 5px; border-right: 1px solid #E0E0E0;",
                             tags$div(
-                                style = sprintf("color: %s; font-weight: bold; font-size: 14px;",
+                                style = sprintf("color: %s; font-weight: bold; font-size: 16px;",
                                                ifelse(overall_signal$components$macd > 0, "#D32F2F",
                                                      ifelse(overall_signal$components$macd < 0, "#388E3C", "#9E9E9E"))),
                                 sprintf("%+d", overall_signal$components$macd)
                             ),
-                            tags$div(style = "color: #888;", "MACD")
+                            tags$div(style = "color: #666; font-size: 11px; font-weight: 500;", "MACD"),
+                            tags$div(style = "color: #AAA; font-size: 9px;", "±30")
                         ),
 
-                        # Trend
+                        # Trend (±30 scale)
                         tags$div(
-                            style = "text-align: center; flex: 1;",
+                            style = "text-align: center; flex: 1; padding: 5px; border-right: 1px solid #E0E0E0;",
                             tags$div(
-                                style = sprintf("color: %s; font-weight: bold; font-size: 14px;",
+                                style = sprintf("color: %s; font-weight: bold; font-size: 16px;",
                                                ifelse(overall_signal$components$trend > 0, "#D32F2F",
                                                      ifelse(overall_signal$components$trend < 0, "#388E3C", "#9E9E9E"))),
                                 sprintf("%+d", overall_signal$components$trend)
                             ),
-                            tags$div(style = "color: #888;", "Trend")
+                            tags$div(style = "color: #666; font-size: 11px; font-weight: 500;", "Trend"),
+                            tags$div(style = "color: #AAA; font-size: 9px;", "±30")
                         ),
 
-                        # BB
+                        # BB (±15 scale)
                         tags$div(
-                            style = "text-align: center; flex: 1;",
+                            style = "text-align: center; flex: 1; padding: 5px;",
                             tags$div(
-                                style = sprintf("color: %s; font-weight: bold; font-size: 14px;",
+                                style = sprintf("color: %s; font-weight: bold; font-size: 16px;",
                                                ifelse(overall_signal$components$bb > 0, "#D32F2F",
                                                      ifelse(overall_signal$components$bb < 0, "#388E3C", "#9E9E9E"))),
                                 sprintf("%+d", overall_signal$components$bb)
                             ),
-                            tags$div(style = "color: #888;", "BB")
+                            tags$div(style = "color: #666; font-size: 11px; font-weight: 500;", "BB"),
+                            tags$div(style = "color: #AAA; font-size: 9px;", "±15")
                         )
                     )
                 )

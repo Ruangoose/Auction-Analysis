@@ -1152,11 +1152,14 @@ ui <- dashboardPage(
                                                   )
                                               ),
 
-                                              # Bond Profile Card (NEW - fills white space)
+                                              # Bond Profile Card
                                               uiOutput("bond_profile_card"),
 
-                                              # Signal History Mini Chart (NEW)
-                                              uiOutput("signal_history_mini")
+                                              # Signal History Chart (60 days - IMPROVED)
+                                              uiOutput("signal_history_mini"),
+
+                                              # Yield Chart with Technical Levels (90 days - NEW)
+                                              uiOutput("yield_technicals_panel")
                                        ),
 
                                        # RIGHT COLUMN - Technical Summary Panel
