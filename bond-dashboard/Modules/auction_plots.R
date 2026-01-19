@@ -1565,18 +1565,18 @@ create_auction_quality_heatmap <- function(auction_data) {
             metric = case_when(
                 metric == "avg_btc" ~ "Bid-to-Cover",
                 metric == "avg_tail" ~ "Tail (bps)",
-                metric == "avg_inst" ~ "Institutional %",
+                metric == "avg_inst" ~ "Non-Comp %",
                 metric == "avg_concession" ~ "Concession (bps)",
                 metric == "avg_quality" ~ "Quality Score"
             ),
             metric = factor(metric, levels = c("Bid-to-Cover", "Tail (bps)",
-                                                "Institutional %", "Concession (bps)",
+                                                "Non-Comp %", "Concession (bps)",
                                                 "Quality Score")),
             # Normalize each metric to 0-100 for consistent color scale
             value_normalized = case_when(
                 metric == "Bid-to-Cover" ~ pmin(100, pmax(0, (value - 1) / 4 * 100)),
                 metric == "Tail (bps)" ~ pmax(0, 100 - value * 10),  # Inverted (lower is better)
-                metric == "Institutional %" ~ pmin(100, value * 2.5),
+                metric == "Non-Comp %" ~ pmin(100, value * 2.5),
                 metric == "Concession (bps)" ~ pmax(0, 100 - abs(value) * 10),  # Closer to 0 is better
                 metric == "Quality Score" ~ ifelse(is.na(value), 50, value),
                 TRUE ~ 50
@@ -1586,7 +1586,7 @@ create_auction_quality_heatmap <- function(auction_data) {
                 is.na(value) ~ "—",
                 metric == "Bid-to-Cover" ~ sprintf("%.1fx", value),
                 metric == "Tail (bps)" ~ sprintf("%.0f", value),
-                metric == "Institutional %" ~ sprintf("%.0f%%", value),
+                metric == "Non-Comp %" ~ sprintf("%.0f%%", value),
                 metric == "Concession (bps)" ~ sprintf("%+.0f", value),
                 metric == "Quality Score" ~ sprintf("%.0f", value),
                 TRUE ~ sprintf("%.1f", value)
@@ -1633,9 +1633,10 @@ create_auction_quality_heatmap <- function(auction_data) {
 #' @title Create Concession Trend Chart
 #' @description Creates a chart showing auction concession trends over time
 #' @param auction_data Enhanced auction data with concession metrics
+#' @param selected_bonds Character vector of bonds to highlight (optional)
 #' @return ggplot object
 #' @export
-create_concession_trend_chart <- function(auction_data) {
+create_concession_trend_chart <- function(auction_data, selected_bonds = character(0)) {
 
     # Check for required columns
     if (!"auction_concession_bps" %in% names(auction_data)) {
@@ -1664,19 +1665,47 @@ create_concession_trend_chart <- function(auction_data) {
         )
     }
 
-    # Calculate rolling average
+    # Add selection flags for highlighting
     concession_data <- concession_data %>%
-        arrange(offer_date) %>%
         mutate(
-            rolling_avg = zoo::rollapply(auction_concession_bps, 5, mean,
-                                          fill = NA, align = "right")
+            is_selected = bond %in% selected_bonds,
+            point_size = ifelse(is_selected, 4, 2),
+            point_alpha = ifelse(is_selected, 1.0, 0.5)
         )
+
+    # Calculate rolling average - focus on selected bonds if any
+    if (length(selected_bonds) > 0 && sum(concession_data$is_selected) >= 3) {
+        rolling_data <- concession_data %>%
+            filter(is_selected) %>%
+            arrange(offer_date) %>%
+            mutate(
+                rolling_avg = zoo::rollapply(auction_concession_bps,
+                                              min(5, n()), mean,
+                                              fill = NA, align = "right")
+            )
+    } else {
+        rolling_data <- concession_data %>%
+            arrange(offer_date) %>%
+            mutate(
+                rolling_avg = zoo::rollapply(auction_concession_bps, 5, mean,
+                                              fill = NA, align = "right")
+            )
+    }
 
     # Get date range for annotations
     min_date <- min(concession_data$offer_date)
     max_date <- max(concession_data$offer_date)
 
-    ggplot(concession_data, aes(x = offer_date)) +
+    # Build subtitle based on selection
+    subtitle_text <- if (length(selected_bonds) > 0) {
+        paste0("Highlighted: ", paste(selected_bonds, collapse = ", "),
+               " | Line = rolling avg")
+    } else {
+        "Clearing yield vs pre-auction secondary market | Line = 5-auction rolling avg"
+    }
+
+    # Create base plot
+    p <- ggplot() +
         # Zero reference line
         geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
 
@@ -1684,19 +1713,65 @@ create_concession_trend_chart <- function(auction_data) {
         annotate("rect", xmin = min_date, xmax = max_date,
                  ymin = -Inf, ymax = -5, fill = "#C8E6C9", alpha = 0.3) +
         annotate("rect", xmin = min_date, xmax = max_date,
-                 ymin = 5, ymax = Inf, fill = "#FFCDD2", alpha = 0.3) +
+                 ymin = 5, ymax = Inf, fill = "#FFCDD2", alpha = 0.3)
 
-        # Individual auction points
-        geom_point(aes(y = auction_concession_bps, color = bond),
-                   size = 2.5, alpha = 0.7) +
+    # If we have selected bonds, layer the visualization
+    if (length(selected_bonds) > 0) {
+        # Non-selected bonds in background (faded)
+        non_selected <- concession_data %>% filter(!is_selected)
+        if (nrow(non_selected) > 0) {
+            p <- p + geom_point(
+                data = non_selected,
+                aes(x = offer_date, y = auction_concession_bps),
+                color = "grey70", size = 1.5, alpha = 0.4
+            )
+        }
 
-        # Rolling average line
-        geom_line(aes(y = rolling_avg), color = "#1B3A6B", linewidth = 1.2,
-                  na.rm = TRUE) +
+        # Selected bonds in foreground (emphasized)
+        selected <- concession_data %>% filter(is_selected)
+        if (nrow(selected) > 0) {
+            p <- p +
+                geom_line(
+                    data = selected,
+                    aes(x = offer_date, y = auction_concession_bps,
+                        color = bond, group = bond),
+                    linewidth = 1.0, alpha = 0.7
+                ) +
+                geom_point(
+                    data = selected,
+                    aes(x = offer_date, y = auction_concession_bps, color = bond),
+                    size = 4, alpha = 1.0
+                )
+        }
+    } else {
+        # No selection - show all bonds equally
+        p <- p + geom_point(
+            data = concession_data,
+            aes(x = offer_date, y = auction_concession_bps, color = bond),
+            size = 2.5, alpha = 0.7
+        )
+    }
 
-        # Labels
+    # Add rolling average line
+    p <- p + geom_line(
+        data = rolling_data %>% filter(!is.na(rolling_avg)),
+        aes(x = offer_date, y = rolling_avg),
+        color = "#1B3A6B", linewidth = 1.5, linetype = "solid"
+    )
+
+    # Add interpretation annotations
+    p <- p +
+        annotate("text", x = min_date + 10, y = -15,
+                 label = "Strong demand\n(premium)", color = "#388E3C",
+                 size = 2.5, hjust = 0, fontface = "italic") +
+        annotate("text", x = min_date + 10, y = 15,
+                 label = "Weak demand\n(discount)", color = "#D32F2F",
+                 size = 2.5, hjust = 0, fontface = "italic")
+
+    # Labels and scales
+    p <- p +
         scale_y_continuous(
-            labels = function(x) sprintf("%+d bps", x)
+            labels = function(x) sprintf("%+.0f", x)
         ) +
         scale_x_date(
             date_breaks = "2 months",
@@ -1706,7 +1781,7 @@ create_concession_trend_chart <- function(auction_data) {
 
         labs(
             title = "Auction Concession Trend",
-            subtitle = "Clearing yield vs pre-auction secondary market | Line = 5-auction rolling avg",
+            subtitle = subtitle_text,
             x = NULL,
             y = "Concession (bps)",
             caption = "Green zone = Strong (below market) | Red zone = Weak (premium required)"
@@ -1720,4 +1795,6 @@ create_concession_trend_chart <- function(auction_data) {
             legend.title = element_blank(),
             axis.text.x = element_text(angle = 45, hjust = 1)
         )
+
+    return(p)
 }

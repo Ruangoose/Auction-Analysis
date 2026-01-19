@@ -251,7 +251,7 @@ generate_ytd_issuance_table <- function(data) {
                 round(mean(auction_quality_score, na.rm = TRUE), 0) else NA_real_,
             `Avg Tail` = if ("auction_tail_bps" %in% names(.))
                 round(mean(auction_tail_bps, na.rm = TRUE), 1) else NA_real_,
-            `Inst %` = if ("non_comp_ratio" %in% names(.))
+            `Non-Comp %` = if ("non_comp_ratio" %in% names(.))
                 round(mean(non_comp_ratio, na.rm = TRUE), 0) else NA_real_,
             `Concession` = if ("auction_concession_bps" %in% names(.))
                 round(mean(auction_concession_bps, na.rm = TRUE), 1) else NA_real_,
@@ -275,7 +275,7 @@ generate_ytd_issuance_table <- function(data) {
             `Avg B2C` = round(mean(issuance_table$`Avg B2C`, na.rm = TRUE), 2),
             `Avg Quality` = round(mean(issuance_table$`Avg Quality`, na.rm = TRUE), 0),
             `Avg Tail` = round(mean(issuance_table$`Avg Tail`, na.rm = TRUE), 1),
-            `Inst %` = round(mean(issuance_table$`Inst %`, na.rm = TRUE), 0),
+            `Non-Comp %` = round(mean(issuance_table$`Non-Comp %`, na.rm = TRUE), 0),
             `Concession` = round(mean(issuance_table$`Concession`, na.rm = TRUE), 1),
             `# Bidders` = round(mean(issuance_table$`# Bidders`, na.rm = TRUE), 0),
             `First Auction` = "",
@@ -292,7 +292,7 @@ generate_ytd_issuance_table <- function(data) {
             `Avg B2C` = ifelse(is.na(`Avg B2C`), "—", sprintf("%.2fx", `Avg B2C`)),
             `Avg Quality` = ifelse(is.na(`Avg Quality`), "—", as.character(`Avg Quality`)),
             `Avg Tail` = ifelse(is.na(`Avg Tail`), "—", as.character(`Avg Tail`)),
-            `Inst %` = ifelse(is.na(`Inst %`), "—", paste0(`Inst %`, "%")),
+            `Non-Comp %` = ifelse(is.na(`Non-Comp %`), "—", paste0(`Non-Comp %`, "%")),
             `Concession` = ifelse(is.na(`Concession`), "—", sprintf("%+.1f", `Concession`)),
             `# Bidders` = ifelse(is.na(`# Bidders`), "—", as.character(`# Bidders`))
         )
