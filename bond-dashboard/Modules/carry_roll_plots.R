@@ -525,11 +525,19 @@ generate_forward_curve_plot <- function(data, params = NULL, selected_period = N
             labels = function(x) sprintf("%+.0f", x)
         )
     } else if (has_positive) {
-        # Only positive spreads - use gradient from neutral to red
+        # Positive spreads with clear neutral zone around zero (-25 to +25 bps)
+        # Green for negative (bullish), grey for near-zero (neutral), red for positive (bearish)
         color_scale <- scale_fill_gradientn(
-            colors = c("#E8F5E9", "#FFF9C4", "#FFCC80", "#EF5350", "#C62828"),
-            values = scales::rescale(c(0, 25, 100, 200, max(max_spread, 300))),
-            limits = c(0, max(max_spread, 50)),
+            colors = c(
+                "#4CAF50",   # Green for negative (if any)
+                "#A5D6A7",   # Light green
+                "#E0E0E0",   # Neutral grey for near-zero (-25 to +25 bps)
+                "#FFCC80",   # Light orange
+                "#EF5350",   # Red
+                "#B71C1C"    # Dark red for high spreads
+            ),
+            values = scales::rescale(c(-100, -25, 0, 50, 150, 350), to = c(0, 1)),
+            limits = c(min(0, min_spread), max(max_spread, 50)),
             name = "Spread\n(bps)",
             labels = function(x) sprintf("%+.0f", x),
             oob = scales::squish
