@@ -1899,13 +1899,42 @@ ui <- dashboardPage(
                                               )
                                        ),
 
-                                       # Right Column: Chart + Calendar
+                                       # Right Column: Chart + Upcoming Auctions + Calendar
                                        column(4,
                                               tags$h5("Bid-to-Cover Forecast", style = "color: #1B3A6B; font-weight: bold; margin-bottom: 10px;"),
-                                              plotOutput("auction_forecast_plot", height = "320px"),
+                                              plotOutput("auction_forecast_plot", height = "280px"),
 
-                                              # Auction Calendar Mini
-                                              uiOutput("auction_calendar_mini"),
+                                              # Upcoming Auctions Selection Panel
+                                              tags$div(
+                                                  class = "upcoming-auctions-panel",
+                                                  style = "background: white; border: 1px solid #dee2e6; border-radius: 8px;
+                                                           padding: 12px; margin-top: 10px;",
+
+                                                  tags$h6(
+                                                      tagList(icon("calendar-alt"), " Upcoming Auctions"),
+                                                      style = "color: #1B3A6B; margin-bottom: 10px; font-weight: bold;"
+                                                  ),
+
+                                                  # User selects next 3 bonds
+                                                  selectInput(
+                                                      "upcoming_auction_bonds",
+                                                      "Select Bonds for Next Auction(s):",
+                                                      choices = NULL,  # Populated dynamically
+                                                      selected = NULL,
+                                                      multiple = TRUE,
+                                                      width = "100%"
+                                                  ),
+
+                                                  tags$small(
+                                                      "Select up to 3 bonds expected in upcoming auctions",
+                                                      style = "font-size: 0.85em; color: #6c757d;"
+                                                  ),
+
+                                                  tags$hr(style = "margin: 10px 0;"),
+
+                                                  # Display selected upcoming auctions
+                                                  uiOutput("upcoming_auctions_display")
+                                              ),
 
                                               # Download buttons
                                               tags$div(
@@ -1918,36 +1947,90 @@ ui <- dashboardPage(
                                )
                            ),
 
-                           # Additional sophisticated analytics
+                           # ═══════════════════════════════════════════════════════════════════════════
+                           # AUCTION QUALITY DASHBOARD (New Section)
+                           # ═══════════════════════════════════════════════════════════════════════════
                            fluidRow(
                                box(
-                                   title = "Advanced Auction Analytics",
+                                   title = tagList(icon("chart-bar"), " Auction Quality Dashboard"),
                                    status = "primary",
                                    solidHeader = TRUE,
                                    width = 12,
                                    collapsible = TRUE,
 
+                                   # KPI Cards Row
                                    fluidRow(
-                                       column(6,
-                                              h4("Demand Elasticity Analysis", style = "color: #1B3A6B;"),
-                                              plotOutput("demand_elasticity_plot", height = "350px")
+                                       column(3,
+                                              tags$div(
+                                                  class = "kpi-card",
+                                                  style = "background: linear-gradient(135deg, #1B3A6B 0%, #2E5090 100%);
+                                                           color: white; padding: 20px; border-radius: 8px; text-align: center;",
+                                                  tags$p("Avg Auction Quality", style = "margin-bottom: 5px; opacity: 0.9;"),
+                                                  tags$h2(textOutput("avg_quality_score_text", inline = TRUE),
+                                                          style = "margin: 5px 0;"),
+                                                  uiOutput("avg_quality_grade_badge")
+                                              )
                                        ),
-                                       column(6,
-                                              h4("Auction Success Probability", style = "color: #1B3A6B;"),
-                                              plotOutput("success_probability_plot", height = "350px")
+                                       column(3,
+                                              tags$div(
+                                                  class = "kpi-card",
+                                                  style = "background: #f8f9fa; padding: 20px; border-radius: 8px;
+                                                           text-align: center; border: 1px solid #dee2e6;",
+                                                  tags$p("Avg Auction Tail", class = "text-muted", style = "margin-bottom: 5px;"),
+                                                  tags$h2(textOutput("avg_tail_text", inline = TRUE),
+                                                          style = "margin: 5px 0; color: #1B3A6B;"),
+                                                  tags$span(textOutput("tail_interpretation", inline = TRUE),
+                                                            class = "text-muted", style = "font-size: 0.9em;")
+                                              )
+                                       ),
+                                       column(3,
+                                              tags$div(
+                                                  class = "kpi-card",
+                                                  style = "background: #f8f9fa; padding: 20px; border-radius: 8px;
+                                                           text-align: center; border: 1px solid #dee2e6;",
+                                                  tags$p("Institutional Participation", class = "text-muted", style = "margin-bottom: 5px;"),
+                                                  tags$h2(textOutput("avg_institutional_text", inline = TRUE),
+                                                          style = "margin: 5px 0; color: #1B3A6B;"),
+                                                  tags$span(textOutput("institutional_interpretation", inline = TRUE),
+                                                            class = "text-muted", style = "font-size: 0.9em;")
+                                              )
+                                       ),
+                                       column(3,
+                                              tags$div(
+                                                  class = "kpi-card",
+                                                  style = "background: #f8f9fa; padding: 20px; border-radius: 8px;
+                                                           text-align: center; border: 1px solid #dee2e6;",
+                                                  tags$p("Avg Concession", class = "text-muted", style = "margin-bottom: 5px;"),
+                                                  tags$h2(textOutput("avg_concession_text", inline = TRUE),
+                                                          style = "margin: 5px 0; color: #1B3A6B;"),
+                                                  tags$span(textOutput("concession_interpretation", inline = TRUE),
+                                                            class = "text-muted", style = "font-size: 0.9em;")
+                                              )
                                        )
                                    ),
-                                   # === ADDED: download_demand_elasticity and download_success_probability ===
+
+                                   tags$hr(style = "margin: 20px 0;"),
+
+                                   # Charts Row
+                                   fluidRow(
+                                       column(6,
+                                              tags$h5("Auction Quality by Bond",
+                                                      style = "color: #1B3A6B; font-weight: bold;"),
+                                              plotOutput("auction_quality_heatmap", height = "350px")
+                                       ),
+                                       column(6,
+                                              tags$h5("Auction Concession Trend",
+                                                      style = "color: #1B3A6B; font-weight: bold;"),
+                                              plotOutput("concession_trend_chart", height = "350px")
+                                       )
+                                   ),
+
+                                   tags$br(),
+
                                    fluidRow(
                                        column(12,
-                                              tags$div(
-                                                  style = "margin-top: 15px;",
-                                                  downloadButton("download_demand_elasticity", "Download Elasticity Chart",
-                                                                 class = "btn-sm btn-primary",
-                                                                 style = "margin-right: 10px;"),
-                                                  downloadButton("download_success_probability", "Download Probability Chart",
-                                                                 class = "btn-sm btn-primary")
-                                              )
+                                              downloadButton("download_quality_report", "Download Quality Report",
+                                                             class = "btn-primary btn-sm")
                                        )
                                    )
                                )
@@ -2038,22 +2121,10 @@ ui <- dashboardPage(
                            ),
                            fluidRow(
                                box(
-                                   title = "Auction Success Factors",
-                                   status = "primary",
-                                   solidHeader = TRUE,
-                                   width = 6,
-                                   plotOutput("auction_success_factors", height = "400px"),
-                                   tags$div(
-                                       style = "margin-top: 15px;",
-                                       downloadButton("download_auction_success", "Download Chart",
-                                                      class = "btn-sm btn-primary")
-                                   )
-                               ),
-                               box(
                                    title = "Bid-to-Cover Decomposition",
                                    status = "primary",
                                    solidHeader = TRUE,
-                                   width = 6,
+                                   width = 12,
                                    plotOutput("btc_decomposition", height = "400px"),
                                    tags$div(
                                        style = "margin-top: 15px;",
