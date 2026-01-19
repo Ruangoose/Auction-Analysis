@@ -1110,8 +1110,11 @@ ui <- dashboardPage(
                                    solidHeader = TRUE,
                                    width = 12,
 
+                                   # ═══════════════════════════════════════════════════════════════
+                                   # TOP ROW: Controls (left) + Technical Summary (right)
+                                   # ═══════════════════════════════════════════════════════════════
                                    fluidRow(
-                                       # LEFT COLUMN - Controls + Bond Profile + Signal History (fills white space)
+                                       # LEFT COLUMN - Controls + Bond Profile
                                        column(4,
                                               # Controls Panel
                                               wellPanel(
@@ -1152,14 +1155,8 @@ ui <- dashboardPage(
                                                   )
                                               ),
 
-                                              # Bond Profile Card
-                                              uiOutput("bond_profile_card"),
-
-                                              # Signal History Chart (60 days - IMPROVED)
-                                              uiOutput("signal_history_mini"),
-
-                                              # Yield Chart with Technical Levels (90 days - NEW)
-                                              uiOutput("yield_technicals_panel")
+                                              # Bond Profile Card (stays in left column)
+                                              uiOutput("bond_profile_card")
                                        ),
 
                                        # RIGHT COLUMN - Technical Summary Panel
@@ -1168,7 +1165,24 @@ ui <- dashboardPage(
                                        )
                                    ),
 
-                                   # Main Technical Chart - FIXED: explicit width = 100%
+                                   # ═══════════════════════════════════════════════════════════════
+                                   # MIDDLE ROW: Signal History + Yield Technicals (side by side)
+                                   # Moved OUT of columns to prevent white space from height mismatch
+                                   # ═══════════════════════════════════════════════════════════════
+                                   fluidRow(
+                                       column(6,
+                                              # Signal History Chart (60 days)
+                                              uiOutput("signal_history_mini")
+                                       ),
+                                       column(6,
+                                              # Yield Chart with Technical Levels (90 days)
+                                              uiOutput("yield_technicals_panel")
+                                       )
+                                   ),
+
+                                   # ═══════════════════════════════════════════════════════════════
+                                   # BOTTOM: Main Technical Chart - Full Width
+                                   # ═══════════════════════════════════════════════════════════════
                                    plotOutput("advanced_technical_plot", height = "500px", width = "100%")
                                )
                            ),
