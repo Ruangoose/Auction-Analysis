@@ -228,84 +228,133 @@ generate_ytd_issuance_table <- function(data) {
     }
 
     # Define numeric columns that need conversion
-    # NOTE: Removed auction_concession_bps - replaced with calculated yield_trend
-    numeric_cols <- c("offer_amount", "bid_to_cover", "auction_quality_score",
-                      "auction_tail_bps", "non_comp_ratio", "clearing_yield",
-                      "number_bids_received")
+    # Using available columns: offer_amount, allocation, bids/bids_received, bid_to_cover, yield_to_maturity
+    numeric_cols <- c("offer_amount", "allocation", "bids", "bids_received",
+                      "bid_to_cover", "yield_to_maturity")
 
     # Ensure numeric columns are actually numeric BEFORE summarise
     data <- data %>%
         mutate(across(any_of(numeric_cols),
                       ~ suppressWarnings(as.numeric(as.character(.x)))))
 
-    # Calculate issuance statistics with new quality metrics
-    # NEW: Calculate yield trend (change between consecutive auctions) instead of concession
+    # Handle bids column (might be named 'bids' or 'bids_received')
+    if (!"bids" %in% names(data) && "bids_received" %in% names(data)) {
+        data <- data %>% mutate(bids = bids_received)
+    }
+
+    # Calculate yield trend: compare first vs last auction yield for each bond
+    yield_trends <- data %>%
+        filter(!is.na(offer_amount), offer_amount > 0, !is.na(yield_to_maturity)) %>%
+        group_by(bond) %>%
+        arrange(date) %>%
+        summarise(
+            first_yield = first(yield_to_maturity),
+            last_yield = last(yield_to_maturity),
+            yield_change_bps = (last_yield - first_yield) * 100,  # Convert to bps
+            .groups = "drop"
+        )
+
+    # Calculate issuance statistics with meaningful metrics from available data
     issuance_table <- data %>%
         filter(!is.na(offer_amount), offer_amount > 0) %>%
         group_by(bond) %>%
-        arrange(date) %>%
-        mutate(
-            # Calculate clearing yield change from previous auction (same bond)
-            yield_change_bps = (clearing_yield - lag(clearing_yield)) * 100
-        ) %>%
         summarise(
-            `# Auctions` = n(),
-            `Total (R mil)` = round(sum(offer_amount, na.rm = TRUE) / 1e6, 2),
-            `Avg B2C` = if ("bid_to_cover" %in% names(.))
-                round(mean(bid_to_cover, na.rm = TRUE), 2) else NA_real_,
-            # NEW: Quality metrics
-            `Avg Quality` = if ("auction_quality_score" %in% names(.))
-                round(mean(auction_quality_score, na.rm = TRUE), 0) else NA_real_,
-            `Avg Tail` = if ("auction_tail_bps" %in% names(.))
-                round(mean(auction_tail_bps, na.rm = TRUE), 1) else NA_real_,
-            `Non-Comp %` = if ("non_comp_ratio" %in% names(.))
-                round(mean(non_comp_ratio, na.rm = TRUE), 0) else NA_real_,
-            # NEW: Yield Trend replaces Concession
-            `Yield Trend` = round(mean(yield_change_bps, na.rm = TRUE), 1),
-            `# Bidders` = if ("number_bids_received" %in% names(.))
-                round(mean(number_bids_received, na.rm = TRUE), 0) else NA_real_,
-            `First Auction` = format(min(date, na.rm = TRUE), "%Y-%m-%d"),
-            `Last Auction` = format(max(date, na.rm = TRUE), "%Y-%m-%d"),
+            n_auctions = n(),
+            total_offered = sum(offer_amount, na.rm = TRUE) / 1e6,  # Convert to millions
+            total_allocated = sum(allocation, na.rm = TRUE) / 1e6,
+            total_bids = sum(bids, na.rm = TRUE) / 1e6,
+            avg_b2c = mean(bid_to_cover, na.rm = TRUE),
+            min_b2c = min(bid_to_cover, na.rm = TRUE),
+            max_b2c = max(bid_to_cover, na.rm = TRUE),
+            # Allocation rate: what percentage of offered amount was allocated
+            allocation_rate = sum(allocation, na.rm = TRUE) / sum(offer_amount, na.rm = TRUE) * 100,
+            # Oversubscription: average demand vs supply
+            avg_oversubscription = mean((bids - offer_amount) / offer_amount * 100, na.rm = TRUE),
+            first_auction = min(date, na.rm = TRUE),
+            last_auction = max(date, na.rm = TRUE),
             .groups = "drop"
         ) %>%
-        arrange(desc(`Total (R mil)`))
+        left_join(yield_trends, by = "bond") %>%
+        arrange(desc(total_offered))
 
-    # Add row for totals
+    # Create TOTAL row with proper aggregations
     if (nrow(issuance_table) > 0) {
-        # Calculate weighted averages for totals
-        total_auctions <- sum(issuance_table$`# Auctions`, na.rm = TRUE)
+        # Calculate overall market yield trend for total row
+        overall_yield_trend <- data %>%
+            filter(!is.na(offer_amount), offer_amount > 0, !is.na(yield_to_maturity)) %>%
+            {
+                first_date_yields <- filter(., date == min(date)) %>%
+                    pull(yield_to_maturity) %>%
+                    mean(na.rm = TRUE)
+                last_date_yields <- filter(., date == max(date)) %>%
+                    pull(yield_to_maturity) %>%
+                    mean(na.rm = TRUE)
+                (last_date_yields - first_date_yields) * 100
+            }
 
         totals_row <- data.frame(
             bond = "TOTAL",
-            `# Auctions` = total_auctions,
-            `Total (R mil)` = sum(issuance_table$`Total (R mil)`, na.rm = TRUE),
-            `Avg B2C` = round(mean(issuance_table$`Avg B2C`, na.rm = TRUE), 2),
-            `Avg Quality` = round(mean(issuance_table$`Avg Quality`, na.rm = TRUE), 0),
-            `Avg Tail` = round(mean(issuance_table$`Avg Tail`, na.rm = TRUE), 1),
-            `Non-Comp %` = round(mean(issuance_table$`Non-Comp %`, na.rm = TRUE), 0),
-            `Yield Trend` = round(mean(issuance_table$`Yield Trend`, na.rm = TRUE), 1),
-            `# Bidders` = round(mean(issuance_table$`# Bidders`, na.rm = TRUE), 0),
-            `First Auction` = "",
-            `Last Auction` = "",
-            check.names = FALSE
+            n_auctions = sum(issuance_table$n_auctions, na.rm = TRUE),
+            total_offered = sum(issuance_table$total_offered, na.rm = TRUE),
+            total_allocated = sum(issuance_table$total_allocated, na.rm = TRUE),
+            total_bids = sum(issuance_table$total_bids, na.rm = TRUE),
+            avg_b2c = mean(issuance_table$avg_b2c, na.rm = TRUE),
+            min_b2c = min(issuance_table$min_b2c, na.rm = TRUE),
+            max_b2c = max(issuance_table$max_b2c, na.rm = TRUE),
+            allocation_rate = sum(issuance_table$total_allocated, na.rm = TRUE) /
+                sum(issuance_table$total_offered, na.rm = TRUE) * 100,
+            avg_oversubscription = mean(issuance_table$avg_oversubscription, na.rm = TRUE),
+            first_auction = as.Date(NA),
+            last_auction = as.Date(NA),
+            first_yield = NA_real_,
+            last_yield = NA_real_,
+            yield_change_bps = overall_yield_trend,
+            stringsAsFactors = FALSE
         )
 
-        issuance_table <- rbind(issuance_table, totals_row)
+        # Prepend TOTAL row at the top
+        issuance_table <- bind_rows(totals_row, issuance_table)
     }
 
-    # Format columns for display
-    issuance_table <- issuance_table %>%
-        mutate(
-            `Avg B2C` = ifelse(is.na(`Avg B2C`), "—", sprintf("%.2fx", `Avg B2C`)),
-            `Avg Quality` = ifelse(is.na(`Avg Quality`), "—", as.character(`Avg Quality`)),
-            `Avg Tail` = ifelse(is.na(`Avg Tail`), "—", as.character(`Avg Tail`)),
-            `Non-Comp %` = ifelse(is.na(`Non-Comp %`), "—", paste0(`Non-Comp %`, "%")),
-            `Yield Trend` = ifelse(is.na(`Yield Trend`), "—", sprintf("%+.1f bps", `Yield Trend`)),
-            `# Bidders` = ifelse(is.na(`# Bidders`), "—", as.character(`# Bidders`))
+    # Format for display with proper column names
+    display_table <- issuance_table %>%
+        transmute(
+            Bond = bond,
+            `# Auctions` = n_auctions,
+            # Keep Total (R mil) as numeric for DT formatting (will add thousand separators in DT)
+            `Total (R mil)` = round(total_offered, 0),
+            # Keep Avg B2C as numeric for conditional formatting
+            `Avg B2C` = round(avg_b2c, 2),
+            # B2C Range: shows min-max spread
+            `B2C Range` = ifelse(
+                is.na(min_b2c) | is.na(max_b2c) | is.infinite(min_b2c) | is.infinite(max_b2c),
+                "—",
+                paste0(sprintf("%.2f", min_b2c), "x - ", sprintf("%.2f", max_b2c), "x")
+            ),
+            # Allocation Rate %
+            `Alloc Rate %` = round(allocation_rate, 1),
+            # Oversubscription %
+            `Oversub %` = round(avg_oversubscription, 1),
+            # Yield Trend in bps - keep numeric for conditional formatting
+            # The numeric value will be formatted in the DT rendering
+            `Yield Trend` = round(yield_change_bps, 1),
+            # Also store a formatted version for display with +/- prefix
+            `Yield Trend Display` = case_when(
+                is.na(yield_change_bps) | is.nan(yield_change_bps) ~ "—",
+                yield_change_bps >= 0 ~ paste0("+", sprintf("%.1f", yield_change_bps), " bps"),
+                TRUE ~ paste0(sprintf("%.1f", yield_change_bps), " bps")
+            ),
+            `First Auction` = ifelse(
+                is.na(first_auction),
+                "—",
+                format(first_auction, "%Y-%m-%d")
+            ),
+            `Last Auction` = ifelse(
+                is.na(last_auction),
+                "—",
+                format(last_auction, "%Y-%m-%d")
+            )
         )
 
-    # Rename bond column for display
-    names(issuance_table)[1] <- "Bond"
-
-    return(issuance_table)
+    return(display_table)
 }
