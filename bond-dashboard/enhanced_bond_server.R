@@ -4104,33 +4104,52 @@ server <- function(input, output, session) {
         req(filtered_data())
         table_data <- generate_ytd_issuance_table(filtered_data())
 
-        DT::datatable(
+        # Check if table_data has an error message column (no data case)
+        if ("Message" %in% names(table_data)) {
+            return(DT::datatable(table_data, options = list(dom = 't'), rownames = FALSE))
+        }
+
+        # Build the datatable
+        dt <- DT::datatable(
             table_data,
             options = list(
                 pageLength = 15,
                 scrollX = TRUE,
                 dom = 'Bfrtip',
                 buttons = c('copy', 'csv', 'excel'),
-                order = list(list(2, 'desc'))  # Sort by Total Issuance descending
+                order = list(list(2, 'desc'))  # Sort by Total (R mil) descending
             ),
             rownames = FALSE,
             class = 'cell-border stripe hover'
-        ) %>%
-            DT::formatCurrency(columns = c('Total Issuance (R mil)', 'Average Issuance (R mil)',
-                                           'Min Issuance (R mil)', 'Max Issuance (R mil)'),
-                               currency = "R", digits = 2) %>%
-            DT::formatStyle(
-                'Bond',
-                fontWeight = 'bold',
-                color = styleEqual('TOTAL', '#1B3A6B')
-            ) %>%
-            DT::formatStyle(
-                'Total Issuance (R mil)',
-                background = styleColorBar(range(table_data[table_data$Bond != 'TOTAL', 'Total Issuance (R mil)'], na.rm = TRUE), '#90EE90'),
-                backgroundSize = '100% 90%',
-                backgroundRepeat = 'no-repeat',
-                backgroundPosition = 'center'
-            )
+        )
+
+        # Apply formatting only if Bond column exists
+        if ("Bond" %in% names(table_data)) {
+            dt <- dt %>%
+                DT::formatStyle(
+                    'Bond',
+                    fontWeight = 'bold',
+                    color = DT::styleEqual('TOTAL', '#1B3A6B')
+                )
+        }
+
+        # Apply color bar to Total (R mil) column if it exists and is numeric
+        if ("Total (R mil)" %in% names(table_data)) {
+            # Get numeric values for non-TOTAL rows
+            non_total_values <- table_data[table_data$Bond != 'TOTAL', 'Total (R mil)']
+            if (is.numeric(non_total_values) && length(non_total_values) > 0 && any(!is.na(non_total_values))) {
+                dt <- dt %>%
+                    DT::formatStyle(
+                        'Total (R mil)',
+                        background = DT::styleColorBar(range(non_total_values, na.rm = TRUE), '#90EE90'),
+                        backgroundSize = '100% 90%',
+                        backgroundRepeat = 'no-repeat',
+                        backgroundPosition = 'center'
+                    )
+            }
+        }
+
+        return(dt)
     })
 
     output$enhanced_correlation_plot <- renderPlot({
@@ -6473,8 +6492,16 @@ server <- function(input, output, session) {
     enhanced_auction_data <- reactive({
         req(filtered_data())
 
+        # Define numeric columns that need conversion
+        numeric_cols <- c("bid_to_cover", "bids_received", "offer_amount", "allocation",
+                          "clearing_yield", "non_comps", "number_bids_received",
+                          "best_bid", "worst_bid", "auction_tail")
+
+        # Ensure numeric columns are actually numeric
         auction_data <- filtered_data() %>%
-            filter(!is.na(bid_to_cover))
+            dplyr::mutate(dplyr::across(dplyr::any_of(numeric_cols),
+                          ~ suppressWarnings(as.numeric(as.character(.x))))) %>%
+            dplyr::filter(!is.na(bid_to_cover))
 
         if (nrow(auction_data) == 0) {
             return(NULL)
@@ -8213,77 +8240,127 @@ server <- function(input, output, session) {
 
     # Historical Performance Chart (v2)
     output$auction_forecast_chart_v2 <- renderPlot({
-        req(input$upcoming_auction_bonds)
-        req(enhanced_auction_data())
+        tryCatch({
+            req(input$upcoming_auction_bonds)
+            req(enhanced_auction_data())
 
-        selected_bonds <- input$upcoming_auction_bonds
-        auction_data <- enhanced_auction_data()
+            selected_bonds <- input$upcoming_auction_bonds
+            auction_data <- enhanced_auction_data()
 
-        # Filter to selected bonds
-        chart_data <- auction_data %>%
-            filter(bond %in% selected_bonds, !is.na(bid_to_cover)) %>%
-            arrange(offer_date)
-
-        if (nrow(chart_data) == 0) {
-            plot.new()
-            text(0.5, 0.5, "No historical auction data for selected bonds", cex = 1.2)
-            return()
-        }
-
-        # Get forecasts if available
-        forecasts <- tryCatch(auction_forecasts_v2(), error = function(e) NULL)
-
-        # Create plot
-        p <- ggplot2::ggplot(chart_data, ggplot2::aes(x = offer_date, y = bid_to_cover, color = bond)) +
-            ggplot2::geom_line(linewidth = 1) +
-            ggplot2::geom_point(size = 2) +
-            ggplot2::geom_hline(yintercept = 2, linetype = "dashed", color = "#C62828", alpha = 0.5) +
-            ggplot2::geom_hline(yintercept = 3, linetype = "dashed", color = "#388E3C", alpha = 0.5) +
-            ggplot2::labs(
-                x = NULL,
-                y = "Bid-to-Cover Ratio",
-                color = "Bond"
-            ) +
-            ggplot2::theme_minimal() +
-            ggplot2::theme(
-                plot.background = ggplot2::element_rect(fill = "white", color = NA),
-                panel.background = ggplot2::element_rect(fill = "white", color = NA),
-                legend.position = "bottom",
-                legend.title = ggplot2::element_text(size = 9),
-                legend.text = ggplot2::element_text(size = 8),
-                axis.text = ggplot2::element_text(size = 9),
-                axis.title = ggplot2::element_text(size = 10)
-            ) +
-            ggplot2::scale_color_manual(
-                values = c("#1B3A6B", "#E53935", "#43A047", "#FB8C00", "#8E24AA")[1:length(selected_bonds)]
-            )
-
-        # Add forecast points if available
-        if (!is.null(forecasts) && any(forecasts$has_forecast)) {
-            forecast_date <- if (!is.null(input$upcoming_auction_date)) {
-                input$upcoming_auction_date
-            } else {
-                max(chart_data$offer_date, na.rm = TRUE) + 7
+            # Validate auction_data
+            if (is.null(auction_data) || nrow(auction_data) == 0) {
+                message("[Historical Performance] No auction data available")
+                return(ggplot2::ggplot() +
+                    ggplot2::annotate("text", x = 0.5, y = 0.5,
+                        label = "No auction data available",
+                        size = 5, color = "gray50") +
+                    ggplot2::theme_void() +
+                    ggplot2::xlim(0, 1) + ggplot2::ylim(0, 1))
             }
 
-            forecast_points <- forecasts %>%
-                filter(has_forecast) %>%
-                mutate(offer_date = forecast_date)
+            # Validate required columns
+            if (!all(c("bond", "bid_to_cover", "offer_date") %in% names(auction_data))) {
+                missing <- setdiff(c("bond", "bid_to_cover", "offer_date"), names(auction_data))
+                message("[Historical Performance] Missing columns: ", paste(missing, collapse = ", "))
+                return(ggplot2::ggplot() +
+                    ggplot2::annotate("text", x = 0.5, y = 0.5,
+                        label = paste("Missing required columns:", paste(missing, collapse = ", ")),
+                        size = 4, color = "gray50") +
+                    ggplot2::theme_void() +
+                    ggplot2::xlim(0, 1) + ggplot2::ylim(0, 1))
+            }
 
-            p <- p +
-                ggplot2::geom_point(
-                    data = forecast_points,
-                    ggplot2::aes(x = offer_date, y = forecast_btc, color = bond),
-                    shape = 18, size = 4
+            # Ensure bid_to_cover is numeric
+            auction_data <- auction_data %>%
+                dplyr::mutate(bid_to_cover = suppressWarnings(as.numeric(as.character(bid_to_cover))))
+
+            # Filter to selected bonds
+            chart_data <- auction_data %>%
+                dplyr::filter(bond %in% selected_bonds, !is.na(bid_to_cover)) %>%
+                dplyr::arrange(offer_date)
+
+            if (nrow(chart_data) == 0) {
+                return(ggplot2::ggplot() +
+                    ggplot2::annotate("text", x = 0.5, y = 0.5,
+                        label = "No historical auction data for selected bonds",
+                        size = 5, color = "gray50") +
+                    ggplot2::theme_void() +
+                    ggplot2::xlim(0, 1) + ggplot2::ylim(0, 1))
+            }
+
+            # Get forecasts if available
+            forecasts <- tryCatch(auction_forecasts_v2(), error = function(e) {
+                message("[Historical Performance] Forecast error: ", e$message)
+                NULL
+            })
+
+            # Create plot
+            p <- ggplot2::ggplot(chart_data, ggplot2::aes(x = offer_date, y = bid_to_cover, color = bond)) +
+                ggplot2::geom_line(linewidth = 1) +
+                ggplot2::geom_point(size = 2) +
+                ggplot2::geom_hline(yintercept = 2, linetype = "dashed", color = "#C62828", alpha = 0.5) +
+                ggplot2::geom_hline(yintercept = 3, linetype = "dashed", color = "#388E3C", alpha = 0.5) +
+                ggplot2::labs(
+                    x = NULL,
+                    y = "Bid-to-Cover Ratio",
+                    color = "Bond"
                 ) +
-                ggplot2::geom_errorbar(
-                    data = forecast_points,
-                    ggplot2::aes(x = offer_date, ymin = ci_lower, ymax = ci_upper, color = bond),
-                    width = 5, alpha = 0.5
+                ggplot2::theme_minimal() +
+                ggplot2::theme(
+                    plot.background = ggplot2::element_rect(fill = "white", color = NA),
+                    panel.background = ggplot2::element_rect(fill = "white", color = NA),
+                    legend.position = "bottom",
+                    legend.title = ggplot2::element_text(size = 9),
+                    legend.text = ggplot2::element_text(size = 8),
+                    axis.text = ggplot2::element_text(size = 9),
+                    axis.title = ggplot2::element_text(size = 10)
+                ) +
+                ggplot2::scale_color_manual(
+                    values = c("#1B3A6B", "#E53935", "#43A047", "#FB8C00", "#8E24AA")[1:length(selected_bonds)]
                 )
-        }
 
-        return(p)
+            # Add forecast points if available
+            if (!is.null(forecasts) && nrow(forecasts) > 0 && "has_forecast" %in% names(forecasts) && any(forecasts$has_forecast, na.rm = TRUE)) {
+                forecast_date <- if (!is.null(input$upcoming_auction_date)) {
+                    input$upcoming_auction_date
+                } else {
+                    max(chart_data$offer_date, na.rm = TRUE) + 7
+                }
+
+                forecast_points <- forecasts %>%
+                    dplyr::filter(has_forecast) %>%
+                    dplyr::mutate(offer_date = forecast_date)
+
+                # Validate forecast_points has required columns before adding to plot
+                if (nrow(forecast_points) > 0 &&
+                    all(c("forecast_btc", "ci_lower", "ci_upper", "bond") %in% names(forecast_points))) {
+                    p <- p +
+                        ggplot2::geom_point(
+                            data = forecast_points,
+                            ggplot2::aes(x = offer_date, y = forecast_btc, color = bond),
+                            shape = 18, size = 4,
+                            inherit.aes = FALSE
+                        ) +
+                        ggplot2::geom_errorbar(
+                            data = forecast_points,
+                            ggplot2::aes(x = offer_date, ymin = ci_lower, ymax = ci_upper, color = bond),
+                            width = 5, alpha = 0.5,
+                            inherit.aes = FALSE
+                        )
+                }
+            }
+
+            return(p)
+
+        }, error = function(e) {
+            message("[Historical Performance] Error: ", e$message)
+            ggplot2::ggplot() +
+                ggplot2::annotate("text", x = 0.5, y = 0.5,
+                    label = paste("Unable to render chart:\n", e$message),
+                    size = 4, color = "gray50") +
+                ggplot2::theme_void() +
+                ggplot2::xlim(0, 1) + ggplot2::ylim(0, 1)
+        })
     }, bg = "white")
 
     # Selected Bonds History
