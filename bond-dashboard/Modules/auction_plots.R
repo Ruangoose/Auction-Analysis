@@ -46,6 +46,68 @@ create_no_auction_data_plot <- function(message = "Auction data not available") 
         theme(plot.background = element_rect(fill = "#f8f9fa", color = NA))
 }
 
+#' @title Get Auction Bond Color Palette
+#' @description Returns consistent color palette for bonds with emphasis on selected bonds
+#' @param selected_bonds Character vector of bonds to highlight
+#' @return Named character vector of hex colors
+#' @export
+get_auction_bond_colors <- function(selected_bonds = character(0)) {
+    # Base palette for all bonds - distinct, professional colors
+    all_bond_colors <- c(
+        "R2032" = "#3498DB",
+        "R2033" = "#1B3A6B",
+        "R2035" = "#27AE60",
+        "R2037" = "#8E44AD",
+        "R2038" = "#E67E22",
+        "R2039" = "#16A085",
+        "R2040" = "#C0392B",
+        "R2042" = "#2980B9",
+        "R2044" = "#D35400",
+        "R2048" = "#28a745",
+        "R2053" = "#9B59B6",
+        "R213" = "#7F8C8D"
+    )
+
+    # If bonds are selected, mute non-selected bonds
+    if (length(selected_bonds) > 0) {
+        for (bond in names(all_bond_colors)) {
+            if (!(bond %in% selected_bonds)) {
+                # Add transparency to hex color (60 = ~38% opacity)
+                all_bond_colors[bond] <- paste0(all_bond_colors[bond], "60")
+            }
+        }
+    }
+
+    return(all_bond_colors)
+}
+
+#' @title Get Bid-to-Cover Threshold Colors
+#' @description Returns color scheme for BTC performance categories
+#' @return List with fill and border colors
+#' @keywords internal
+get_btc_threshold_colors <- function() {
+    list(
+        fill = c(
+            "Weak" = "#dc354515",
+            "Moderate" = "#ffc10715",
+            "Good" = "#20c99715",
+            "Strong" = "#28a74515"
+        ),
+        border = c(
+            "Weak" = "#dc3545",
+            "Moderate" = "#ffc107",
+            "Good" = "#20c997",
+            "Strong" = "#28a745"
+        ),
+        text = c(
+            "Weak" = "#dc3545",
+            "Moderate" = "#b8860b",
+            "Good" = "#20c997",
+            "Strong" = "#28a745"
+        )
+    )
+}
+
 #' @export
 # 14. Enhanced Auction Analytics Plot Generation
 generate_enhanced_auction_analytics <- function(data, params) {
@@ -257,8 +319,8 @@ generate_enhanced_auction_analytics <- function(data, params) {
 }
 
 #' @export
-# 17. Historical Pattern Recognition
-generate_auction_pattern_analysis <- function(data, params) {
+# 17. Historical Pattern Recognition (Enhanced with threshold zones and bond highlighting)
+generate_auction_pattern_analysis <- function(data, params, selected_bonds = character(0)) {
     # CRITICAL FIX: Ensure date columns are Date objects
     data <- ensure_date_columns(data)
 
@@ -293,7 +355,9 @@ generate_auction_pattern_analysis <- function(data, params) {
                 offer_amount < 5e9 ~ "Medium (R2-5bn)",
                 offer_amount < 10e9 ~ "Large (R5-10bn)",
                 TRUE ~ "Jumbo (>R10bn)"
-            )
+            ),
+            # Add selection flag for highlighting
+            is_selected = bond %in% selected_bonds
         )
 
     if(nrow(pattern_data) < 10) {
@@ -374,40 +438,183 @@ generate_auction_pattern_analysis <- function(data, params) {
             plot.subtitle = element_text(size = 8, color = "grey50")
         )
 
-    # 4. Enhanced trend with confidence bands
+    # 4. Enhanced trend with threshold zones and bond highlighting
     trend_data <- pattern_data %>%
         arrange(date) %>%
         mutate(
-            rolling_mean = zoo::rollapply(bid_to_cover, 5, mean, fill = NA, align = "right"),
-            rolling_sd = zoo::rollapply(bid_to_cover, 5, sd, fill = NA, align = "right"),
-            upper = rolling_mean + rolling_sd,
-            lower = rolling_mean - rolling_sd
+            # Smoothed 5-auction moving average
+            ma_5 = zoo::rollmean(bid_to_cover, k = 5, fill = NA, align = "right"),
+            # Smoothed confidence band using rolling sd with larger window
+            rolling_sd = zoo::rollapply(bid_to_cover, width = 10, FUN = sd,
+                                         fill = NA, align = "right", partial = TRUE),
+            ci_upper = ma_5 + 1.96 * rolling_sd / sqrt(5),
+            ci_lower = ma_5 - 1.96 * rolling_sd / sqrt(5)
         )
 
-    p4 <- ggplot(trend_data, aes(x = date)) +
-        geom_ribbon(aes(ymin = lower, ymax = upper), fill = "#1B3A6B", alpha = 0.2,
-                    na.rm = TRUE) +
-        geom_point(aes(y = bid_to_cover), size = 2, alpha = 0.5, color = "#1B3A6B") +
-        geom_line(aes(y = rolling_mean), color = "#E57C00", linewidth = 1.2,
-                  na.rm = TRUE) +
-        geom_hline(yintercept = overall_mean, linetype = "dashed", color = "#E53935") +
-        labs(title = "Trend with Confidence Band",
-             subtitle = "Orange = 5-auction MA | Dashed = Overall mean",
-             x = "", y = "Bid-to-Cover") +
-        scale_x_date(date_breaks = "3 months", date_labels = "%b\n%Y") +
+    # Calculate y-axis limits for threshold zones
+    y_max <- max(8, max(pattern_data$bid_to_cover, na.rm = TRUE) + 0.5)
+    y_min <- min(1, min(pattern_data$bid_to_cover, na.rm = TRUE) - 0.5)
+    date_min <- min(pattern_data$date, na.rm = TRUE)
+    date_max <- max(pattern_data$date, na.rm = TRUE)
+
+    # Get bond colors
+    bond_colors <- get_auction_bond_colors(selected_bonds)
+
+    # Build the trend plot with threshold zones
+    p4 <- ggplot() +
+        # Background threshold zones
+        annotate("rect",
+                 xmin = date_min, xmax = date_max,
+                 ymin = -Inf, ymax = 2.0,
+                 fill = "#dc3545", alpha = 0.08) +
+        annotate("rect",
+                 xmin = date_min, xmax = date_max,
+                 ymin = 2.0, ymax = 2.5,
+                 fill = "#ffc107", alpha = 0.08) +
+        annotate("rect",
+                 xmin = date_min, xmax = date_max,
+                 ymin = 2.5, ymax = 3.0,
+                 fill = "#20c997", alpha = 0.08) +
+        annotate("rect",
+                 xmin = date_min, xmax = date_max,
+                 ymin = 3.0, ymax = Inf,
+                 fill = "#28a745", alpha = 0.08) +
+
+        # Threshold lines
+        geom_hline(yintercept = 2.0, linetype = "dotted", color = "#dc3545", linewidth = 0.5) +
+        geom_hline(yintercept = 2.5, linetype = "dotted", color = "#ffc107", linewidth = 0.5) +
+        geom_hline(yintercept = 3.0, linetype = "dotted", color = "#28a745", linewidth = 0.5) +
+
+        # Smoothed confidence ribbon
+        geom_ribbon(
+            data = trend_data %>% filter(!is.na(ma_5)),
+            aes(x = date, ymin = ci_lower, ymax = ci_upper),
+            fill = "#1B3A6B", alpha = 0.15
+        ) +
+
+        # Overall mean line (dashed)
+        geom_hline(
+            yintercept = overall_mean,
+            linetype = "dashed",
+            color = "#E53935",
+            linewidth = 0.8
+        )
+
+    # Add points - non-selected first (background)
+    if (any(!trend_data$is_selected)) {
+        p4 <- p4 +
+            geom_point(
+                data = trend_data %>% filter(!is_selected),
+                aes(x = date, y = bid_to_cover),
+                color = "#6c757d", size = 2.5, alpha = 0.4
+            )
+    }
+
+    # Add points - selected bonds (emphasized)
+    if (length(selected_bonds) > 0 && any(trend_data$is_selected)) {
+        p4 <- p4 +
+            geom_point(
+                data = trend_data %>% filter(is_selected),
+                aes(x = date, y = bid_to_cover, color = bond),
+                size = 4, alpha = 0.9
+            ) +
+            scale_color_manual(values = bond_colors, guide = "none")
+
+        # Add labels for selected bond points (using ggrepel if available)
+        if (requireNamespace("ggrepel", quietly = TRUE)) {
+            p4 <- p4 +
+                ggrepel::geom_text_repel(
+                    data = trend_data %>% filter(is_selected),
+                    aes(x = date, y = bid_to_cover, label = bond),
+                    size = 3, fontface = "bold",
+                    box.padding = 0.3, point.padding = 0.2,
+                    segment.color = "gray50", segment.size = 0.3,
+                    max.overlaps = 15
+                )
+        }
+    } else {
+        # If no bonds selected, show all points with bond colors
+        p4 <- p4 +
+            geom_point(
+                data = trend_data,
+                aes(x = date, y = bid_to_cover, color = bond),
+                size = 3, alpha = 0.6
+            ) +
+            scale_color_manual(values = bond_colors, guide = "none")
+    }
+
+    # Add moving average line
+    p4 <- p4 +
+        geom_line(
+            data = trend_data %>% filter(!is.na(ma_5)),
+            aes(x = date, y = ma_5),
+            color = "#E67E22", linewidth = 1.5
+        ) +
+
+        # Annotation for mean
+        annotate(
+            "text",
+            x = date_min,
+            y = overall_mean + 0.15,
+            label = sprintf("Mean: %.2fx", overall_mean),
+            color = "#E53935", size = 3.5, hjust = 0, fontface = "italic"
+        ) +
+
+        # Threshold labels on right side
+        annotate("text", x = date_max + 5, y = 1.5,
+                 label = "Weak", color = "#dc3545", size = 2.8, hjust = 0, fontface = "bold") +
+        annotate("text", x = date_max + 5, y = 2.25,
+                 label = "Moderate", color = "#b8860b", size = 2.8, hjust = 0, fontface = "bold") +
+        annotate("text", x = date_max + 5, y = 2.75,
+                 label = "Good", color = "#20c997", size = 2.8, hjust = 0, fontface = "bold") +
+        annotate("text", x = date_max + 5, y = 3.25,
+                 label = "Strong", color = "#28a745", size = 2.8, hjust = 0, fontface = "bold") +
+
+        # Labels
+        labs(
+            title = "Trend with Confidence Band",
+            subtitle = sprintf("Orange = 5-auction MA | Dashed = Mean (%.2fx) | Shading = 95%% CI", overall_mean),
+            x = NULL,
+            y = "Bid-to-Cover"
+        ) +
+
+        # X-axis formatting
+        scale_x_date(
+            date_breaks = "3 months",
+            date_labels = "%b\n%Y",
+            expand = expansion(mult = c(0.02, 0.1))  # Extra right margin for threshold labels
+        ) +
+
+        # Y-axis formatting
+        scale_y_continuous(
+            breaks = seq(1, 10, by = 1),
+            limits = c(y_min, y_max)
+        ) +
+
+        # Theme
         theme_minimal(base_size = 10) +
         theme(
             plot.title = element_text(face = "bold", size = 11, color = "#1B3A6B"),
-            plot.subtitle = element_text(size = 8, color = "grey50")
+            plot.subtitle = element_text(size = 8, color = "grey50"),
+            panel.grid.minor = element_blank(),
+            panel.grid.major.x = element_blank(),
+            legend.position = "none",
+            plot.margin = margin(10, 35, 10, 10)  # Extra right margin for labels
         )
 
     # Combine with patchwork if available, otherwise use arrangeGrob
+    selected_text <- if (length(selected_bonds) > 0) {
+        paste(" | Highlighted:", paste(selected_bonds, collapse = ", "))
+    } else {
+        ""
+    }
+
     if (requireNamespace("patchwork", quietly = TRUE)) {
         combined <- (p1 | p2 | p3) / p4 +
             patchwork::plot_annotation(
                 title = "Historical Auction Patterns Analysis",
-                subtitle = sprintf("Based on %d auctions | Overall avg: %.2fx ± %.2fx | Dashed red = overall average",
-                                  n_auctions, overall_mean, overall_sd),
+                subtitle = sprintf("Based on %d auctions | Overall avg: %.2fx ± %.2fx%s",
+                                  n_auctions, overall_mean, overall_sd, selected_text),
                 theme = theme(
                     plot.title = element_text(face = "bold", size = 14, color = "#1B3A6B"),
                     plot.subtitle = element_text(size = 10, color = "grey50")
@@ -851,8 +1058,8 @@ generate_success_probability_plot <- function(data, selected_bonds) {
 }
 
 #' @export
-# 18. Bid Distribution Analysis
-generate_bid_distribution_plot <- function(data, params) {
+# 18. Bid Distribution Analysis (Enhanced with selected bond highlighting)
+generate_bid_distribution_plot <- function(data, params, selected_bonds = character(0)) {
     # Check for auction data (silently - user sees message in plot)
     data_check <- check_auction_data(data, required_cols = c("bids_received"))
     if (!data_check$has_data) {
@@ -862,15 +1069,22 @@ generate_bid_distribution_plot <- function(data, params) {
     bid_data <- data %>%
         filter(!is.na(bid_to_cover), !is.na(bids_received)) %>%
         mutate(
+            # Convert bids to billions for cleaner axis
+            total_bids_bn = bids_received / 1e9,
+
+            # Create bid-to-cover categories with multi-line labels (no angle needed)
             btc_category = case_when(
-                bid_to_cover < 2 ~ "Weak (<2x)",
-                bid_to_cover < 2.5 ~ "Moderate (2-2.5x)",
-                bid_to_cover < 3 ~ "Good (2.5-3x)",
-                TRUE ~ "Strong (>3x)"
+                bid_to_cover < 2 ~ "Weak\n(<2.0x)",
+                bid_to_cover < 2.5 ~ "Moderate\n(2.0-2.5x)",
+                bid_to_cover < 3 ~ "Good\n(2.5-3.0x)",
+                TRUE ~ "Strong\n(>3.0x)"
             ),
             btc_category = factor(btc_category,
-                                  levels = c("Weak (<2x)", "Moderate (2-2.5x)",
-                                             "Good (2.5-3x)", "Strong (>3x)"))
+                                  levels = c("Weak\n(<2.0x)", "Moderate\n(2.0-2.5x)",
+                                             "Good\n(2.5-3.0x)", "Strong\n(>3.0x)")),
+
+            # Selection flag for highlighting
+            is_selected = bond %in% selected_bonds
         )
 
     if(nrow(bid_data) == 0) {
@@ -885,84 +1099,132 @@ generate_bid_distribution_plot <- function(data, params) {
             pct_of_total = n() / nrow(bid_data) * 100,
             total_bids = sum(bids_received, na.rm = TRUE),
             avg_bids = mean(bids_received, na.rm = TRUE),
+            median_bids_bn = median(total_bids_bn, na.rm = TRUE),
             .groups = "drop"
         )
 
     # Get percentages for insight text
     strong_pct <- category_stats %>%
-        filter(btc_category == "Strong (>3x)") %>%
+        filter(grepl("Strong", btc_category)) %>%
         pull(pct_of_total) %>%
         {if(length(.) == 0) 0 else .}
     weak_pct <- category_stats %>%
-        filter(btc_category == "Weak (<2x)") %>%
+        filter(grepl("Weak", btc_category)) %>%
         pull(pct_of_total) %>%
         {if(length(.) == 0) 0 else .}
 
-    # Build insight text
-    insight_text <- sprintf("Key Finding: %.0f%% of auctions achieved >3x coverage (Strong), %.0f%% were weak (<2x)",
-                           strong_pct, weak_pct)
+    total_n <- nrow(bid_data)
 
-    # Create violin plot with category counts
-    p <- ggplot(bid_data, aes(x = btc_category, y = bids_received/1e9)) +
+    # Category fill colors (semi-transparent for boxes)
+    category_colors <- c(
+        "Weak\n(<2.0x)" = "#dc354540",
+        "Moderate\n(2.0-2.5x)" = "#ffc10740",
+        "Good\n(2.5-3.0x)" = "#20c99740",
+        "Strong\n(>3.0x)" = "#28a74540"
+    )
 
-        geom_violin(aes(fill = btc_category),
-                    alpha = 0.6,
-                    trim = FALSE,
-                    color = NA) +
+    # Get bond colors with selection emphasis
+    bond_colors <- get_auction_bond_colors(selected_bonds)
 
-        geom_boxplot(width = 0.2,
-                     fill = "white",
-                     alpha = 0.9,
-                     outlier.shape = 21) +
+    # Build subtitle based on selection
+    subtitle_text <- if (length(selected_bonds) > 0) {
+        paste("◆ Highlighted:", paste(selected_bonds, collapse = ", "), "| Box = IQR with median")
+    } else {
+        "Total bid amounts across bid-to-cover categories | Box = IQR with median"
+    }
 
-        geom_jitter(aes(color = bond),
-                    width = 0.1,
-                    alpha = 0.6,
-                    size = 2) +
+    # Build the plot
+    p <- ggplot(bid_data, aes(x = btc_category, y = total_bids_bn)) +
 
-        # Add count labels below each category
+        # Box plots for distribution (semi-transparent background)
+        geom_boxplot(
+            aes(fill = btc_category),
+            alpha = 0.4,
+            outlier.shape = NA,  # Hide outliers (shown as points)
+            width = 0.6,
+            color = "gray40"
+        ) +
+
+        # Individual points - non-selected (jittered, smaller)
+        geom_jitter(
+            data = bid_data %>% filter(!is_selected),
+            aes(color = bond),
+            width = 0.2,
+            size = 2,
+            alpha = 0.5
+        ) +
+
+        # Individual points - selected (emphasized, larger, diamond shape)
+        geom_jitter(
+            data = bid_data %>% filter(is_selected),
+            aes(color = bond),
+            width = 0.15,
+            size = 5,
+            alpha = 0.9,
+            shape = 18  # Diamond shape for selected
+        ) +
+
+        # Add count labels at bottom
         geom_text(
             data = category_stats,
-            aes(x = btc_category, y = -max(bid_data$bids_received/1e9) * 0.08,
+            aes(x = btc_category, y = 0,
                 label = sprintf("n=%d\n(%.0f%%)", n_auctions, pct_of_total)),
-            size = 3, color = "grey30"
+            vjust = 1.2,
+            size = 3.5,
+            color = "#666",
+            fontface = "bold"
         ) +
 
-        scale_fill_manual(
-            values = c(
-                "Weak (<2x)" = "#FFCDD2",
-                "Moderate (2-2.5x)" = "#FFF9C4",
-                "Good (2.5-3x)" = "#C8E6C9",
-                "Strong (>3x)" = "#81C784"
-            ),
-            guide = "none"
+        # Fill scale for boxes
+        scale_fill_manual(values = category_colors, guide = "none") +
+
+        # Color scale for points
+        scale_color_manual(
+            values = bond_colors,
+            name = "Bond"
         ) +
 
-        scale_color_manual(values = insele_palette$categorical,
-                           name = "Bond") +
-
+        # Y-axis formatting with consistent "R5bn" style
         scale_y_continuous(
             labels = function(x) paste0("R", x, "bn"),
-            breaks = scales::pretty_breaks(n = 6),
-            expand = expansion(mult = c(0.15, 0.05))  # Make room for count labels
+            expand = expansion(mult = c(0.15, 0.05)),  # Extra space at bottom for labels
+            breaks = scales::pretty_breaks(n = 6)
         ) +
 
+        # Labels
         labs(
             title = "Bid Distribution by Auction Performance",
-            subtitle = "Total bid amounts across bid-to-cover categories",
+            subtitle = subtitle_text,
             x = "Bid-to-Cover Category",
-            y = "Total Bids",
-            caption = paste(insight_text, "\nPoints colored by bond | Based on", nrow(bid_data), "auctions")
+            y = "Total Bids (R billions)",
+            caption = sprintf(
+                "Key Finding: %.0f%% of auctions achieved >3x coverage (Strong); %.0f%% were weak (<2x)\nBased on %d auctions | ◆ = Selected for forecast",
+                strong_pct, weak_pct, total_n
+            )
         ) +
 
+        # Theme
         theme_minimal(base_size = 11) +
         theme(
             plot.title = element_text(face = "bold", size = 13, color = "#1B3A6B"),
             plot.subtitle = element_text(size = 10, color = "grey50"),
-            plot.caption = element_text(size = 8, color = "grey50", hjust = 0),
-            axis.text.x = element_text(angle = 45, hjust = 1),
+            plot.caption = element_text(hjust = 0, color = "#666", size = 9, face = "italic"),
+            axis.title = element_text(color = "#1B3A6B"),
+            axis.text.x = element_text(size = 10, face = "bold"),  # No angle with multi-line labels
+            panel.grid.major.x = element_blank(),
+            panel.grid.minor = element_blank(),
             legend.position = "bottom",
-            legend.title = element_blank()
+            legend.title = element_text(face = "bold", size = 9),
+            legend.text = element_text(size = 8),
+            legend.key.size = unit(0.8, "lines")
+        ) +
+
+        # Limit legend to show only key bonds (avoid clutter)
+        guides(
+            color = guide_legend(
+                nrow = 2,
+                override.aes = list(size = 3, alpha = 0.8)
+            )
         )
 
     return(p)
