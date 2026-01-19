@@ -4302,33 +4302,132 @@ server <- function(input, output, session) {
             return(DT::datatable(table_data, options = list(dom = 't'), rownames = FALSE))
         }
 
-        # Build the datatable
+        # Store numeric Yield Trend for conditional styling before modifying table
+        yield_trend_numeric <- if ("Yield Trend" %in% names(table_data)) {
+            table_data$`Yield Trend`
+        } else {
+            NULL
+        }
+
+        # Replace numeric Yield Trend with formatted display version
+        if ("Yield Trend Display" %in% names(table_data) && "Yield Trend" %in% names(table_data)) {
+            table_data$`Yield Trend` <- table_data$`Yield Trend Display`
+            table_data$`Yield Trend Display` <- NULL  # Remove the display column
+        }
+
+        # Column indices after removing Yield Trend Display:
+        # 0: Bond, 1: # Auctions, 2: Total (R mil), 3: Avg B2C, 4: B2C Range
+        # 5: Alloc Rate %, 6: Oversub %, 7: Yield Trend, 8: First Auction, 9: Last Auction
+
+        # Build the datatable with improved formatting
         dt <- DT::datatable(
             table_data,
+            rownames = FALSE,
+            filter = "none",
             options = list(
                 pageLength = 15,
                 scrollX = TRUE,
                 dom = 'Bfrtip',
                 buttons = c('copy', 'csv', 'excel'),
-                order = list(list(2, 'desc'))  # Sort by Total (R mil) descending
+                # Don't auto-sort since TOTAL is at top
+                order = list(),
+                columnDefs = list(
+                    # Right-align numeric columns
+                    list(className = 'dt-right', targets = c(1, 2, 3, 5, 6)),
+                    # Center the B2C Range and Yield Trend columns
+                    list(className = 'dt-center', targets = c(4, 7))
+                ),
+                language = list(
+                    search = "Search:",
+                    info = "Showing _START_ to _END_ of _TOTAL_ entries"
+                )
             ),
-            rownames = FALSE,
-            class = 'cell-border stripe hover'
+            class = 'cell-border stripe hover compact'
         )
 
-        # Apply formatting only if Bond column exists
-        if ("Bond" %in% names(table_data)) {
+        # Format Total (R mil) with thousand separators
+        if ("Total (R mil)" %in% names(table_data)) {
             dt <- dt %>%
-                DT::formatStyle(
-                    'Bond',
-                    fontWeight = 'bold',
-                    color = DT::styleEqual('TOTAL', '#1B3A6B')
+                DT::formatCurrency(
+                    columns = 'Total (R mil)',
+                    currency = "",
+                    digits = 0,
+                    mark = ","
                 )
         }
 
-        # Apply color bar to Total (R mil) column if it exists and is numeric
+        # Format Avg B2C with 2 decimals and 'x' suffix
+        if ("Avg B2C" %in% names(table_data)) {
+            dt <- dt %>%
+                DT::formatRound(columns = 'Avg B2C', digits = 2) %>%
+                DT::formatString(columns = 'Avg B2C', suffix = "x")
+        }
+
+        # Format percentages
+        if ("Alloc Rate %" %in% names(table_data)) {
+            dt <- dt %>%
+                DT::formatRound(columns = 'Alloc Rate %', digits = 1) %>%
+                DT::formatString(columns = 'Alloc Rate %', suffix = "%")
+        }
+        if ("Oversub %" %in% names(table_data)) {
+            dt <- dt %>%
+                DT::formatRound(columns = 'Oversub %', digits = 1) %>%
+                DT::formatString(columns = 'Oversub %', suffix = "%")
+        }
+
+        # Conditional formatting for Avg B2C (color based on demand strength)
+        # Red (<2.0x) -> Yellow (2.0-2.5x) -> Light Green (2.5-3.0x) -> Green (>3.0x)
+        if ("Avg B2C" %in% names(table_data)) {
+            dt <- dt %>%
+                DT::formatStyle(
+                    columns = 'Avg B2C',
+                    backgroundColor = DT::styleInterval(
+                        cuts = c(2.0, 2.5, 3.0),
+                        values = c('#FFCDD2', '#FFF9C4', '#C8E6C9', '#81C784')
+                    )
+                )
+        }
+
+        # Conditional formatting for Yield Trend based on stored numeric values
+        # Green for negative (yields falling = good for bond holders), Red for positive
+        if (!is.null(yield_trend_numeric) && "Yield Trend" %in% names(table_data)) {
+            # Create color vector based on the numeric values
+            yield_colors <- sapply(yield_trend_numeric, function(x) {
+                if (is.na(x) || is.nan(x)) return('#666666')  # Gray for NA
+                if (x < 0) return('#2E7D32')  # Green for negative (falling yields)
+                return('#C62828')  # Red for positive (rising yields)
+            })
+
+            dt <- dt %>%
+                DT::formatStyle(
+                    columns = 'Yield Trend',
+                    color = DT::styleEqual(
+                        levels = table_data$`Yield Trend`,
+                        values = yield_colors
+                    ),
+                    fontWeight = 'bold'
+                )
+        }
+
+        # Style the TOTAL row: bold text, light blue background
+        if ("Bond" %in% names(table_data)) {
+            dt <- dt %>%
+                DT::formatStyle(
+                    columns = 'Bond',
+                    target = 'row',
+                    fontWeight = DT::styleEqual(c('TOTAL'), c('bold')),
+                    backgroundColor = DT::styleEqual(c('TOTAL'), c('#E3F2FD'))
+                ) %>%
+                # Also make Bond column text navy for TOTAL row
+                DT::formatStyle(
+                    columns = 'Bond',
+                    color = DT::styleEqual('TOTAL', '#1B3A6B'),
+                    fontWeight = 'bold'
+                )
+        }
+
+        # Apply color bar to Total (R mil) column for non-TOTAL rows visual comparison
         if ("Total (R mil)" %in% names(table_data)) {
-            # Get numeric values for non-TOTAL rows
             non_total_values <- table_data[table_data$Bond != 'TOTAL', 'Total (R mil)']
             if (is.numeric(non_total_values) && length(non_total_values) > 0 && any(!is.na(non_total_values))) {
                 dt <- dt %>%
@@ -10863,6 +10962,11 @@ server <- function(input, output, session) {
         content = function(file) {
             req(filtered_auction_data())
             table_data <- generate_ytd_issuance_table(filtered_auction_data())
+            # Use the formatted Yield Trend Display for CSV export
+            if ("Yield Trend Display" %in% names(table_data) && "Yield Trend" %in% names(table_data)) {
+                table_data$`Yield Trend` <- table_data$`Yield Trend Display`
+                table_data$`Yield Trend Display` <- NULL
+            }
             write.csv(table_data, file, row.names = FALSE)
         }
     )
