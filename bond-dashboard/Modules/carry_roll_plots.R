@@ -367,13 +367,41 @@ generate_optimal_holding_enhanced_plot <- function(data) {
 
 #' @export
 # 13. Forward Curve Plot - Shows spot curve with key forward rate segments
-generate_forward_curve_plot <- function(data, params) {
+#' @description
+#' Generates a visualization of the spot yield curve with implied forward rates.
+#' Forward segments are positioned correctly: X-axis START = when forward period begins,
+#' X-axis END = start + duration. Color indicates spread vs current spot rate.
+#' @param data Bond data frame with modified_duration and yield_to_maturity columns
+#' @param params Optional parameters (currently unused, reserved for future use)
+#' @param selected_period Optional string specifying a forward period to highlight (e.g., "3y2y")
+#' @return ggplot object
+generate_forward_curve_plot <- function(data, params = NULL, selected_period = NULL) {
+
+    # Input validation
+    if (is.null(data) || nrow(data) == 0) {
+        return(
+            ggplot() +
+                annotate("text", x = 0.5, y = 0.5,
+                         label = "Insufficient data for forward rate analysis",
+                         size = 5, color = "grey50") +
+                theme_void() +
+                labs(title = "Spot Curve vs Implied Forward Rates")
+        )
+    }
+
     # Calculate forward rates for visualization
     curve_data <- data %>%
         arrange(modified_duration)
 
-    if(nrow(curve_data) < 2) {
-        return(NULL)
+    if (nrow(curve_data) < 2) {
+        return(
+            ggplot() +
+                annotate("text", x = 0.5, y = 0.5,
+                         label = "Need at least 2 bonds to construct yield curve",
+                         size = 5, color = "grey50") +
+                theme_void() +
+                labs(title = "Spot Curve vs Implied Forward Rates")
+        )
     }
 
     # Create yield curve interpolation function
@@ -383,21 +411,24 @@ generate_forward_curve_plot <- function(data, params) {
         rule = 2
     )
 
-    # Define key forward periods: XyYy = Y-year rate starting X years from now
+    # Define ALL standard forward periods: XyYy = Y-year rate starting X years from now
+    # start_year = when the forward period begins
+    # tenor_years = duration/length of the forward rate
+    # end_year = start_year + tenor_years (when the forward period ends)
     forward_periods <- data.frame(
-        start_year = c(1, 2, 3, 5, 7),
-        tenor_years = c(1, 1, 2, 2, 3),
-        label = c("1y1y", "2y1y", "3y2y", "5y2y", "7y3y"),
+        start_year = c(0, 1, 2, 3, 5, 7, 10),
+        tenor_years = c(1, 1, 1, 2, 2, 3, 5),
+        label = c("0y1y", "1y1y", "2y1y", "3y2y", "5y2y", "7y3y", "10y5y"),
         stringsAsFactors = FALSE
     )
     forward_periods$end_year <- forward_periods$start_year + forward_periods$tenor_years
 
     # Calculate forward rates for each period
     forward_data <- data.frame()
-    for(i in 1:nrow(forward_periods)) {
-        t1 <- forward_periods$start_year[i]
-        t2 <- forward_periods$end_year[i]
-        tenor <- forward_periods$tenor_years[i]
+    for (i in 1:nrow(forward_periods)) {
+        t1 <- forward_periods$start_year[i]  # Start of forward period
+        t2 <- forward_periods$end_year[i]    # End of forward period
+        tenor <- forward_periods$tenor_years[i]  # Duration of forward rate
 
         # Get interpolated spot rates (in percentage form)
         r_t1_pct <- yield_curve_func(t1)
@@ -408,11 +439,21 @@ generate_forward_curve_plot <- function(data, params) {
         r_t1 <- r_t1_pct / 100
         r_t2 <- r_t2_pct / 100
 
-        # Calculate forward rate
-        forward_rate <- ((1 + r_t2)^t2 / (1 + r_t1)^t1)^(1/tenor) - 1
-        forward_rate_pct <- forward_rate * 100
+        # Calculate forward rate using no-arbitrage formula:
+        # (1 + s_T)^T = (1 + s_t)^t × (1 + f_{t,T})^(T-t)
+        # Solving: f = [(1 + r_t2)^t2 / (1 + r_t1)^t1]^(1/(t2-t1)) - 1
+        if (t1 == 0) {
+            # For 0yXy, forward rate equals the spot rate at tenor X
+            forward_rate <- r_t2
+            forward_rate_pct <- r_t2_pct
+        } else {
+            forward_rate <- ((1 + r_t2)^t2 / (1 + r_t1)^t1)^(1/tenor) - 1
+            forward_rate_pct <- forward_rate * 100
+        }
 
-        # Spread in basis points (forward vs current spot for same tenor)
+        # Spread in basis points: forward rate vs current spot for same tenor
+        # Positive spread = market expects rates to RISE (bearish for bonds)
+        # Negative spread = market expects rates to FALL (bullish for bonds)
         spread_bps <- (forward_rate_pct - r_tenor_pct) * 100
 
         forward_data <- rbind(forward_data, data.frame(
@@ -428,68 +469,158 @@ generate_forward_curve_plot <- function(data, params) {
         ))
     }
 
-    if(nrow(forward_data) == 0) {
-        return(NULL)
+    # Validate forward rate data
+    forward_data <- forward_data %>%
+        filter(!is.na(forward_rate), forward_rate > 0, forward_rate < 30)
+
+    if (nrow(forward_data) == 0) {
+        return(
+            ggplot() +
+                annotate("text", x = 0.5, y = 0.5,
+                         label = "Could not calculate valid forward rates",
+                         size = 5, color = "grey50") +
+                theme_void() +
+                labs(title = "Spot Curve vs Implied Forward Rates")
+        )
+    }
+
+    # Add selection indicator if a period is selected
+    forward_data <- forward_data %>%
+        mutate(
+            is_selected_logical = ifelse(!is.null(selected_period), label == selected_period, FALSE),
+            # Convert to character for ggplot2 scale_*_manual compatibility
+            is_selected = as.character(is_selected_logical),
+            alpha_value = ifelse(is_selected_logical | is.null(selected_period), 0.85, 0.4)
+        )
+
+    # Determine x-axis extent (max end year of all forwards + buffer)
+    max_tenor <- max(forward_data$end_year, na.rm = TRUE)
+    x_max <- ceiling(max_tenor * 1.1)  # 10% buffer
+    x_min <- 0
+
+    # Calculate segment height (thickness) for rectangles
+    y_range <- max(forward_data$forward_rate, curve_data$yield_to_maturity) -
+               min(forward_data$forward_rate, curve_data$yield_to_maturity)
+    segment_height <- y_range * 0.02  # 2% of y-range for rectangle height
+
+    # Create diverging color scale for spread
+    # Green for negative spreads (bullish), Red for positive (bearish), Neutral for near-zero
+    min_spread <- min(forward_data$spread_bps, na.rm = TRUE)
+    max_spread <- max(forward_data$spread_bps, na.rm = TRUE)
+
+    # Determine if we have both positive and negative spreads
+    has_negative <- min_spread < -10
+    has_positive <- max_spread > 10
+
+    if (has_negative && has_positive) {
+        # True diverging scale centered on zero
+        max_abs <- max(abs(min_spread), abs(max_spread))
+        color_scale <- scale_fill_gradient2(
+            low = "#2E7D32",      # Green for negative (bullish)
+            mid = "#F5F5F5",      # Light grey for neutral
+            high = "#C62828",     # Red for positive (bearish)
+            midpoint = 0,
+            limits = c(-max_abs, max_abs),
+            name = "Spread\n(bps)",
+            labels = function(x) sprintf("%+.0f", x)
+        )
+    } else if (has_positive) {
+        # Only positive spreads - use gradient from neutral to red
+        color_scale <- scale_fill_gradientn(
+            colors = c("#E8F5E9", "#FFF9C4", "#FFCC80", "#EF5350", "#C62828"),
+            values = scales::rescale(c(0, 25, 100, 200, max(max_spread, 300))),
+            limits = c(0, max(max_spread, 50)),
+            name = "Spread\n(bps)",
+            labels = function(x) sprintf("%+.0f", x),
+            oob = scales::squish
+        )
+    } else {
+        # Only negative spreads - use gradient from green to neutral
+        color_scale <- scale_fill_gradientn(
+            colors = c("#1B5E20", "#4CAF50", "#A5D6A7", "#E8F5E9"),
+            values = scales::rescale(c(min(min_spread, -200), min_spread/2, min_spread/4, 0)),
+            limits = c(min(min_spread, -50), 0),
+            name = "Spread\n(bps)",
+            labels = function(x) sprintf("%+.0f", x),
+            oob = scales::squish
+        )
     }
 
     # Create the plot
     p <- ggplot() +
 
-        # Spot curve (main line)
+        # Spot curve (draw first, behind segments)
         geom_line(data = curve_data,
                   aes(x = modified_duration, y = yield_to_maturity),
                   color = insele_palette$primary,
-                  size = 1.5,
+                  linewidth = 1.2,
                   alpha = 0.9) +
         geom_point(data = curve_data,
                    aes(x = modified_duration, y = yield_to_maturity),
                    color = insele_palette$primary,
-                   size = 3) +
+                   size = 2.5) +
 
-        # Forward rate segments (horizontal lines showing the forward period)
-        geom_segment(data = forward_data,
-                     aes(x = start_year, xend = end_year,
-                         y = forward_rate, yend = forward_rate,
-                         color = spread_bps),
-                     size = 3,
-                     lineend = "round",
-                     alpha = 0.85) +
+        # Forward rate segments as rectangles (properly positioned)
+        # X-axis: start_year to end_year (shows when forward period applies)
+        # Y-axis: forward_rate (the implied rate)
+        geom_rect(data = forward_data,
+                  aes(
+                      xmin = start_year,
+                      xmax = end_year,
+                      ymin = forward_rate - segment_height,
+                      ymax = forward_rate + segment_height,
+                      fill = spread_bps,
+                      alpha = alpha_value,
+                      color = is_selected,
+                      linewidth = is_selected
+                  )) +
 
-        # Labels for forward rates
+        # Map selection state to visual properties
+        scale_alpha_identity() +
+        scale_color_manual(
+            values = c("FALSE" = "white", "TRUE" = "#1B3A6B"),
+            guide = "none"
+        ) +
+        scale_linewidth_manual(
+            values = c("FALSE" = 0.8, "TRUE" = 2),
+            guide = "none"
+        ) +
+
+        # Labels for forward rates (positioned above segments to avoid overlap)
         geom_label(data = forward_data,
-                   aes(x = mid_point, y = forward_rate,
+                   aes(x = mid_point,
+                       y = forward_rate + segment_height + y_range * 0.04,
                        label = sprintf("%s\n%.1f%%", label, forward_rate)),
-                   size = 2.8,
+                   size = 2.5,
                    fontface = "bold",
                    fill = "white",
-                   alpha = 0.9,
-                   label.padding = unit(0.15, "lines"),
-                   label.size = 0.3) +
+                   color = "#424242",
+                   alpha = 0.95,
+                   label.padding = unit(0.12, "lines"),
+                   label.size = 0.25,
+                   lineheight = 0.85) +
 
-        # Color scale for spread (diverging: green = bullish, red = bearish)
-        scale_color_gradient2(
-            low = "#1B5E20",    # Bullish (negative spread - rates falling)
-            mid = "#FFC107",    # Neutral
-            high = "#C62828",   # Bearish (positive spread - rates rising)
-            midpoint = 0,
-            name = "Spread\n(bps)",
-            limits = c(min(-50, min(forward_data$spread_bps)),
-                      max(50, max(forward_data$spread_bps)))
-        ) +
+        # Color scale for spread
+        color_scale +
 
+        # Y-axis formatting
         scale_y_continuous(
-            labels = function(x) paste0(x, "%"),
-            breaks = pretty_breaks(n = 8)
+            labels = function(x) sprintf("%.1f%%", x),
+            breaks = scales::pretty_breaks(n = 8),
+            expand = expansion(mult = c(0.05, 0.18))  # Extra space for labels at top
         ) +
 
+        # X-axis formatting - extend to accommodate longest forward
         scale_x_continuous(
-            breaks = pretty_breaks(n = 10)
+            breaks = seq(0, x_max, by = ifelse(x_max > 12, 2, 1)),
+            limits = c(x_min, x_max),
+            expand = expansion(mult = c(0.02, 0.05))
         ) +
 
         # Add legend annotation for spot curve
         annotate("text",
-                 x = min(curve_data$modified_duration) + 0.5,
-                 y = max(curve_data$yield_to_maturity) + 0.5,
+                 x = 1.5,
+                 y = curve_data$yield_to_maturity[which.min(curve_data$modified_duration)] + y_range * 0.06,
                  label = "Spot Curve",
                  color = insele_palette$primary,
                  fontface = "bold",
@@ -501,13 +632,23 @@ generate_forward_curve_plot <- function(data, params) {
             subtitle = "Segments show forward rate periods | Color indicates spread vs current spot",
             x = "Tenor (years)",
             y = "Rate (%)",
-            caption = "Forward notation: XyYy = Y-year rate starting X years from now | Green = bullish, Red = bearish"
+            caption = paste(
+                "Forward notation: XyYy = Y-year rate starting X years from now |",
+                "Green = bullish (rates expected to fall) | Red = bearish (rates expected to rise)"
+            )
         ) +
 
         create_insele_theme() +
         theme(
+            plot.title = element_text(face = "bold", size = 14, color = "#1B3A6B"),
+            plot.subtitle = element_text(size = 10, color = "grey40"),
+            plot.caption = element_text(size = 8, color = "grey50", hjust = 0),
             legend.position = "right",
-            plot.caption = element_text(size = 9, color = "#666666")
+            legend.title = element_text(size = 9, face = "bold"),
+            legend.key.height = unit(1.2, "cm"),
+            legend.key.width = unit(0.4, "cm"),
+            panel.grid.minor = element_blank(),
+            panel.grid.major = element_line(color = "grey90", linewidth = 0.3)
         )
 
     return(p)

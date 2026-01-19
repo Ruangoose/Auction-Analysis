@@ -1677,14 +1677,15 @@ ui <- dashboardPage(
                                    width = 12,
                                    collapsible = TRUE,
 
-                                   # Educational explainer panel - Dark blue background with white text
+                                   # Educational explainer panel - Insele branded gradient
                                    tags$div(
-                                       class = "alert alert-info",
-                                       style = "margin-bottom: 15px; background: #1565C0; border: none;",
+                                       class = "forward-rate-info-box",
+                                       style = "margin-bottom: 15px; background: linear-gradient(135deg, #1B3A6B 0%, #2E5090 100%);
+                                                border: none; border-radius: 8px; padding: 20px; color: white;",
 
                                        tags$h5(
-                                           style = "color: white; margin-top: 0;",
-                                           "Understanding Forward Rates"
+                                           style = "color: white; margin-top: 0; font-weight: bold;",
+                                           icon("chart-line"), " Understanding Forward Rates"
                                        ),
 
                                        tags$p(
@@ -1695,43 +1696,68 @@ ui <- dashboardPage(
 
                                        # Notation box - white background with dark text
                                        tags$div(
-                                           style = "background: white; padding: 10px; border-radius: 4px; margin: 10px 0;",
+                                           style = "background: rgba(255,255,255,0.95); padding: 12px; border-radius: 4px; margin: 12px 0;",
                                            tags$span(style = "color: #1B3A6B;", tags$strong("Notation: ")),
-                                           tags$code(style = "background: #E3F2FD; color: #1565C0; padding: 2px 6px;", "XyYy"),
+                                           tags$code(style = "background: rgba(27, 58, 107, 0.1); color: #1B3A6B; padding: 2px 6px; border-radius: 3px;", "XyYy"),
                                            tags$span(style = "color: #333;", " = Y-year rate starting X years from now"),
                                            tags$br(),
                                            tags$span(style = "color: #1B3A6B;", tags$strong("Example: ")),
-                                           tags$code(style = "background: #E3F2FD; color: #1565C0; padding: 2px 6px;", "3y2y"),
-                                           tags$span(style = "color: #333;", " = The 2-year rate, 3 years forward (Year 3 to Year 5)")
+                                           tags$code(style = "background: rgba(27, 58, 107, 0.1); color: #1B3A6B; padding: 2px 6px; border-radius: 3px;", "3y2y"),
+                                           tags$span(style = "color: #333;", " = The 2-year rate, 3 years forward (Year 3 to Year 5)"),
+                                           tags$br(),
+                                           tags$span(style = "color: #666; font-size: 12px; font-style: italic;",
+                                                     "Chart segments span from start year (X) to end year (X+Y)")
                                        ),
 
-                                       tags$h6(style = "color: white; margin-top: 15px;", "Interpretation:"),
+                                       tags$h6(style = "color: white; margin-top: 15px; font-weight: bold;", "Spread Interpretation:"),
 
-                                       tags$ul(
-                                           style = "color: white; margin: 5px 0;",
-                                           tags$li(
-                                               tags$span(style = "color: #FFCDD2; font-weight: bold;", "Positive spread (+50 bps+):"),
-                                               " Market expects rates to RISE - Bearish for bond prices"
+                                       # Three-column interpretation layout
+                                       fluidRow(
+                                           column(4,
+                                               tags$div(
+                                                   style = "background: rgba(46, 125, 50, 0.25); padding: 10px; border-radius: 4px; margin: 5px 0;",
+                                                   tags$span(style = "color: #A5D6A7; font-size: 1.2em;", HTML("&#9679; ")),
+                                                   tags$strong(style = "color: #A5D6A7;", "Negative spread"),
+                                                   tags$br(),
+                                                   tags$span(style = "color: white; font-size: 13px;", "Market expects rates to FALL"),
+                                                   tags$br(),
+                                                   tags$em(style = "font-size: 11px; color: #B0BEC5;", "Bullish for bond prices")
+                                               )
                                            ),
-                                           tags$li(
-                                               tags$span(style = "color: #C8E6C9; font-weight: bold;", "Negative spread (-50 bps-):"),
-                                               " Market expects rates to FALL - Bullish for bond prices"
+                                           column(4,
+                                               tags$div(
+                                                   style = "background: rgba(158, 158, 158, 0.25); padding: 10px; border-radius: 4px; margin: 5px 0;",
+                                                   tags$span(style = "color: #E0E0E0; font-size: 1.2em;", HTML("&#9679; ")),
+                                                   tags$strong(style = "color: #E0E0E0;", "Near zero"),
+                                                   tags$br(),
+                                                   tags$span(style = "color: white; font-size: 13px;", "Rates expected unchanged"),
+                                                   tags$br(),
+                                                   tags$em(style = "font-size: 11px; color: #B0BEC5;", "Neutral outlook")
+                                               )
                                            ),
-                                           tags$li(
-                                               tags$span(style = "color: #FFF9C4; font-weight: bold;", "Near zero spread:"),
-                                               " Market expects rates roughly unchanged"
+                                           column(4,
+                                               tags$div(
+                                                   style = "background: rgba(198, 40, 40, 0.25); padding: 10px; border-radius: 4px; margin: 5px 0;",
+                                                   tags$span(style = "color: #EF9A9A; font-size: 1.2em;", HTML("&#9679; ")),
+                                                   tags$strong(style = "color: #EF9A9A;", "Positive spread"),
+                                                   tags$br(),
+                                                   tags$span(style = "color: white; font-size: 13px;", "Market expects rates to RISE"),
+                                                   tags$br(),
+                                                   tags$em(style = "font-size: 11px; color: #B0BEC5;", "Bearish for bond prices")
+                                               )
                                            )
                                        ),
 
                                        tags$p(
-                                           style = "color: rgba(255,255,255,0.8); font-size: 12px; font-style: italic; margin-top: 10px;",
-                                           "Note: Forward rates are mathematical constructs, not forecasts. ",
+                                           style = "color: rgba(255,255,255,0.75); font-size: 11px; font-style: italic; margin-top: 12px; margin-bottom: 0;",
+                                           icon("info-circle"),
+                                           " Note: Forward rates are mathematical constructs, not forecasts. ",
                                            "They represent break-even rates for carry trades."
                                        )
                                    ),
 
-                                   # Add visualization
-                                   plotOutput("forward_curve_plot", height = "350px"),
+                                   # Add visualization (increased height for more forward periods)
+                                   plotOutput("forward_curve_plot", height = "420px"),
 
                                    # Add download button for the plot
                                    tags$div(
