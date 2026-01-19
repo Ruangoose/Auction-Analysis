@@ -6205,11 +6205,11 @@ server <- function(input, output, session) {
             mutate(
                 Market_View = case_when(
                     Spread_bps <= -50 ~ "Rates Falling",
-                    Spread_bps <= -10 ~ "Slightly Bullish",
-                    Spread_bps <= 10 ~ "Neutral",
-                    Spread_bps <= 50 ~ "Slightly Bearish",
-                    Spread_bps <= 150 ~ "Rates Rising",
-                    TRUE ~ "Strongly Bearish"
+                    Spread_bps <= -10 ~ "Rates Dipping",
+                    Spread_bps <= 25 ~ "Neutral",
+                    Spread_bps <= 100 ~ "Rates Rising",
+                    Spread_bps <= 200 ~ "Rates Rising Sharply",
+                    TRUE ~ "Rates Rising Strongly"
                 ),
                 # Improved signal strength - "None" replaced with "Weak" for clarity
                 Signal_Strength = case_when(
@@ -6280,18 +6280,18 @@ server <- function(input, output, session) {
                 )
             )
         ) %>%
-            # Market View coloring - improved with consistent styling
+            # Market View coloring - directional terminology with consistent styling
             formatStyle(
                 "Market_View",
                 backgroundColor = styleEqual(
-                    c("Rates Falling", "Slightly Bullish", "Neutral",
-                      "Slightly Bearish", "Rates Rising", "Strongly Bearish"),
+                    c("Rates Falling", "Rates Dipping", "Neutral",
+                      "Rates Rising", "Rates Rising Sharply", "Rates Rising Strongly"),
                     c("#C8E6C9", "#E8F5E9", "#F5F5F5",
                       "#FFF3E0", "#FFCDD2", "#FFAB91")
                 ),
                 color = styleEqual(
-                    c("Rates Falling", "Slightly Bullish", "Neutral",
-                      "Slightly Bearish", "Rates Rising", "Strongly Bearish"),
+                    c("Rates Falling", "Rates Dipping", "Neutral",
+                      "Rates Rising", "Rates Rising Sharply", "Rates Rising Strongly"),
                     c("#1B5E20", "#2E7D32", "#424242",
                       "#E65100", "#C62828", "#BF360C")
                 ),
@@ -6309,11 +6309,11 @@ server <- function(input, output, session) {
                     c("normal", "normal", "bold", "bold")
                 )
             ) %>%
-            # Spread coloring - color based on value
+            # Spread coloring - color based on value (aligned with Market View thresholds)
             formatStyle(
                 "Spread_Fmt",
                 color = styleInterval(
-                    cuts = c(-50, -10, 10, 50),
+                    cuts = c(-50, -10, 25, 100),
                     values = c("#1B5E20", "#43A047", "#424242", "#E65100", "#C62828")
                 )
             )
