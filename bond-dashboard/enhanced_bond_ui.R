@@ -2190,6 +2190,40 @@ ui <- dashboardPage(
                                    solidHeader = TRUE,
                                    width = 12,
 
+                                   # Date range filter for cumulative issuance
+                                   fluidRow(
+                                       column(6,
+                                           dateRangeInput(
+                                               inputId = "auction_date_range",
+                                               label = "Select Date Range:",
+                                               start = NULL,
+                                               end = NULL,
+                                               min = NULL,
+                                               max = NULL,
+                                               format = "yyyy-mm-dd",
+                                               separator = " to "
+                                           )
+                                       ),
+                                       column(6,
+                                           div(style = "margin-top: 25px;",
+                                               actionButton("auction_ytd_btn", "YTD",
+                                                           class = "btn-sm",
+                                                           style = "background-color: #1B3A6B; color: white; margin-right: 5px;"),
+                                               actionButton("auction_6m_btn", "Last 6M",
+                                                           class = "btn-sm",
+                                                           style = "background-color: #2E5090; color: white; margin-right: 5px;"),
+                                               actionButton("auction_12m_btn", "Last 12M",
+                                                           class = "btn-sm",
+                                                           style = "background-color: #4169A8; color: white; margin-right: 5px;"),
+                                               actionButton("auction_all_btn", "All Time",
+                                                           class = "btn-sm",
+                                                           style = "background-color: #5882C0; color: white;")
+                                           )
+                                       )
+                                   ),
+
+                                   tags$hr(style = "margin: 10px 0;"),
+
                                    # Main chart
                                    plotOutput("ytd_bond_issuance_chart", height = "500px"),
 
