@@ -1127,13 +1127,20 @@ generate_enhanced_convexity_plot <- function(data, params = list()) {
             alpha = 0.8
         ) +
 
-        # Bond labels
+        # Bond labels - IMPROVED ggrepel settings to prevent overlapping
         ggrepel::geom_text_repel(
             aes(label = bond),
             size = 3,
-            max.overlaps = 15,
+            max.overlaps = 20,              # Allow more labels to be shown
+            min.segment.length = 0.2,       # Only show segments when needed
             segment.size = 0.3,
             segment.alpha = 0.6,
+            segment.color = "grey50",
+            box.padding = 0.35,             # Space between label box and point
+            point.padding = 0.3,            # Minimum distance from point
+            force = 2,                      # Repulsion force between labels
+            force_pull = 0.5,               # Force pulling labels toward points
+            seed = 42,                      # Reproducible layout
             color = insele_palette$dark_gray,
             family = if(Sys.info()["sysname"] == "Windows") "sans" else "Helvetica"
         ) +

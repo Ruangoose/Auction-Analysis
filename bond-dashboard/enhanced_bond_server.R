@@ -2581,6 +2581,10 @@ server <- function(input, output, session) {
     })
 
     # 6. VaR Statistics Table - FIXED VERSION
+    # FIXES:
+    # 1. Sorts by 95% VaR descending (highest risk first)
+    # 2. Uses ABSOLUTE thresholds for tail risk (not percentile-based) for consistency
+    # 3. Same inputs = same outputs (no percentile-dependent classifications)
     output$var_statistics_table <- DT::renderDataTable({
         req(var_distribution_results())
 
@@ -2618,42 +2622,45 @@ server <- function(input, output, session) {
                     TRUE ~ "Near normal"
                 ),
 
-                # Tail risk indicator - HYBRID APPROACH
-                # Combines absolute risk factors with relative percentile ranking
-                tail_ratio = abs(VaR_99) / abs(VaR_95),
-
-                # Absolute risk factor flags (calibrated for SA gov bond market)
-                has_fat_tails = kurtosis > 3.1,           # Top ~40% of typical data
-                has_extreme_ratio = tail_ratio > 1.45,    # Above normal (1.41) + buffer
-                has_left_skew = skewness < -0.15          # Meaningful left skew
+                # Calculate tail ratio for classification
+                tail_ratio = abs(VaR_99) / abs(VaR_95)
             ) %>%
             mutate(
-                # Relative ranking within current dataset
-                kurtosis_rank = percent_rank(kurtosis),
-                ratio_rank = percent_rank(tail_ratio),
-                # Composite percentile (weights kurtosis and ratio, with skew penalty)
-                risk_percentile = (kurtosis_rank + ratio_rank +
-                                   ifelse(skewness < 0, percent_rank(-skewness), 0)) / 3,
+                # =========================================================================
+                # TAIL RISK CLASSIFICATION - ABSOLUTE THRESHOLDS (not percentile-based)
+                # Ensures same inputs always produce same outputs
+                # =========================================================================
+                # Criteria:
+                #   HIGH risk if ANY of:
+                #     - Excess Kurtosis > 4.0 AND |Skew| > 0.5 (fat tails + asymmetry)
+                #     - 99% VaR / 95% VaR ratio > 1.50 (extreme tail)
+                #     - |Skew| > 1.0 (highly asymmetric)
+                #   ELEVATED risk if:
+                #     - Excess Kurtosis > 3.5 OR |Skew| > 0.3
+                #   MODERATE risk if:
+                #     - Excess Kurtosis > 3.0 OR |Skew| > 0.15
+                #   LOW risk:
+                #     - All metrics near normal distribution values
+                # =========================================================================
+                is_high_risk = (kurtosis > 4.0 & abs(skewness) > 0.5) |
+                               (tail_ratio > 1.50) |
+                               (abs(skewness) > 1.0),
 
-                # Final classification - Hybrid of absolute triggers and relative ranking
+                is_elevated_risk = !is_high_risk &
+                                   ((kurtosis > 3.5) | (abs(skewness) > 0.3)),
+
+                is_moderate_risk = !is_high_risk & !is_elevated_risk &
+                                   ((kurtosis > 3.0) | (abs(skewness) > 0.15)),
+
                 tail_risk = case_when(
-                    # Absolute triggers: Multiple risk factors = definite high risk
-                    has_fat_tails & has_left_skew ~ "High \u26A0",
-                    has_extreme_ratio & has_fat_tails ~ "High \u26A0",
-
-                    # High percentile (top 25%) with at least one risk factor
-                    risk_percentile >= 0.75 & (has_fat_tails | has_extreme_ratio | has_left_skew) ~ "Elevated",
-
-                    # Top 25% by composite score even without flags
-                    risk_percentile >= 0.75 ~ "Elevated",
-
-                    # Middle range (40-75th percentile)
-                    risk_percentile >= 0.40 ~ "Moderate",
-
-                    # Lower risk (bottom 40%)
+                    is_high_risk ~ "High \u26A0",
+                    is_elevated_risk ~ "Elevated",
+                    is_moderate_risk ~ "Moderate",
                     TRUE ~ "Low \u2713"
                 )
             ) %>%
+            # CRITICAL FIX: Sort by 95% VaR descending (highest risk first)
+            arrange(desc(var_95_loss)) %>%
             select(
                 Bond = bond,
                 `95% VaR Loss (%)` = var_95_loss,
@@ -2666,12 +2673,28 @@ server <- function(input, output, session) {
                 Obs = n_observations
             )
 
+        # Log sorted order for verification
+        message("[VaR Stats Table] Sorted by 95% VaR (desc):")
+        message(sprintf("  Top 5: %s",
+                       paste(head(table_data$Bond, 5), " (",
+                             round(head(table_data$`95% VaR Loss (%)`, 5), 2), "%)",
+                             collapse = ", ", sep = "")))
+        message(sprintf("  Bottom 5: %s",
+                       paste(tail(table_data$Bond, 5), " (",
+                             round(tail(table_data$`95% VaR Loss (%)`, 5), 2), "%)",
+                             collapse = ", ", sep = "")))
+
         DT::datatable(
             table_data,
             options = list(
-                pageLength = 15,
+                pageLength = 20,
                 dom = 't',  # Table only, no search/pagination
-                columnDefs = list(list(className = 'dt-center', targets = '_all'))
+                ordering = FALSE,  # Disable client-side reordering to preserve our sort
+                columnDefs = list(
+                    list(className = 'dt-center', targets = '_all'),
+                    # Ensure numeric columns are treated as numbers
+                    list(type = 'num', targets = c(1, 2, 3, 4, 6))
+                )
             ),
             rownames = FALSE
         ) %>%
@@ -2699,26 +2722,60 @@ server <- function(input, output, session) {
     })
 
     # 6. DV01 Ladder Plot
+    # CRITICAL: Filter to active bonds only (excludes matured bonds like R186)
     output$dv01_ladder_plot <- renderPlot({
         req(processed_data())
+        req(active_bonds_for_risk_analytics())
+
+        # Get active bonds from centralized reactive
+        active_bonds <- active_bonds_for_risk_analytics()
+
+        # Filter data to active bonds only
+        plot_data <- processed_data() %>%
+            filter(bond %in% active_bonds)
+
+        # Log what we're using
+        excluded_bonds <- setdiff(unique(processed_data()$bond), active_bonds)
+        if (length(excluded_bonds) > 0) {
+            message(sprintf("[DV01 Ladder] Excluded %d matured/inactive bonds: %s",
+                           length(excluded_bonds), paste(excluded_bonds, collapse = ", ")))
+        }
+        message(sprintf("[DV01 Ladder] Using %d active bonds", length(unique(plot_data$bond))))
 
         # Get notional from input (default R10 million)
         notional <- as.numeric(input$dv01_notional) %||% 10000000
 
-        p <- generate_dv01_ladder_plot(processed_data(), list(
+        p <- generate_dv01_ladder_plot(plot_data, list(
             notional = notional
         ))
         if(!is.null(p)) print(p)
     })
 
     # 7. Enhanced Convexity Plot
+    # CRITICAL: Filter to active bonds only (excludes matured bonds like R186)
     output$enhanced_convexity_plot <- renderPlot({
         req(processed_data())
+        req(active_bonds_for_risk_analytics())
+
+        # Get active bonds from centralized reactive
+        active_bonds <- active_bonds_for_risk_analytics()
+
+        # Filter data to active bonds only
+        plot_data <- processed_data() %>%
+            filter(bond %in% active_bonds)
+
+        # Log what we're using
+        excluded_bonds <- setdiff(unique(processed_data()$bond), active_bonds)
+        if (length(excluded_bonds) > 0) {
+            message(sprintf("[Convexity Profile] Excluded %d matured/inactive bonds: %s",
+                           length(excluded_bonds), paste(excluded_bonds, collapse = ", ")))
+        }
+        message(sprintf("[Convexity Profile] Using %d active bonds", length(unique(plot_data$bond))))
 
         # Get notional from input (same as DV01 ladder for consistency)
         notional <- as.numeric(input$dv01_notional) %||% 10000000
 
-        p <- generate_enhanced_convexity_plot(processed_data(), list(
+        p <- generate_enhanced_convexity_plot(plot_data, list(
             notional = notional
         ))
         if(!is.null(p)) print(p)
