@@ -3177,12 +3177,137 @@ server <- function(input, output, session) {
         }
     })
 
-    # 11. Scenario Analysis Plot
+    # 11. Scenario Analysis Plot - Enhanced with user controls
+
+    # Observe and populate bond selection dropdown dynamically
+    observe({
+        req(processed_data())
+
+        # Get available bonds sorted by duration
+        available_bonds <- processed_data() %>%
+            group_by(bond) %>%
+            filter(date == max(date)) %>%
+            ungroup() %>%
+            arrange(modified_duration) %>%
+            pull(bond) %>%
+            unique()
+
+        # Select top 5 bonds by duration spread as default
+        # (gives good representation across the curve)
+        n_bonds <- length(available_bonds)
+        if (n_bonds > 0) {
+            default_indices <- unique(round(seq(1, n_bonds, length.out = min(5, n_bonds))))
+            default_selection <- available_bonds[default_indices]
+        } else {
+            default_selection <- NULL
+        }
+
+        updateSelectInput(
+            session,
+            "scenario_bonds_select",
+            choices = available_bonds,
+            selected = default_selection
+        )
+    })
+
+    # Quick selection observers for scenario analysis
+    observeEvent(input$select_short_bonds, {
+        req(processed_data())
+        short_bonds <- processed_data() %>%
+            group_by(bond) %>%
+            filter(date == max(date)) %>%
+            ungroup() %>%
+            filter(modified_duration < 5) %>%
+            pull(bond) %>%
+            unique()
+        if (length(short_bonds) > 0) {
+            updateSelectInput(session, "scenario_bonds_select", selected = short_bonds)
+        }
+    })
+
+    observeEvent(input$select_belly_bonds, {
+        req(processed_data())
+        belly_bonds <- processed_data() %>%
+            group_by(bond) %>%
+            filter(date == max(date)) %>%
+            ungroup() %>%
+            filter(modified_duration >= 5, modified_duration <= 10) %>%
+            pull(bond) %>%
+            unique()
+        if (length(belly_bonds) > 0) {
+            updateSelectInput(session, "scenario_bonds_select", selected = belly_bonds)
+        }
+    })
+
+    observeEvent(input$select_long_bonds, {
+        req(processed_data())
+        long_bonds <- processed_data() %>%
+            group_by(bond) %>%
+            filter(date == max(date)) %>%
+            ungroup() %>%
+            filter(modified_duration > 10) %>%
+            pull(bond) %>%
+            unique()
+        if (length(long_bonds) > 0) {
+            updateSelectInput(session, "scenario_bonds_select", selected = long_bonds)
+        }
+    })
+
+    observeEvent(input$select_curve_spread, {
+        req(processed_data())
+        # Select shortest, middle, and longest bonds
+        sorted_bonds <- processed_data() %>%
+            group_by(bond) %>%
+            filter(date == max(date)) %>%
+            ungroup() %>%
+            arrange(modified_duration) %>%
+            pull(bond) %>%
+            unique()
+
+        n_bonds <- length(sorted_bonds)
+        if (n_bonds >= 3) {
+            spread_bonds <- sorted_bonds[c(1, ceiling(n_bonds/2), n_bonds)]
+        } else {
+            spread_bonds <- sorted_bonds
+        }
+        updateSelectInput(session, "scenario_bonds_select", selected = spread_bonds)
+    })
+
+    # Render scenario analysis plot with user-controlled parameters
     output$scenario_analysis_plot <- renderPlot({
         req(processed_data())
-        p <- generate_scenario_analysis_plot(processed_data())
-        if(!is.null(p)) print(p)
-    })
+
+        # Get user-selected parameters with defaults
+        selected_bonds <- input$scenario_bonds_select
+        y_scale <- input$scenario_y_scale %||% "fixed"
+        show_confidence <- isTRUE(input$scenario_show_confidence)
+        confidence_level <- (input$scenario_confidence_level %||% 95) / 100
+
+        # Validate confidence level
+        if (is.na(confidence_level) || confidence_level < 0.8 || confidence_level > 0.99) {
+            confidence_level <- 0.95
+        }
+
+        # Build params list
+        params <- list(
+            selected_bonds = selected_bonds,
+            y_scale = y_scale,
+            show_confidence = show_confidence,
+            confidence_level = confidence_level,
+            max_bonds = 8
+        )
+
+        # Generate plot with error handling
+        tryCatch({
+            p <- generate_scenario_analysis_plot(processed_data(), params)
+            if(!is.null(p)) print(p)
+        }, error = function(e) {
+            warning(sprintf("Scenario analysis plot error: %s", e$message))
+            plot.new()
+            text(0.5, 0.5, sprintf("Error generating scenario analysis:\n%s", e$message),
+                 col = "#C62828", cex = 1.2)
+        })
+    }, height = 550)
 
     # 12. Optimal Holding Period Enhanced
     output$optimal_holding_enhanced_plot <- renderPlot({
@@ -8405,9 +8530,28 @@ server <- function(input, output, session) {
         },
         content = function(file) {
             req(processed_data())
-            p <- generate_scenario_analysis_plot(processed_data())
+
+            # Get user-selected parameters (same as renderPlot)
+            selected_bonds <- input$scenario_bonds_select
+            y_scale <- input$scenario_y_scale %||% "fixed"
+            show_confidence <- isTRUE(input$scenario_show_confidence)
+            confidence_level <- (input$scenario_confidence_level %||% 95) / 100
+
+            if (is.na(confidence_level) || confidence_level < 0.8 || confidence_level > 0.99) {
+                confidence_level <- 0.95
+            }
+
+            params <- list(
+                selected_bonds = selected_bonds,
+                y_scale = y_scale,
+                show_confidence = show_confidence,
+                confidence_level = confidence_level,
+                max_bonds = 8
+            )
+
+            p <- generate_scenario_analysis_plot(processed_data(), params)
             if(!is.null(p)) {
-                ggsave(file, plot = p, width = 14, height = 8, dpi = 300, bg = "white")
+                ggsave(file, plot = p, width = 14, height = 10, dpi = 300, bg = "white")
             }
         }
     )

@@ -1449,19 +1449,96 @@ ui <- dashboardPage(
                                )
                            ),
 
-                           # Scenario and Optimization boxes remain the same
+                           # Scenario Analysis with enhanced controls
                            fluidRow(
                                box(
                                    title = "Scenario Analysis",
                                    status = "primary",
                                    solidHeader = TRUE,
                                    width = 12,
-                                   plotOutput("scenario_analysis_plot", height = "400px"),
+
+                                   # Controls container
                                    tags$div(
-                                       style = "margin-top: 15px;",
-                                       downloadButton("download_scenario_analysis", "Download Chart",
-                                                      class = "btn-sm btn-primary")
-                                   )
+                                       class = "scenario-controls",
+                                       style = "background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 15px;",
+
+                                       fluidRow(
+                                           column(5,
+                                               tags$div(
+                                                   style = "position: relative;",
+                                                   selectInput(
+                                                       "scenario_bonds_select",
+                                                       label = tags$span(
+                                                           "Select Bonds to Compare",
+                                                           tags$small(" (max 8)", class = "text-muted")
+                                                       ),
+                                                       choices = NULL,
+                                                       selected = NULL,
+                                                       multiple = TRUE,
+                                                       width = "100%"
+                                                   ),
+                                                   # Quick selection buttons
+                                                   tags$div(
+                                                       style = "margin-top: -10px;",
+                                                       actionLink("select_short_bonds", "Short-end",
+                                                                  style = "font-size: 0.8em; margin-right: 10px;"),
+                                                       actionLink("select_belly_bonds", "Belly",
+                                                                  style = "font-size: 0.8em; margin-right: 10px;"),
+                                                       actionLink("select_long_bonds", "Long-end",
+                                                                  style = "font-size: 0.8em; margin-right: 10px;"),
+                                                       actionLink("select_curve_spread", "Curve spread",
+                                                                  style = "font-size: 0.8em;")
+                                                   )
+                                               )
+                                           ),
+
+                                           column(3,
+                                               radioButtons(
+                                                   "scenario_y_scale",
+                                                   "Y-Axis Scale:",
+                                                   choices = c("Unified (easier comparison)" = "fixed",
+                                                               "Free (maximize detail)" = "free_y"),
+                                                   selected = "fixed",
+                                                   inline = FALSE
+                                               )
+                                           ),
+
+                                           column(2,
+                                               checkboxInput(
+                                                   "scenario_show_confidence",
+                                                   tags$span("Show 95% CI Bands"),
+                                                   value = TRUE
+                                               ),
+                                               tags$div(
+                                                   style = "margin-top: 5px;",
+                                                   numericInput(
+                                                       "scenario_confidence_level",
+                                                       "Confidence %:",
+                                                       value = 95,
+                                                       min = 80,
+                                                       max = 99,
+                                                       step = 5,
+                                                       width = "100%"
+                                                   )
+                                               )
+                                           ),
+
+                                           column(2,
+                                               tags$div(
+                                                   style = "margin-top: 25px;",
+                                                   downloadButton(
+                                                       "download_scenario_analysis",
+                                                       "Download Chart",
+                                                       class = "btn-primary btn-sm",
+                                                       style = "width: 100%;"
+                                                   )
+                                               )
+                                           )
+                                       )
+                                   ),
+
+                                   # Plot output (taller to accommodate confidence bands)
+                                   plotOutput("scenario_analysis_plot", height = "550px")
                                )
                            ),
 
