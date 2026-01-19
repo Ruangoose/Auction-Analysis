@@ -805,6 +805,18 @@ generate_butterfly_chart <- function(bf, zscore_threshold = 2.0) {
         )
     }
 
+    # Check for minimum data requirements (at least 5 unique dates for meaningful chart)
+    unique_dates <- length(unique(as.Date(bf$spread_ts$date)))
+    if (unique_dates < 5) {
+        return(
+            ggplot() +
+                annotate("text", x = 0.5, y = 0.5,
+                         label = sprintf("Insufficient data points (%d unique dates).\nNeed at least 5 for a meaningful chart.", unique_dates),
+                         size = 4.5, color = "grey50", lineheight = 1.2) +
+                theme_void()
+        )
+    }
+
     # Check if yields were in percentage form (spread already in % points)
     yields_in_pct <- isTRUE(bf$yields_in_pct)
 
@@ -829,8 +841,13 @@ generate_butterfly_chart <- function(bf, zscore_threshold = 2.0) {
 
     # Determine appropriate date breaks based on actual data range
     date_range <- as.numeric(diff(range(spread_ts$date, na.rm = TRUE)))
+    n_unique_dates <- length(unique(spread_ts$date))
 
+    # Handle edge case of very narrow date range or few unique dates
+    # to ensure proper x-axis label display
     date_breaks <- dplyr::case_when(
+        date_range <= 14 | n_unique_dates <= 7 ~ "1 week",
+        date_range <= 30 ~ "1 week",
         date_range <= 90 ~ "2 weeks",
         date_range <= 180 ~ "1 month",
         date_range <= 365 ~ "2 months",
@@ -839,6 +856,7 @@ generate_butterfly_chart <- function(bf, zscore_threshold = 2.0) {
     )
 
     date_format <- dplyr::case_when(
+        date_range <= 30 ~ "%d %b",
         date_range <= 90 ~ "%d %b",
         date_range <= 365 ~ "%b %Y",
         TRUE ~ "%b %Y"
@@ -905,7 +923,9 @@ generate_butterfly_chart <- function(bf, zscore_threshold = 2.0) {
         ) +
 
         # X-axis with proper dynamic date formatting
+        # Use explicit limits to ensure full date range is always shown
         scale_x_date(
+            limits = c(min(spread_ts$date), max(spread_ts$date)),
             date_breaks = date_breaks,
             date_labels = date_format,
             expand = expansion(mult = c(0.02, 0.12))  # Extra space on right for annotation
