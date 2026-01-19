@@ -8077,31 +8077,33 @@ server <- function(input, output, session) {
         # Default to first 3 available bonds
         default_selected <- if (length(available_bonds) >= 3) available_bonds[1:3] else available_bonds
 
-        updateSelectInput(
+        # Note: auction_bonds_select is updated elsewhere via updatePickerInput
+        # This is a fallback for the "upcoming auctions" section if needed
+        updatePickerInput(
             session,
-            "upcoming_auction_bonds",
+            "auction_bonds_select",
             choices = available_bonds,
             selected = default_selected
         )
     })
 
-    # Limit selection to 3 bonds
-    observeEvent(input$upcoming_auction_bonds, {
-        if (length(input$upcoming_auction_bonds) > 3) {
-            updateSelectInput(
+    # Limit selection to 3 bonds for auction_bonds_select
+    observeEvent(input$auction_bonds_select, {
+        if (length(input$auction_bonds_select) > 3) {
+            updatePickerInput(
                 session,
-                "upcoming_auction_bonds",
-                selected = input$upcoming_auction_bonds[1:3]
+                "auction_bonds_select",
+                selected = input$auction_bonds_select[1:3]
             )
             showNotification("Maximum 3 bonds for upcoming auctions", type = "warning")
         }
-    })
+    }, ignoreInit = TRUE)
 
     # Render upcoming auctions display
     output$upcoming_auctions_display <- renderUI({
-        req(input$upcoming_auction_bonds)
+        req(input$auction_bonds_select)
 
-        selected_bonds <- input$upcoming_auction_bonds
+        selected_bonds <- input$auction_bonds_select
 
         # Get enhanced auction data if available
         auction_data <- tryCatch(enhanced_auction_data(), error = function(e) filtered_data())
@@ -8293,10 +8295,10 @@ server <- function(input, output, session) {
 
     # Reactive: Generate forecasts when button clicked
     auction_forecasts_v2 <- eventReactive(input$generate_predictions, {
-        req(input$upcoming_auction_bonds)
+        req(input$auction_bonds_select)
         req(enhanced_auction_data())
 
-        selected_bonds <- input$upcoming_auction_bonds
+        selected_bonds <- input$auction_bonds_select
 
         withProgress(message = "Generating forecasts...", value = 0, {
 
@@ -8693,10 +8695,10 @@ server <- function(input, output, session) {
     # Historical Performance Chart (v2)
     output$auction_forecast_chart_v2 <- renderPlot({
         tryCatch({
-            req(input$upcoming_auction_bonds)
+            req(input$auction_bonds_select)
             req(enhanced_auction_data())
 
-            selected_bonds <- input$upcoming_auction_bonds
+            selected_bonds <- input$auction_bonds_select
             auction_data <- enhanced_auction_data()
 
             # Validate auction_data
@@ -8827,10 +8829,10 @@ server <- function(input, output, session) {
 
     # Selected Bonds History
     output$selected_bonds_history <- renderUI({
-        req(input$upcoming_auction_bonds)
+        req(input$auction_bonds_select)
         req(enhanced_auction_data())
 
-        selected_bonds <- input$upcoming_auction_bonds
+        selected_bonds <- input$auction_bonds_select
 
         # Get history for each selected bond
         history_cards <- lapply(selected_bonds, function(bond_name) {
@@ -8900,9 +8902,9 @@ server <- function(input, output, session) {
 
     # Quick Stats v2
     output$auction_quick_stats_v2 <- renderUI({
-        req(input$upcoming_auction_bonds)
+        req(input$auction_bonds_select)
 
-        selected_bonds <- input$upcoming_auction_bonds
+        selected_bonds <- input$auction_bonds_select
         n_selected <- length(selected_bonds)
 
         # Count bonds with sufficient data
@@ -8948,10 +8950,10 @@ server <- function(input, output, session) {
             paste0("auction_forecast_", format(Sys.Date(), "%Y%m%d"), ".png")
         },
         content = function(file) {
-            req(input$upcoming_auction_bonds)
+            req(input$auction_bonds_select)
             req(enhanced_auction_data())
 
-            selected_bonds <- input$upcoming_auction_bonds
+            selected_bonds <- input$auction_bonds_select
             auction_data <- enhanced_auction_data()
 
             chart_data <- auction_data %>%

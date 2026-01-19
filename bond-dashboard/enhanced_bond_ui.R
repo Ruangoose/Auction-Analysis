@@ -1809,18 +1809,26 @@ ui <- dashboardPage(
                                                   ),
 
                                                   # SINGLE bond selection - THIS IS THE ONLY PLACE TO SELECT
-                                                  selectInput(
-                                                      "upcoming_auction_bonds",
+                                                  # NOTE: ID must be "auction_bonds_select" to match server code
+                                                  shinyWidgets::pickerInput(
+                                                      inputId = "auction_bonds_select",
                                                       label = NULL,
-                                                      choices = NULL,  # Populated dynamically
+                                                      choices = NULL,  # Populated dynamically by server
                                                       selected = NULL,
                                                       multiple = TRUE,
+                                                      options = shinyWidgets::pickerOptions(
+                                                          actionsBox = TRUE,
+                                                          liveSearch = TRUE,
+                                                          size = 8,
+                                                          noneSelectedText = "Select bonds...",
+                                                          selectedTextFormat = "count > 2"
+                                                      ),
                                                       width = "100%"
                                                   ),
 
                                                   # Help text
                                                   tags$small(
-                                                      tagList(icon("info-circle"), " Select up to 3 bonds. Typically announced on Treasury's website."),
+                                                      tagList(icon("info-circle"), " Select bonds for upcoming auction. Highlighted in Quality Dashboard below."),
                                                       style = "font-size: 0.8em; color: #6c757d;"
                                                   ),
 

@@ -599,7 +599,7 @@ generate_auction_pattern_analysis <- function(data, params, selected_bonds = cha
             panel.grid.minor = element_blank(),
             panel.grid.major.x = element_blank(),
             legend.position = "none",
-            plot.margin = margin(t = 10, r = 35, b = 10, l = 10, unit = "pt")  # Extra right margin for labels
+            plot.margin = ggplot2::margin(t = 10, r = 35, b = 10, l = 10, unit = "pt")  # Extra right margin for labels
         )
 
     # Combine with patchwork if available, otherwise use arrangeGrob
@@ -1903,7 +1903,7 @@ create_auction_quality_heatmap <- function(auction_data, selected_bonds = charac
             axis.text.y = element_text(size = 10),
             legend.position = "right",
             panel.grid = element_blank(),
-            plot.margin = margin(t = 10, r = 10, b = 10, l = 10, unit = "pt")
+            plot.margin = ggplot2::margin(t = 10, r = 10, b = 10, l = 10, unit = "pt")
         )
 
     # Add border highlighting for selected bonds
@@ -2113,7 +2113,7 @@ create_concession_trend_chart <- function(auction_data, selected_bonds = charact
             legend.position = "bottom",
             legend.title = element_blank(),
             axis.text.x = element_text(angle = 45, hjust = 1),
-            plot.margin = margin(t = 10, r = 10, b = 10, l = 10, unit = "pt")
+            plot.margin = ggplot2::margin(t = 10, r = 10, b = 10, l = 10, unit = "pt")
         )
 
     return(p)
