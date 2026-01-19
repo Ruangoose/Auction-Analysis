@@ -3352,6 +3352,262 @@ calculate_fair_value <- function(data, method = "smooth.spline") {
     return(data)
 }
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# ENHANCED AUCTION METRICS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+#' @title Calculate Enhanced Auction Metrics
+#' @description Calculates derived auction metrics from raw auction data
+#' @param auction_data Raw auction data with columns: clearing_yield, non_comps,
+#'   number_bids_received, best_bid, worst_bid
+#' @param bond_data Bond time series data for secondary market YTM (optional)
+#' @return Enhanced auction data with derived metrics
+#' @export
+calculate_enhanced_auction_metrics <- function(auction_data, bond_data = NULL) {
+
+    # Check for required base columns
+    required_base <- c("bid_to_cover", "bids_received", "offer_amount")
+    missing_base <- setdiff(required_base, names(auction_data))
+
+    if (length(missing_base) > 0) {
+        warning(sprintf("Missing base auction columns: %s. Returning data unchanged.",
+                        paste(missing_base, collapse = ", ")))
+        return(auction_data)
+    }
+
+    # Check for new auction columns
+    required_new_cols <- c("clearing_yield", "non_comps", "number_bids_received",
+                           "best_bid", "worst_bid")
+    missing_cols <- setdiff(required_new_cols, names(auction_data))
+
+    if (length(missing_cols) > 0) {
+        message(sprintf("Note: Missing auction columns: %s. Some metrics will be NA.",
+                        paste(missing_cols, collapse = ", ")))
+    }
+
+    enhanced_data <- auction_data %>%
+        mutate(
+            # ═══════════════════════════════════════════════════════════════
+            # AUCTION TAIL (Bid Dispersion)
+            # Lower is better - indicates consensus on value
+            # ═══════════════════════════════════════════════════════════════
+            auction_tail_bps = if ("worst_bid" %in% names(.) && "best_bid" %in% names(.)) {
+                ifelse(
+                    !is.na(worst_bid) & !is.na(best_bid),
+                    (worst_bid - best_bid) * 100,  # Convert to bps
+                    NA_real_
+                )
+            } else {
+                NA_real_
+            },
+
+            tail_category = case_when(
+                is.na(auction_tail_bps) ~ "Unknown",
+                auction_tail_bps <= 3 ~ "Tight",
+                auction_tail_bps <= 6 ~ "Normal",
+                auction_tail_bps <= 10 ~ "Wide",
+                auction_tail_bps > 10 ~ "Very Wide",
+                TRUE ~ "Unknown"
+            ),
+
+            # ═══════════════════════════════════════════════════════════════
+            # INSTITUTIONAL PARTICIPATION (Non-Competitive Ratio)
+            # Higher indicates stronger anchor demand
+            # ═══════════════════════════════════════════════════════════════
+            non_comp_ratio = if ("non_comps" %in% names(.) && "bids_received" %in% names(.)) {
+                ifelse(
+                    !is.na(non_comps) & !is.na(bids_received) & bids_received > 0,
+                    non_comps / bids_received * 100,
+                    NA_real_
+                )
+            } else {
+                NA_real_
+            },
+
+            institutional_demand = case_when(
+                is.na(non_comp_ratio) ~ "Unknown",
+                non_comp_ratio >= 30 ~ "Very Strong",
+                non_comp_ratio >= 20 ~ "Strong",
+                non_comp_ratio >= 10 ~ "Moderate",
+                non_comp_ratio >= 0 ~ "Low",
+                TRUE ~ "Unknown"
+            ),
+
+            # ═══════════════════════════════════════════════════════════════
+            # PARTICIPATION BREADTH
+            # More bidders = healthier auction
+            # ═══════════════════════════════════════════════════════════════
+            avg_bid_size = if ("number_bids_received" %in% names(.)) {
+                ifelse(
+                    !is.na(bids_received) & !is.na(number_bids_received) & number_bids_received > 0,
+                    bids_received / number_bids_received,
+                    NA_real_
+                )
+            } else {
+                NA_real_
+            },
+
+            participation_breadth = if ("number_bids_received" %in% names(.)) {
+                case_when(
+                    is.na(number_bids_received) ~ "Unknown",
+                    number_bids_received >= 50 ~ "Very Broad",
+                    number_bids_received >= 30 ~ "Broad",
+                    number_bids_received >= 15 ~ "Moderate",
+                    number_bids_received >= 5 ~ "Narrow",
+                    number_bids_received > 0 ~ "Very Narrow",
+                    TRUE ~ "Unknown"
+                )
+            } else {
+                "Unknown"
+            },
+
+            # Concentration flag (few bidders but high cover = concentrated risk)
+            concentration_flag = if ("number_bids_received" %in% names(.)) {
+                ifelse(
+                    !is.na(number_bids_received) & !is.na(bid_to_cover) &
+                        number_bids_received < 10 & bid_to_cover > 2.5,
+                    TRUE, FALSE
+                )
+            } else {
+                FALSE
+            }
+        )
+
+    # ═══════════════════════════════════════════════════════════════
+    # AUCTION CONCESSION (requires joining with secondary market data)
+    # Positive = weak auction (investors demanded premium)
+    # Negative = strong auction (investors accepted discount)
+    # ═══════════════════════════════════════════════════════════════
+
+    if (!is.null(bond_data) && "yield_to_maturity" %in% names(bond_data) &&
+        "clearing_yield" %in% names(enhanced_data)) {
+
+        # Ensure date columns exist
+        if ("offer_date" %in% names(enhanced_data) && "date" %in% names(bond_data)) {
+
+            # For each auction, find the YTM from the trading day before
+            pre_auction_ytm <- enhanced_data %>%
+                select(bond, offer_date) %>%
+                distinct() %>%
+                rowwise() %>%
+                mutate(
+                    pre_auction_date = offer_date - 1,
+                    pre_auction_ytm = {
+                        ytm_data <- bond_data %>%
+                            filter(bond == .data$bond, date <= pre_auction_date) %>%
+                            arrange(desc(date)) %>%
+                            slice(1) %>%
+                            pull(yield_to_maturity)
+
+                        if (length(ytm_data) == 0) NA_real_ else ytm_data
+                    }
+                ) %>%
+                ungroup() %>%
+                select(bond, offer_date, pre_auction_ytm)
+
+            enhanced_data <- enhanced_data %>%
+                left_join(pre_auction_ytm, by = c("bond", "offer_date")) %>%
+                mutate(
+                    auction_concession_bps = ifelse(
+                        !is.na(clearing_yield) & !is.na(pre_auction_ytm),
+                        (clearing_yield - pre_auction_ytm) * 100,
+                        NA_real_
+                    ),
+
+                    concession_category = case_when(
+                        is.na(auction_concession_bps) ~ "Unknown",
+                        auction_concession_bps <= -5 ~ "Strong (Tight)",
+                        auction_concession_bps <= 0 ~ "Fair",
+                        auction_concession_bps <= 5 ~ "Slight Premium",
+                        auction_concession_bps <= 10 ~ "Weak (Premium)",
+                        auction_concession_bps > 10 ~ "Very Weak",
+                        TRUE ~ "Unknown"
+                    )
+                )
+        }
+    } else {
+        # Add placeholder columns if no secondary market data
+        enhanced_data <- enhanced_data %>%
+            mutate(
+                pre_auction_ytm = NA_real_,
+                auction_concession_bps = NA_real_,
+                concession_category = "Unknown"
+            )
+    }
+
+    # ═══════════════════════════════════════════════════════════════
+    # COMPOSITE AUCTION QUALITY SCORE (0-100)
+    # Combines multiple factors into single score
+    # ═══════════════════════════════════════════════════════════════
+
+    enhanced_data <- enhanced_data %>%
+        mutate(
+            # Normalize each component to 0-100 scale
+            btc_score = pmin(100, pmax(0, (bid_to_cover - 1) / 4 * 100)),  # 1x=0, 5x=100
+
+            tail_score = case_when(
+                is.na(auction_tail_bps) ~ 50,  # Neutral if unknown
+                auction_tail_bps <= 2 ~ 100,
+                auction_tail_bps <= 5 ~ 80,
+                auction_tail_bps <= 8 ~ 60,
+                auction_tail_bps <= 12 ~ 40,
+                TRUE ~ 20
+            ),
+
+            institutional_score = case_when(
+                is.na(non_comp_ratio) ~ 50,
+                non_comp_ratio >= 35 ~ 100,
+                non_comp_ratio >= 25 ~ 85,
+                non_comp_ratio >= 15 ~ 70,
+                non_comp_ratio >= 5 ~ 50,
+                TRUE ~ 30
+            ),
+
+            breadth_score = if ("number_bids_received" %in% names(.)) {
+                case_when(
+                    is.na(number_bids_received) ~ 50,
+                    number_bids_received >= 60 ~ 100,
+                    number_bids_received >= 40 ~ 85,
+                    number_bids_received >= 25 ~ 70,
+                    number_bids_received >= 10 ~ 50,
+                    TRUE ~ 30
+                )
+            } else {
+                50  # Neutral if no data
+            },
+
+            concession_score = case_when(
+                is.na(auction_concession_bps) ~ 50,
+                abs(auction_concession_bps) <= 2 ~ 100,  # Close to fair value
+                abs(auction_concession_bps) <= 5 ~ 80,
+                abs(auction_concession_bps) <= 10 ~ 60,
+                TRUE ~ 40
+            ),
+
+            # Weighted composite score
+            auction_quality_score = round(
+                btc_score * 0.30 +
+                    tail_score * 0.20 +
+                    institutional_score * 0.20 +
+                    breadth_score * 0.15 +
+                    concession_score * 0.15,
+                0
+            ),
+
+            quality_grade = case_when(
+                auction_quality_score >= 85 ~ "A",
+                auction_quality_score >= 70 ~ "B",
+                auction_quality_score >= 55 ~ "C",
+                auction_quality_score >= 40 ~ "D",
+                TRUE ~ "F"
+            )
+        )
+
+    message(sprintf("✓ Enhanced auction metrics calculated for %d auctions", nrow(enhanced_data)))
+
+    return(enhanced_data)
+}
+
 #' @export
 # Nelson-Siegel-Svensson Model Implementation
 fit_nss_model <- memoise(function(data, lambda1 = 0.0609, lambda2 = 0.0609) {

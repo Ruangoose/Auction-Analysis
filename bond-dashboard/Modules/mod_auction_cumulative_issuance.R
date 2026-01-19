@@ -227,31 +227,47 @@ generate_ytd_issuance_table <- function(data) {
         ))
     }
 
-    # Calculate issuance statistics
+    # Calculate issuance statistics with new quality metrics
     issuance_table <- data %>%
         filter(!is.na(offer_amount), offer_amount > 0) %>%
         group_by(bond) %>%
         summarise(
-            `Number of Auctions` = n(),
-            `Total Issuance (R mil)` = round(sum(offer_amount, na.rm = TRUE) / 1e6, 2),
-            `Average Issuance (R mil)` = round(mean(offer_amount, na.rm = TRUE) / 1e6, 2),
-            `Min Issuance (R mil)` = round(min(offer_amount, na.rm = TRUE) / 1e6, 2),
-            `Max Issuance (R mil)` = round(max(offer_amount, na.rm = TRUE) / 1e6, 2),
+            `# Auctions` = n(),
+            `Total (R mil)` = round(sum(offer_amount, na.rm = TRUE) / 1e6, 2),
+            `Avg B2C` = if ("bid_to_cover" %in% names(.))
+                round(mean(bid_to_cover, na.rm = TRUE), 2) else NA_real_,
+            # NEW: Quality metrics
+            `Avg Quality` = if ("auction_quality_score" %in% names(.))
+                round(mean(auction_quality_score, na.rm = TRUE), 0) else NA_real_,
+            `Avg Tail` = if ("auction_tail_bps" %in% names(.))
+                round(mean(auction_tail_bps, na.rm = TRUE), 1) else NA_real_,
+            `Inst %` = if ("non_comp_ratio" %in% names(.))
+                round(mean(non_comp_ratio, na.rm = TRUE), 0) else NA_real_,
+            `Concession` = if ("auction_concession_bps" %in% names(.))
+                round(mean(auction_concession_bps, na.rm = TRUE), 1) else NA_real_,
+            `# Bidders` = if ("number_bids_received" %in% names(.))
+                round(mean(number_bids_received, na.rm = TRUE), 0) else NA_real_,
             `First Auction` = format(min(date, na.rm = TRUE), "%Y-%m-%d"),
             `Last Auction` = format(max(date, na.rm = TRUE), "%Y-%m-%d"),
             .groups = "drop"
         ) %>%
-        arrange(desc(`Total Issuance (R mil)`))
+        arrange(desc(`Total (R mil)`))
 
     # Add row for totals
     if (nrow(issuance_table) > 0) {
+        # Calculate weighted averages for totals
+        total_auctions <- sum(issuance_table$`# Auctions`, na.rm = TRUE)
+
         totals_row <- data.frame(
             bond = "TOTAL",
-            `Number of Auctions` = sum(issuance_table$`Number of Auctions`),
-            `Total Issuance (R mil)` = sum(issuance_table$`Total Issuance (R mil)`),
-            `Average Issuance (R mil)` = mean(issuance_table$`Average Issuance (R mil)`),
-            `Min Issuance (R mil)` = min(issuance_table$`Min Issuance (R mil)`),
-            `Max Issuance (R mil)` = max(issuance_table$`Max Issuance (R mil)`),
+            `# Auctions` = total_auctions,
+            `Total (R mil)` = sum(issuance_table$`Total (R mil)`, na.rm = TRUE),
+            `Avg B2C` = round(mean(issuance_table$`Avg B2C`, na.rm = TRUE), 2),
+            `Avg Quality` = round(mean(issuance_table$`Avg Quality`, na.rm = TRUE), 0),
+            `Avg Tail` = round(mean(issuance_table$`Avg Tail`, na.rm = TRUE), 1),
+            `Inst %` = round(mean(issuance_table$`Inst %`, na.rm = TRUE), 0),
+            `Concession` = round(mean(issuance_table$`Concession`, na.rm = TRUE), 1),
+            `# Bidders` = round(mean(issuance_table$`# Bidders`, na.rm = TRUE), 0),
             `First Auction` = "",
             `Last Auction` = "",
             check.names = FALSE
@@ -259,6 +275,17 @@ generate_ytd_issuance_table <- function(data) {
 
         issuance_table <- rbind(issuance_table, totals_row)
     }
+
+    # Format columns for display
+    issuance_table <- issuance_table %>%
+        mutate(
+            `Avg B2C` = ifelse(is.na(`Avg B2C`), "—", sprintf("%.2fx", `Avg B2C`)),
+            `Avg Quality` = ifelse(is.na(`Avg Quality`), "—", as.character(`Avg Quality`)),
+            `Avg Tail` = ifelse(is.na(`Avg Tail`), "—", as.character(`Avg Tail`)),
+            `Inst %` = ifelse(is.na(`Inst %`), "—", paste0(`Inst %`, "%")),
+            `Concession` = ifelse(is.na(`Concession`), "—", sprintf("%+.1f", `Concession`)),
+            `# Bidders` = ifelse(is.na(`# Bidders`), "—", as.character(`# Bidders`))
+        )
 
     # Rename bond column for display
     names(issuance_table)[1] <- "Bond"

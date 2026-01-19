@@ -4062,22 +4062,8 @@ server <- function(input, output, session) {
         }
     })
 
-    output$demand_elasticity_plot <- renderPlot({
-        req(filtered_data())
-        p <- generate_demand_elasticity_plot(filtered_data(), list())
-        if(!is.null(p)) print(p)
-    })
-
-    output$success_probability_plot <- renderPlot({
-        req(filtered_data(), input$auction_bonds_select)
-        p <- generate_success_probability_plot(filtered_data(), input$auction_bonds_select)
-        if(!is.null(p)) {
-            print(p)
-        } else {
-            plot.new()
-            text(0.5, 0.5, "Please select bonds for analysis", cex = 1.2)
-        }
-    })
+    # Note: demand_elasticity_plot and success_probability_plot removed
+    # as part of Auction Intelligence tab overhaul
 
     output$auction_pattern_analysis <- renderPlot({
         req(filtered_data())
@@ -6480,6 +6466,225 @@ server <- function(input, output, session) {
     })
 
     # ════════════════════════════════════════════════════════════════════════════
+    # AUCTION QUALITY DASHBOARD - NEW COMPONENTS
+    # ════════════════════════════════════════════════════════════════════════════
+
+    # Enhanced auction data reactive (calculates new quality metrics)
+    enhanced_auction_data <- reactive({
+        req(filtered_data())
+
+        auction_data <- filtered_data() %>%
+            filter(!is.na(bid_to_cover))
+
+        if (nrow(auction_data) == 0) {
+            return(NULL)
+        }
+
+        # Calculate enhanced metrics using the new function
+        enhanced <- tryCatch(
+            calculate_enhanced_auction_metrics(auction_data, filtered_data()),
+            error = function(e) {
+                message(sprintf("[AUCTION QUALITY] Error calculating metrics: %s", e$message))
+                auction_data  # Return original data on error
+            }
+        )
+
+        return(enhanced)
+    })
+
+    # KPI: Average Quality Score
+    output$avg_quality_score_text <- renderText({
+        req(enhanced_auction_data())
+
+        if ("auction_quality_score" %in% names(enhanced_auction_data())) {
+            avg_score <- mean(enhanced_auction_data()$auction_quality_score, na.rm = TRUE)
+            if (!is.na(avg_score)) {
+                sprintf("%.0f/100", avg_score)
+            } else {
+                "—"
+            }
+        } else {
+            "—"
+        }
+    })
+
+    # KPI: Quality Grade Badge
+    output$avg_quality_grade_badge <- renderUI({
+        req(enhanced_auction_data())
+
+        if ("auction_quality_score" %in% names(enhanced_auction_data())) {
+            avg_score <- mean(enhanced_auction_data()$auction_quality_score, na.rm = TRUE)
+
+            grade <- dplyr::case_when(
+                is.na(avg_score) ~ "—",
+                avg_score >= 85 ~ "A",
+                avg_score >= 70 ~ "B",
+                avg_score >= 55 ~ "C",
+                avg_score >= 40 ~ "D",
+                TRUE ~ "F"
+            )
+
+            badge_color <- dplyr::case_when(
+                grade == "A" ~ "#2E7D32",
+                grade == "B" ~ "#7CB342",
+                grade == "C" ~ "#FDD835",
+                grade == "D" ~ "#FB8C00",
+                grade == "F" ~ "#E53935",
+                TRUE ~ "#9E9E9E"
+            )
+
+            tags$span(
+                grade,
+                style = sprintf("background-color: %s; color: white; padding: 5px 15px;
+                                 border-radius: 20px; font-size: 1.2em; font-weight: bold;",
+                                badge_color)
+            )
+        } else {
+            tags$span("—", style = "color: #666;")
+        }
+    })
+
+    # KPI: Average Tail
+    output$avg_tail_text <- renderText({
+        req(enhanced_auction_data())
+
+        if ("auction_tail_bps" %in% names(enhanced_auction_data())) {
+            avg_tail <- mean(enhanced_auction_data()$auction_tail_bps, na.rm = TRUE)
+            if (!is.na(avg_tail)) {
+                sprintf("%.1f bps", avg_tail)
+            } else {
+                "—"
+            }
+        } else {
+            "—"
+        }
+    })
+
+    # KPI: Tail Interpretation
+    output$tail_interpretation <- renderText({
+        req(enhanced_auction_data())
+
+        if ("auction_tail_bps" %in% names(enhanced_auction_data())) {
+            avg_tail <- mean(enhanced_auction_data()$auction_tail_bps, na.rm = TRUE)
+            dplyr::case_when(
+                is.na(avg_tail) ~ "No data",
+                avg_tail <= 3 ~ "Tight (strong consensus)",
+                avg_tail <= 6 ~ "Normal",
+                avg_tail <= 10 ~ "Wide (some uncertainty)",
+                TRUE ~ "Very Wide (weak consensus)"
+            )
+        } else {
+            "No data"
+        }
+    })
+
+    # KPI: Average Institutional Participation
+    output$avg_institutional_text <- renderText({
+        req(enhanced_auction_data())
+
+        if ("non_comp_ratio" %in% names(enhanced_auction_data())) {
+            avg_inst <- mean(enhanced_auction_data()$non_comp_ratio, na.rm = TRUE)
+            if (!is.na(avg_inst)) {
+                sprintf("%.1f%%", avg_inst)
+            } else {
+                "—"
+            }
+        } else {
+            "—"
+        }
+    })
+
+    # KPI: Institutional Interpretation
+    output$institutional_interpretation <- renderText({
+        req(enhanced_auction_data())
+
+        if ("non_comp_ratio" %in% names(enhanced_auction_data())) {
+            avg_inst <- mean(enhanced_auction_data()$non_comp_ratio, na.rm = TRUE)
+            dplyr::case_when(
+                is.na(avg_inst) ~ "No data",
+                avg_inst >= 30 ~ "Very strong anchor demand",
+                avg_inst >= 20 ~ "Healthy institutional base",
+                avg_inst >= 10 ~ "Moderate participation",
+                TRUE ~ "Low institutional interest"
+            )
+        } else {
+            "No data"
+        }
+    })
+
+    # KPI: Average Concession
+    output$avg_concession_text <- renderText({
+        req(enhanced_auction_data())
+
+        if ("auction_concession_bps" %in% names(enhanced_auction_data())) {
+            avg_conc <- mean(enhanced_auction_data()$auction_concession_bps, na.rm = TRUE)
+            if (!is.na(avg_conc)) {
+                sprintf("%+.1f bps", avg_conc)
+            } else {
+                "—"
+            }
+        } else {
+            "—"
+        }
+    })
+
+    # KPI: Concession Interpretation
+    output$concession_interpretation <- renderText({
+        req(enhanced_auction_data())
+
+        if ("auction_concession_bps" %in% names(enhanced_auction_data())) {
+            avg_conc <- mean(enhanced_auction_data()$auction_concession_bps, na.rm = TRUE)
+            dplyr::case_when(
+                is.na(avg_conc) ~ "No data",
+                avg_conc <= -5 ~ "Strong demand (below market)",
+                avg_conc <= 2 ~ "Fair pricing",
+                avg_conc <= 8 ~ "Slight premium required",
+                TRUE ~ "Weak demand (premium required)"
+            )
+        } else {
+            "No data"
+        }
+    })
+
+    # Auction Quality Heatmap
+    output$auction_quality_heatmap <- renderPlot({
+        req(enhanced_auction_data())
+        p <- create_auction_quality_heatmap(enhanced_auction_data())
+        if (!is.null(p)) print(p)
+    })
+
+    # Concession Trend Chart
+    output$concession_trend_chart <- renderPlot({
+        req(enhanced_auction_data())
+        p <- create_concession_trend_chart(enhanced_auction_data())
+        if (!is.null(p)) print(p)
+    })
+
+    # Download Quality Report
+    output$download_quality_report <- downloadHandler(
+        filename = function() {
+            paste0("auction_quality_report_", format(Sys.Date(), "%Y%m%d"), ".png")
+        },
+        content = function(file) {
+            req(enhanced_auction_data())
+
+            # Create combined plot
+            p1 <- create_auction_quality_heatmap(enhanced_auction_data())
+            p2 <- create_concession_trend_chart(enhanced_auction_data())
+
+            combined <- gridExtra::arrangeGrob(
+                p1, p2,
+                ncol = 2,
+                top = grid::textGrob("Auction Quality Report",
+                                     gp = grid::gpar(fontsize = 16, fontface = "bold",
+                                                     col = "#1B3A6B"))
+            )
+
+            ggsave(file, plot = combined, width = 16, height = 8, dpi = 300, bg = "white")
+        }
+    )
+
+    # ════════════════════════════════════════════════════════════════════════════
     # REDESIGNED AUCTION PREDICTIONS - NEW COMPONENTS
     # ════════════════════════════════════════════════════════════════════════════
 
@@ -6915,11 +7120,40 @@ server <- function(input, output, session) {
         sprintf("%+.2f", diff)
     }
 
-    # Compact Forecast Table (replaces vertical cards)
+    # Compact Forecast Table (replaces vertical cards) - Enhanced with quality metrics
     output$auction_forecast_table <- DT::renderDataTable({
         req(auction_predictions_data())
 
         preds <- auction_predictions_data()
+
+        # Get enhanced auction data for quality metrics
+        enhanced_data <- tryCatch(enhanced_auction_data(), error = function(e) NULL)
+
+        # Calculate historical quality metrics per bond
+        if (!is.null(enhanced_data) && nrow(enhanced_data) > 0) {
+            quality_metrics <- enhanced_data %>%
+                group_by(bond) %>%
+                summarise(
+                    hist_avg_quality = if ("auction_quality_score" %in% names(.))
+                        mean(auction_quality_score, na.rm = TRUE) else NA_real_,
+                    hist_avg_tail = if ("auction_tail_bps" %in% names(.))
+                        mean(auction_tail_bps, na.rm = TRUE) else NA_real_,
+                    hist_avg_inst = if ("non_comp_ratio" %in% names(.))
+                        mean(non_comp_ratio, na.rm = TRUE) else NA_real_,
+                    .groups = "drop"
+                )
+
+            # Join with predictions
+            preds <- preds %>%
+                left_join(quality_metrics, by = c("bond_name" = "bond"))
+        } else {
+            preds <- preds %>%
+                mutate(
+                    hist_avg_quality = NA_real_,
+                    hist_avg_tail = NA_real_,
+                    hist_avg_inst = NA_real_
+                )
+        }
 
         # Filter if toggle is off - hide bonds without forecasts
         if (!isTRUE(input$show_all_bonds)) {
@@ -6940,11 +7174,14 @@ server <- function(input, output, session) {
                     forecast < historical_avg - 0.2 ~ '<span class="label label-warning" style="background:#FF9800;">CAUTION</span>',
                     TRUE ~ '<span class="label label-default" style="background:#9E9E9E;">HOLD</span>'
                 ),
+                # NEW: Quality metrics columns
+                `Quality` = ifelse(is.na(hist_avg_quality), "—", sprintf("%.0f", hist_avg_quality)),
+                `Tail` = ifelse(is.na(hist_avg_tail), "—", sprintf("%.1f", hist_avg_tail)),
+                `Inst%` = ifelse(is.na(hist_avg_inst), "—", sprintf("%.0f%%", hist_avg_inst)),
                 `Hist` = sprintf("%.2fx", historical_avg),
-                `Last` = sprintf("%.2fx", last_value),
                 `n` = n_auctions
             ) %>%
-            select(Bond, Forecast, `CI 80%`, `vs Avg`, Signal, `Hist`, `Last`, `n`)
+            select(Bond, Forecast, `CI 80%`, Signal, `Quality`, `Tail`, `Inst%`, `Hist`, `n`)
 
         DT::datatable(
             display_df,
@@ -6954,21 +7191,29 @@ server <- function(input, output, session) {
                 pageLength = 10,
                 dom = 't',  # Table only, no search/pagination for compact view
                 ordering = TRUE,
-                scrollX = FALSE,
+                scrollX = TRUE,
                 columnDefs = list(
                     list(className = 'dt-center', targets = '_all'),
-                    list(width = '70px', targets = 0),
-                    list(width = '60px', targets = 1),
-                    list(width = '90px', targets = 2),
-                    list(width = '55px', targets = 3),
-                    list(width = '70px', targets = 4),
-                    list(width = '50px', targets = 5),
-                    list(width = '50px', targets = 6),
-                    list(width = '30px', targets = 7)
+                    list(width = '60px', targets = 0),
+                    list(width = '55px', targets = 1),
+                    list(width = '80px', targets = 2),
+                    list(width = '65px', targets = 3),
+                    list(width = '45px', targets = 4),
+                    list(width = '40px', targets = 5),
+                    list(width = '45px', targets = 6),
+                    list(width = '45px', targets = 7),
+                    list(width = '30px', targets = 8)
                 )
             ),
             class = 'compact stripe hover'
-        )
+        ) %>%
+            DT::formatStyle(
+                'Quality',
+                backgroundColor = DT::styleInterval(
+                    c(40, 55, 70, 85),
+                    c('#FFCDD2', '#FFCC80', '#FFF9C4', '#C8E6C9', '#81C784')
+                )
+            )
     })
 
     # Market Sentiment Compact (visual gauge)
@@ -7394,7 +7639,131 @@ server <- function(input, output, session) {
         })
     })
 
-    # Auction Calendar Mini
+    # ════════════════════════════════════════════════════════════════════════════
+    # UPCOMING AUCTIONS SELECTION (User selects up to 3 bonds)
+    # ════════════════════════════════════════════════════════════════════════════
+
+    # Populate upcoming auction bond choices (active bonds only)
+    observe({
+        req(filtered_data())
+
+        active <- tryCatch(active_bonds(), error = function(e) unique(filtered_data()$bond))
+
+        # Default to first 3 active bonds
+        default_selected <- if (length(active) >= 3) active[1:3] else active
+
+        updateSelectInput(
+            session,
+            "upcoming_auction_bonds",
+            choices = active,
+            selected = default_selected
+        )
+    })
+
+    # Limit selection to 3 bonds
+    observeEvent(input$upcoming_auction_bonds, {
+        if (length(input$upcoming_auction_bonds) > 3) {
+            updateSelectInput(
+                session,
+                "upcoming_auction_bonds",
+                selected = input$upcoming_auction_bonds[1:3]
+            )
+            showNotification("Maximum 3 bonds for upcoming auctions", type = "warning")
+        }
+    })
+
+    # Render upcoming auctions display
+    output$upcoming_auctions_display <- renderUI({
+        req(input$upcoming_auction_bonds)
+
+        selected_bonds <- input$upcoming_auction_bonds
+
+        # Get enhanced auction data if available
+        auction_data <- tryCatch(enhanced_auction_data(), error = function(e) filtered_data())
+
+        if (is.null(auction_data)) {
+            return(tags$p("No auction data available", style = "color: #999;"))
+        }
+
+        # Get stats for each selected bond
+        bond_stats <- lapply(selected_bonds, function(bond_name) {
+            bond_auctions <- auction_data %>%
+                filter(bond == bond_name, !is.na(bid_to_cover)) %>%
+                arrange(desc(offer_date))
+
+            if (nrow(bond_auctions) == 0) {
+                return(list(
+                    bond = bond_name,
+                    last_date = "No history",
+                    avg_btc = NA,
+                    last_quality = "—",
+                    n_auctions = 0
+                ))
+            }
+
+            # Get quality grade if available
+            quality <- if ("quality_grade" %in% names(bond_auctions)) {
+                bond_auctions$quality_grade[1]
+            } else {
+                "—"
+            }
+
+            list(
+                bond = bond_name,
+                last_date = format(bond_auctions$offer_date[1], "%Y-%m-%d"),
+                avg_btc = round(mean(bond_auctions$bid_to_cover, na.rm = TRUE), 2),
+                last_quality = quality,
+                n_auctions = nrow(bond_auctions)
+            )
+        })
+
+        # Create display cards
+        tags$div(
+            lapply(bond_stats, function(stats) {
+                btc_color <- if (!is.na(stats$avg_btc)) {
+                    if (stats$avg_btc >= 3) "#2E7D32"
+                    else if (stats$avg_btc >= 2) "#F57C00"
+                    else "#C62828"
+                } else {
+                    "#666"
+                }
+
+                tags$div(
+                    class = "upcoming-auction-card",
+                    style = "padding: 8px 10px; margin-bottom: 8px; background: #f8f9fa;
+                             border-radius: 4px; border-left: 4px solid #1B3A6B;",
+
+                    fluidRow(
+                        column(4,
+                               tags$strong(stats$bond, style = "font-size: 1em; color: #1B3A6B;")
+                        ),
+                        column(4,
+                               tags$span("Avg: ", class = "text-muted", style = "font-size: 0.85em;"),
+                               tags$span(sprintf("%.2fx", stats$avg_btc),
+                                        style = sprintf("font-weight: bold; color: %s;", btc_color))
+                        ),
+                        column(4,
+                               tags$span(sprintf("n=%d", stats$n_auctions),
+                                        style = "font-size: 0.85em; color: #666;")
+                        )
+                    )
+                )
+            }),
+
+            # Show next auction date
+            tags$div(
+                style = "text-align: center; margin-top: 8px; padding-top: 8px;
+                         border-top: 1px solid #E0E0E0;",
+                tags$small(
+                    style = "color: #666;",
+                    icon("calendar"),
+                    sprintf(" Next auction: %s", format(get_next_tuesday(today()), "%b %d"))
+                )
+            )
+        )
+    })
+
+    # Auction Calendar Mini (kept for backward compatibility, but simplified)
     output$auction_calendar_mini <- renderUI({
         # Generate upcoming auction dates (Tuesday pattern - SA auctions are typically Tuesdays)
         next_tuesday <- function(from_date) {
@@ -7504,20 +7873,7 @@ server <- function(input, output, session) {
         }
     }, height = 200)
 
-
-
-    output$auction_success_factors <- renderPlot({
-        req(filtered_data())
-        p <- generate_auction_success_factors_plot(filtered_data(), list())
-        if(!is.null(p)) {
-            gridExtra::grid.arrange(p)
-        } else {
-            plot.new()
-            text(0.5, 0.5, "Insufficient auction data for analysis", cex = 1.2)
-        }
-    })
-
-
+    # Note: auction_success_factors render removed as part of Auction Intelligence tab overhaul
 
     output$btc_decomposition <- renderPlot({
         req(filtered_data())
@@ -9100,18 +9456,7 @@ server <- function(input, output, session) {
         }
     )
 
-    output$download_auction_success <- downloadHandler(
-        filename = function() {
-            paste0("auction_success_factors_", format(Sys.Date(), "%Y%m%d"), ".png")
-        },
-        content = function(file) {
-            req(filtered_data())
-            p <- generate_auction_success_factors_plot(filtered_data(), list())
-            if(!is.null(p)) {
-                ggsave(file, plot = p, width = 12, height = 10, dpi = 300, bg = "white")
-            }
-        }
-    )
+    # Note: download_auction_success handler removed as part of Auction Intelligence tab overhaul
 
     output$download_auction_sentiment <- downloadHandler(
         filename = function() {
@@ -9210,31 +9555,8 @@ server <- function(input, output, session) {
         }
     )
 
-    output$download_success_probability <- downloadHandler(
-        filename = function() {
-            paste0("auction_success_probability_", format(Sys.Date(), "%Y%m%d"), ".png")
-        },
-        content = function(file) {
-            req(filtered_data(), input$auction_bonds_select)
-            p <- generate_success_probability_plot(filtered_data(), input$auction_bonds_select)
-            if(!is.null(p)) {
-                ggsave(file, plot = p, width = 10, height = 8, dpi = 300, bg = "white")
-            }
-        }
-    )
-
-    output$download_demand_elasticity <- downloadHandler(
-        filename = function() {
-            paste0("demand_elasticity_", format(Sys.Date(), "%Y%m%d"), ".png")
-        },
-        content = function(file) {
-            req(filtered_data())
-            p <- generate_demand_elasticity_plot(filtered_data(), list())
-            if(!is.null(p)) {
-                ggsave(file, plot = p, width = 12, height = 8, dpi = 300, bg = "white")
-            }
-        }
-    )
+    # Note: download_success_probability and download_demand_elasticity handlers removed
+    # as part of Auction Intelligence tab overhaul
 
     output$download_auction_performance <- downloadHandler(
         filename = function() {

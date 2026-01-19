@@ -268,9 +268,12 @@ generate_auction_pattern_analysis <- function(data, params) {
         return(create_no_auction_data_plot(data_check$message))
     }
 
+    # Filter to last 2 years for pattern analysis
+    two_years_ago <- Sys.Date() - 730
+
     # Analyze patterns with more relevant dimensions
     pattern_data <- data %>%
-        filter(!is.na(bid_to_cover)) %>%
+        filter(!is.na(bid_to_cover), date >= two_years_ago) %>%
         mutate(
             year = factor(year(date)),
             month_name = factor(months(date, abbreviate = TRUE),
@@ -294,114 +297,133 @@ generate_auction_pattern_analysis <- function(data, params) {
         )
 
     if(nrow(pattern_data) < 10) {
-        return(NULL)
+        return(
+            ggplot() +
+                annotate("text", x = 0.5, y = 0.5,
+                         label = "Insufficient data for pattern analysis\n(need 10+ auctions)",
+                         size = 5, color = "grey50") +
+                theme_void()
+        )
     }
 
-    # 1. Year-over-Year Comparison
+    # Calculate overall statistics for title
+    overall_mean <- mean(pattern_data$bid_to_cover, na.rm = TRUE)
+    overall_sd <- sd(pattern_data$bid_to_cover, na.rm = TRUE)
+    n_auctions <- nrow(pattern_data)
+
+    # 1. Year-over-Year Comparison with trend indicator
+    year_stats <- pattern_data %>%
+        group_by(year) %>%
+        summarise(mean_btc = mean(bid_to_cover, na.rm = TRUE), .groups = "drop") %>%
+        arrange(year)
+
+    year_trend <- if (nrow(year_stats) >= 2) {
+        diff(tail(year_stats$mean_btc, 2))
+    } else {
+        0
+    }
+    trend_arrow <- if (year_trend > 0.1) "↑" else if (year_trend < -0.1) "↓" else "→"
+
     p1 <- ggplot(pattern_data %>% filter(!is.na(year)),
                  aes(x = year, y = bid_to_cover)) +
-        geom_boxplot(aes(fill = year), alpha = 0.7, show.legend = FALSE) +
-        geom_hline(yintercept = 2.5, linetype = "dashed",
-                   color = insele_palette$success, alpha = 0.7) +
-        scale_fill_manual(values = rep(c(insele_palette$primary,
-                                         insele_palette$secondary,
-                                         insele_palette$accent),
-                                       length.out = length(unique(pattern_data$year)))) +
-        stat_summary(fun = mean, geom = "point", shape = 23,
-                     size = 3, fill = "white", color = "black") +
-        labs(title = "Year-over-Year Performance",
-             subtitle = "Diamond = Mean",
-             x = "", y = "Bid/Cover") +
-        create_insele_theme() +
-        theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8))
-
-    # 2. By Month
-    p2 <- ggplot(pattern_data %>% filter(!is.na(month_name)),
-                 aes(x = month_name, y = bid_to_cover)) +
-        geom_boxplot(fill = insele_palette$secondary, alpha = 0.7) +
-        geom_hline(yintercept = 2.5, linetype = "dashed",
-                   color = insele_palette$success, alpha = 0.7) +
-        labs(title = "Seasonal Patterns", x = "", y = "") +
-        create_insele_theme() +
-        theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8))
-
-    # 3. By Quarter
-    p3 <- ggplot(pattern_data, aes(x = quarter, y = bid_to_cover)) +
-        geom_boxplot(fill = insele_palette$accent, alpha = 0.7) +
-        geom_hline(yintercept = 2.5, linetype = "dashed",
-                   color = insele_palette$success, alpha = 0.7) +
-        stat_summary(fun = mean, geom = "point", shape = 23,
-                     size = 3, fill = "white", color = "black") +
-        labs(title = "Quarterly Patterns", x = "", y = "Bid/Cover") +
-        create_insele_theme()
-
-    # 4. Enhanced trend with confidence bands
-    ma_data <- pattern_data %>%
-        group_by(year_month) %>%
-        summarise(
-            avg_btc = mean(bid_to_cover),
-            se_btc = sd(bid_to_cover) / sqrt(n()),
-            n_auctions = n(),
-            .groups = "drop"
-        ) %>%
-        arrange(year_month) %>%
-        mutate(
-            ma_3m = zoo::rollmean(avg_btc, k = min(3, n()), fill = NA, align = "right"),
-            lower_ci = avg_btc - 1.96 * se_btc,
-            upper_ci = avg_btc + 1.96 * se_btc
+        geom_boxplot(fill = "#1B3A6B", alpha = 0.7, outlier.shape = 21) +
+        geom_hline(yintercept = overall_mean, linetype = "dashed", color = "#E53935") +
+        stat_summary(fun = mean, geom = "point", shape = 18, size = 4, color = "#FDD835") +
+        labs(title = sprintf("Year-over-Year %s", trend_arrow),
+             subtitle = "◆ = Mean | Dashed = Overall avg",
+             x = "", y = "Bid-to-Cover") +
+        theme_minimal(base_size = 10) +
+        theme(
+            plot.title = element_text(face = "bold", size = 11, color = "#1B3A6B"),
+            plot.subtitle = element_text(size = 8, color = "grey50"),
+            axis.text.x = element_text(angle = 45, hjust = 1, size = 9)
         )
 
-    p4 <- ggplot(ma_data, aes(x = year_month)) +
-        geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci),
-                    alpha = 0.2, fill = insele_palette$primary) +
-        geom_line(aes(y = avg_btc), color = insele_palette$primary,
-                  size = 0.8, alpha = 0.6) +
-        geom_point(aes(y = avg_btc, size = n_auctions),
-                   color = insele_palette$primary, alpha = 0.7) +
-        geom_line(aes(y = ma_3m), color = insele_palette$accent,
-                  size = 1.2, na.rm = TRUE) +
-        geom_hline(yintercept = 2.5, linetype = "dotted",
-                   color = insele_palette$success, alpha = 0.7) +
-        scale_x_date(date_labels = "%b\n%Y", date_breaks = "3 months") +
-        scale_size_continuous(range = c(2, 6), guide = "none") +
-        labs(title = "Trend with Confidence Bands",
-             subtitle = "Orange = 3M MA | Size = # Auctions",
+    # 2. Seasonal Patterns (Monthly) - identify best/worst months
+    month_stats <- pattern_data %>%
+        group_by(month_name) %>%
+        summarise(mean_btc = mean(bid_to_cover, na.rm = TRUE), .groups = "drop")
+    best_month <- month_stats %>% slice_max(mean_btc, n = 1) %>% pull(month_name)
+    worst_month <- month_stats %>% slice_min(mean_btc, n = 1) %>% pull(month_name)
+
+    p2 <- ggplot(pattern_data %>% filter(!is.na(month_name)),
+                 aes(x = month_name, y = bid_to_cover)) +
+        geom_boxplot(fill = "#2E5090", alpha = 0.7, outlier.size = 1) +
+        geom_hline(yintercept = overall_mean, linetype = "dashed", color = "#E53935") +
+        labs(title = "Seasonal Patterns",
+             subtitle = sprintf("Best: %s | Weakest: %s", best_month, worst_month),
              x = "", y = "") +
-        create_insele_theme()
+        theme_minimal(base_size = 10) +
+        theme(
+            plot.title = element_text(face = "bold", size = 11, color = "#1B3A6B"),
+            plot.subtitle = element_text(size = 8, color = "grey50"),
+            axis.text.x = element_text(angle = 45, hjust = 1, size = 8)
+        )
 
-    # Alternative: Add a 5th panel showing maturity bucket patterns
-    if(nrow(pattern_data) > 20 && "maturity_bucket" %in% names(pattern_data)) {
-        p5 <- ggplot(pattern_data %>% filter(!is.na(maturity_bucket)),
-                     aes(x = maturity_bucket, y = bid_to_cover)) +
-            geom_violin(fill = insele_palette$primary, alpha = 0.3) +
-            geom_boxplot(width = 0.3, fill = insele_palette$primary, alpha = 0.7) +
-            geom_hline(yintercept = 2.5, linetype = "dashed",
-                       color = insele_palette$success, alpha = 0.7) +
-            labs(title = "By Duration Bucket", x = "", y = "Bid/Cover") +
-            create_insele_theme() +
-            theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8))
+    # 3. Quarterly Patterns
+    p3 <- ggplot(pattern_data, aes(x = quarter, y = bid_to_cover)) +
+        geom_boxplot(fill = "#4A7C59", alpha = 0.7) +
+        geom_hline(yintercept = overall_mean, linetype = "dashed", color = "#E53935") +
+        stat_summary(fun = mean, geom = "point", shape = 18, size = 4, color = "#FDD835") +
+        labs(title = "Quarterly Patterns",
+             subtitle = "◆ = Mean",
+             x = "", y = "") +
+        theme_minimal(base_size = 10) +
+        theme(
+            plot.title = element_text(face = "bold", size = 11, color = "#1B3A6B"),
+            plot.subtitle = element_text(size = 8, color = "grey50")
+        )
 
-        # Create 2x3 grid with 5 panels
-        return(gridExtra::arrangeGrob(
-            p1, p2, p3,
-            p4, p5,
-            ncol = 3, nrow = 2,
-            top = grid::textGrob("Historical Auction Patterns Analysis",
-                                 gp = grid::gpar(fontsize = 14,
-                                                 fontface = 2,
-                                                 col = insele_palette$primary)),
-            widths = c(1, 1, 1),
-            heights = c(1, 1)
-        ))
+    # 4. Enhanced trend with confidence bands
+    trend_data <- pattern_data %>%
+        arrange(date) %>%
+        mutate(
+            rolling_mean = zoo::rollapply(bid_to_cover, 5, mean, fill = NA, align = "right"),
+            rolling_sd = zoo::rollapply(bid_to_cover, 5, sd, fill = NA, align = "right"),
+            upper = rolling_mean + rolling_sd,
+            lower = rolling_mean - rolling_sd
+        )
+
+    p4 <- ggplot(trend_data, aes(x = date)) +
+        geom_ribbon(aes(ymin = lower, ymax = upper), fill = "#1B3A6B", alpha = 0.2,
+                    na.rm = TRUE) +
+        geom_point(aes(y = bid_to_cover), size = 2, alpha = 0.5, color = "#1B3A6B") +
+        geom_line(aes(y = rolling_mean), color = "#E57C00", linewidth = 1.2,
+                  na.rm = TRUE) +
+        geom_hline(yintercept = overall_mean, linetype = "dashed", color = "#E53935") +
+        labs(title = "Trend with Confidence Band",
+             subtitle = "Orange = 5-auction MA | Dashed = Overall mean",
+             x = "", y = "Bid-to-Cover") +
+        scale_x_date(date_breaks = "3 months", date_labels = "%b\n%Y") +
+        theme_minimal(base_size = 10) +
+        theme(
+            plot.title = element_text(face = "bold", size = 11, color = "#1B3A6B"),
+            plot.subtitle = element_text(size = 8, color = "grey50")
+        )
+
+    # Combine with patchwork if available, otherwise use arrangeGrob
+    if (requireNamespace("patchwork", quietly = TRUE)) {
+        combined <- (p1 | p2 | p3) / p4 +
+            patchwork::plot_annotation(
+                title = "Historical Auction Patterns Analysis",
+                subtitle = sprintf("Based on %d auctions | Overall avg: %.2fx ± %.2fx | Dashed red = overall average",
+                                  n_auctions, overall_mean, overall_sd),
+                theme = theme(
+                    plot.title = element_text(face = "bold", size = 14, color = "#1B3A6B"),
+                    plot.subtitle = element_text(size = 10, color = "grey50")
+                )
+            )
+        return(combined)
     } else {
-        # Original 2x2 layout
+        # Fallback to arrangeGrob
         return(gridExtra::arrangeGrob(
             p1, p2, p3, p4,
             ncol = 2, nrow = 2,
-            top = grid::textGrob("Historical Auction Patterns Analysis",
-                                 gp = grid::gpar(fontsize = 14,
-                                                 fontface = 2,
-                                                 col = insele_palette$primary))
+            top = grid::textGrob(
+                sprintf("Historical Auction Patterns | %d auctions | Avg: %.2fx",
+                       n_auctions, overall_mean),
+                gp = grid::gpar(fontsize = 14, fontface = 2, col = "#1B3A6B")
+            )
         ))
     }
 }
@@ -840,13 +862,13 @@ generate_bid_distribution_plot <- function(data, params) {
     bid_data <- data %>%
         filter(!is.na(bid_to_cover), !is.na(bids_received)) %>%
         mutate(
-            bid_category = case_when(
+            btc_category = case_when(
                 bid_to_cover < 2 ~ "Weak (<2x)",
                 bid_to_cover < 2.5 ~ "Moderate (2-2.5x)",
                 bid_to_cover < 3 ~ "Good (2.5-3x)",
                 TRUE ~ "Strong (>3x)"
             ),
-            bid_category = factor(bid_category,
+            btc_category = factor(btc_category,
                                   levels = c("Weak (<2x)", "Moderate (2-2.5x)",
                                              "Good (2.5-3x)", "Strong (>3x)"))
         )
@@ -855,29 +877,63 @@ generate_bid_distribution_plot <- function(data, params) {
         return(NULL)
     }
 
-    # Create violin plot with points
-    p <- ggplot(bid_data, aes(x = bid_category, y = bids_received/1e9)) +
+    # Calculate category statistics for labels and insights
+    category_stats <- bid_data %>%
+        group_by(btc_category) %>%
+        summarise(
+            n_auctions = n(),
+            pct_of_total = n() / nrow(bid_data) * 100,
+            total_bids = sum(bids_received, na.rm = TRUE),
+            avg_bids = mean(bids_received, na.rm = TRUE),
+            .groups = "drop"
+        )
 
-        geom_violin(aes(fill = bid_category),
-                    alpha = 0.7,
-                    trim = FALSE) +
+    # Get percentages for insight text
+    strong_pct <- category_stats %>%
+        filter(btc_category == "Strong (>3x)") %>%
+        pull(pct_of_total) %>%
+        {if(length(.) == 0) 0 else .}
+    weak_pct <- category_stats %>%
+        filter(btc_category == "Weak (<2x)") %>%
+        pull(pct_of_total) %>%
+        {if(length(.) == 0) 0 else .}
 
-        geom_boxplot(width = 0.1,
+    # Build insight text
+    insight_text <- sprintf("Key Finding: %.0f%% of auctions achieved >3x coverage (Strong), %.0f%% were weak (<2x)",
+                           strong_pct, weak_pct)
+
+    # Create violin plot with category counts
+    p <- ggplot(bid_data, aes(x = btc_category, y = bids_received/1e9)) +
+
+        geom_violin(aes(fill = btc_category),
+                    alpha = 0.6,
+                    trim = FALSE,
+                    color = NA) +
+
+        geom_boxplot(width = 0.2,
                      fill = "white",
                      alpha = 0.9,
-                     outlier.shape = NA) +
+                     outlier.shape = 21) +
 
         geom_jitter(aes(color = bond),
-                    width = 0.05,
+                    width = 0.1,
                     alpha = 0.6,
                     size = 2) +
 
+        # Add count labels below each category
+        geom_text(
+            data = category_stats,
+            aes(x = btc_category, y = -max(bid_data$bids_received/1e9) * 0.08,
+                label = sprintf("n=%d\n(%.0f%%)", n_auctions, pct_of_total)),
+            size = 3, color = "grey30"
+        ) +
+
         scale_fill_manual(
             values = c(
-                "Weak (<2x)" = insele_palette$danger,
-                "Moderate (2-2.5x)" = insele_palette$warning,
-                "Good (2.5-3x)" = insele_palette$secondary,
-                "Strong (>3x)" = insele_palette$success
+                "Weak (<2x)" = "#FFCDD2",
+                "Moderate (2-2.5x)" = "#FFF9C4",
+                "Good (2.5-3x)" = "#C8E6C9",
+                "Strong (>3x)" = "#81C784"
             ),
             guide = "none"
         ) +
@@ -887,21 +943,26 @@ generate_bid_distribution_plot <- function(data, params) {
 
         scale_y_continuous(
             labels = function(x) paste0("R", x, "bn"),
-            breaks = pretty_breaks(n = 6)
+            breaks = scales::pretty_breaks(n = 6),
+            expand = expansion(mult = c(0.15, 0.05))  # Make room for count labels
         ) +
 
         labs(
             title = "Bid Distribution by Auction Performance",
-            subtitle = "Total bid amounts across different bid-to-cover categories",
+            subtitle = "Total bid amounts across bid-to-cover categories",
             x = "Bid-to-Cover Category",
             y = "Total Bids",
-            caption = paste("Based on", nrow(bid_data), "auctions | Violin: distribution | Box: quartiles")
+            caption = paste(insight_text, "\nPoints colored by bond | Based on", nrow(bid_data), "auctions")
         ) +
 
-        create_insele_theme() +
+        theme_minimal(base_size = 11) +
         theme(
+            plot.title = element_text(face = "bold", size = 13, color = "#1B3A6B"),
+            plot.subtitle = element_text(size = 10, color = "grey50"),
+            plot.caption = element_text(size = 8, color = "grey50", hjust = 0),
             axis.text.x = element_text(angle = 45, hjust = 1),
-            legend.position = "bottom"
+            legend.position = "bottom",
+            legend.title = element_blank()
         )
 
     return(p)
@@ -1266,133 +1327,8 @@ generate_auction_sentiment_gauge <- function(data, params) {
     ))
 }
 
-#' @export
-# 19. Auction Success Factors Plot
-generate_auction_success_factors_plot <- function(data, params) {
-    # Check for auction data
-    data_check <- check_auction_data(data, required_cols = c("offer_amount"))
-    if (!data_check$has_data) {
-        return(create_no_auction_data_plot(data_check$message))
-    }
-
-    # Analyze factors affecting auction success
-    success_factors <- data %>%
-        filter(!is.na(bid_to_cover), !is.na(offer_amount)) %>%
-        mutate(
-            success_category = case_when(
-                bid_to_cover >= 3 ~ "Highly Successful",
-                bid_to_cover >= 2.5 ~ "Successful",
-                bid_to_cover >= 2 ~ "Moderate",
-                TRUE ~ "Weak"
-            ),
-            offer_size_cat = case_when(
-                offer_amount < 2e9 ~ "Small (<R2bn)",
-                offer_amount < 5e9 ~ "Medium (R2-5bn)",
-                offer_amount < 10e9 ~ "Large (R5-10bn)",
-                TRUE ~ "Jumbo (>R10bn)"
-            ),
-            duration_bucket = case_when(
-                modified_duration <= 3 ~ "Short (≤3y)",
-                modified_duration <= 7 ~ "Medium (3-7y)",
-                modified_duration <= 12 ~ "Long (7-12y)",
-                TRUE ~ "Ultra-Long (>12y)"
-            )
-        )
-
-    if(nrow(success_factors) < 5) {
-        return(NULL)
-    }
-
-    # Create multi-factor analysis
-    p1 <- ggplot(success_factors, aes(x = offer_size_cat, fill = success_category)) +
-        geom_bar(position = "fill", width = 0.7) +
-        scale_fill_manual(
-            values = c(
-                "Highly Successful" = insele_palette$success,
-                "Successful" = insele_palette$secondary,
-                "Moderate" = insele_palette$warning,
-                "Weak" = insele_palette$danger
-            ),
-            name = "Success Level"
-        ) +
-        scale_y_continuous(labels = scales::percent) +
-        labs(title = "Success by Offer Size", x = "", y = "Proportion") +
-        create_insele_theme() +
-        theme(axis.text.x = element_text(angle = 45, hjust = 1))
-
-    p2 <- ggplot(success_factors, aes(x = duration_bucket, fill = success_category)) +
-        geom_bar(position = "fill", width = 0.7) +
-        scale_fill_manual(
-            values = c(
-                "Highly Successful" = insele_palette$success,
-                "Successful" = insele_palette$secondary,
-                "Moderate" = insele_palette$warning,
-                "Weak" = insele_palette$danger
-            ),
-            guide = "none"
-        ) +
-        scale_y_continuous(labels = scales::percent) +
-        labs(title = "Success by Duration", x = "", y = "") +
-        create_insele_theme() +
-        theme(axis.text.x = element_text(angle = 45, hjust = 1))
-
-    p3 <- ggplot(success_factors, aes(x = success_category, y = offer_amount/1e9)) +
-        geom_boxplot(aes(fill = success_category), alpha = 0.7) +
-        scale_fill_manual(
-            values = c(
-                "Highly Successful" = insele_palette$success,
-                "Successful" = insele_palette$secondary,
-                "Moderate" = insele_palette$warning,
-                "Weak" = insele_palette$danger
-            ),
-            guide = "none"
-        ) +
-        scale_y_continuous(labels = function(x) paste0("R", x, "bn")) +
-        labs(title = "Offer Size Distribution", x = "", y = "Offer Size") +
-        create_insele_theme() +
-        theme(axis.text.x = element_text(angle = 45, hjust = 1))
-
-    # Calculate correlation matrix for continuous variables
-    cor_data <- success_factors %>%
-        select(bid_to_cover, offer_amount, modified_duration, yield_to_maturity) %>%
-        filter(complete.cases(.))
-
-    if(nrow(cor_data) > 10) {
-        cor_matrix <- cor(cor_data)
-        cor_melted <- cor_matrix %>%
-            as.data.frame() %>%
-            rownames_to_column("var1") %>%
-            pivot_longer(cols = -var1, names_to = "var2", values_to = "correlation")
-
-        p4 <- ggplot(cor_melted, aes(x = var1, y = var2, fill = correlation)) +
-            geom_tile(color = "white", size = 1) +
-            geom_text(aes(label = sprintf("%.2f", correlation)),
-                      color = "white", size = 3, fontface = 2) +
-            scale_fill_gradient2(
-                low = insele_palette$danger,
-                mid = "white",
-                high = insele_palette$success,
-                midpoint = 0,
-                limits = c(-1, 1),
-                guide = "none"
-            ) +
-            labs(title = "Factor Correlations", x = "", y = "") +
-            create_insele_theme() +
-            theme(axis.text.x = element_text(angle = 45, hjust = 1))
-
-        return(gridExtra::arrangeGrob(p1, p2, p3, p4, ncol = 2, nrow = 2,
-                                      top = grid::textGrob("Auction Success Factor Analysis",
-                                                           gp = grid::gpar(fontsize = 16,
-                                                                           fontface = 2,
-                                                                           col = insele_palette$primary))))
-    } else {
-        return(gridExtra::arrangeGrob(p1, p2, p3, ncol = 2, nrow = 2,
-                                      top = grid::textGrob("Auction Success Factor Analysis",
-                                                           gp = grid::gpar(fontsize = 16,
-                                                                           fontface = 2,
-                                                                           col = insele_palette$primary))))
-    }
-}
+# Note: generate_auction_success_factors_plot function removed
+# as part of Auction Intelligence tab overhaul
 
 #' @export
 # 20. Bid-to-Cover Decomposition Plot
@@ -1455,23 +1391,53 @@ generate_btc_decomposition_plot <- function(data, params) {
         filter(bond %in% top_bonds) %>%
         arrange(date)
 
+    # Calculate per-bond stats for facet labels
+    bond_stats <- decomp_ts %>%
+        group_by(bond) %>%
+        summarise(
+            n = n(),
+            avg_btc = mean(bid_to_cover, na.rm = TRUE),
+            trend_slope = {
+                if (n() >= 3) {
+                    coef(lm(bid_to_cover ~ as.numeric(date), data = cur_data()))[2] * 365
+                } else {
+                    NA_real_
+                }
+            },
+            .groups = "drop"
+        ) %>%
+        mutate(
+            trend_arrow = case_when(
+                is.na(trend_slope) ~ "",
+                trend_slope > 0.1 ~ "↑",
+                trend_slope < -0.1 ~ "↓",
+                TRUE ~ "→"
+            ),
+            facet_label = sprintf("%s (n=%d, Avg: %.2fx) %s", bond, n, avg_btc, trend_arrow)
+        )
+
+    decomp_ts <- decomp_ts %>%
+        left_join(bond_stats %>% select(bond, facet_label), by = "bond")
+
     p1 <- ggplot(decomp_ts, aes(x = date)) +
-        geom_line(aes(y = bid_to_cover, group = bond), size = 1.2) +
-        geom_line(aes(y = trend, color = "Trend"), size = 1.2, na.rm = TRUE) +
+        geom_line(aes(y = bid_to_cover), color = "#1B3A6B", linewidth = 0.8) +
+        geom_line(aes(y = trend), color = "#E57C00", linewidth = 1.2, linetype = "dashed",
+                  na.rm = TRUE) +
         geom_ribbon(aes(ymin = trend - btc_vol, ymax = trend + btc_vol),
-                    alpha = 0.2, fill = insele_palette$secondary, na.rm = TRUE) +
-        facet_wrap(~bond, scales = "free_y", ncol = 2) +
-        scale_color_manual(
-            values = c("Actual" = insele_palette$primary,
-                       "Trend" = insele_palette$accent),
-            name = ""
-        ) +
+                    alpha = 0.15, fill = "#1B3A6B", na.rm = TRUE) +
+        geom_hline(yintercept = 2.5, linetype = "dotted", color = "#E53935", alpha = 0.5) +
+        facet_wrap(~facet_label, scales = "free_y", ncol = 2) +
+        scale_x_date(date_labels = "%b\n'%y") +
         labs(title = "Bid-to-Cover Decomposition",
+             subtitle = "Solid = Actual | Dashed orange = 20-auction trend | Shaded = ±1 vol | Dotted red = 2.5x threshold",
              x = "", y = "Bid-to-Cover Ratio") +
-        create_insele_theme() +
-        theme(legend.position = "top",
-              strip.background = element_rect(fill = insele_palette$primary),
-              strip.text = element_text(color = "white", face = "bold"))
+        theme_minimal(base_size = 10) +
+        theme(
+            plot.title = element_text(face = "bold", size = 12, color = "#1B3A6B"),
+            plot.subtitle = element_text(size = 9, color = "grey50"),
+            strip.background = element_rect(fill = "#1B3A6B", color = NA),
+            strip.text = element_text(color = "white", face = "bold", size = 9)
+        )
 
     # 2. Component contribution analysis
     comp_analysis <- btc_decomp %>%
@@ -1535,4 +1501,223 @@ generate_btc_decomposition_plot <- function(data, params) {
         nrow = 2,
         heights = c(2, 1)
     ))
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# AUCTION QUALITY DASHBOARD VISUALIZATIONS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+#' @title Create Auction Quality Heatmap
+#' @description Creates a heatmap showing auction quality metrics by bond
+#' @param auction_data Enhanced auction data with quality metrics
+#' @return ggplot object
+#' @export
+create_auction_quality_heatmap <- function(auction_data) {
+
+    # Aggregate by bond - latest 6 months
+    six_months_ago <- Sys.Date() - 180
+
+    # Check for required columns
+    required_cols <- c("bond", "offer_date", "bid_to_cover")
+    if (!all(required_cols %in% names(auction_data))) {
+        return(
+            ggplot() +
+                annotate("text", x = 0.5, y = 0.5,
+                         label = "Insufficient auction data for heatmap",
+                         size = 5, color = "grey50") +
+                theme_void()
+        )
+    }
+
+    # Filter to recent data and aggregate
+    bond_quality <- auction_data %>%
+        filter(offer_date >= six_months_ago, !is.na(bid_to_cover)) %>%
+        group_by(bond) %>%
+        summarise(
+            n_auctions = n(),
+            avg_btc = mean(bid_to_cover, na.rm = TRUE),
+            avg_tail = if ("auction_tail_bps" %in% names(.)) mean(auction_tail_bps, na.rm = TRUE) else NA_real_,
+            avg_inst = if ("non_comp_ratio" %in% names(.)) mean(non_comp_ratio, na.rm = TRUE) else NA_real_,
+            avg_concession = if ("auction_concession_bps" %in% names(.)) mean(auction_concession_bps, na.rm = TRUE) else NA_real_,
+            avg_quality = if ("auction_quality_score" %in% names(.)) mean(auction_quality_score, na.rm = TRUE) else NA_real_,
+            .groups = "drop"
+        ) %>%
+        filter(n_auctions >= 2)  # Minimum 2 auctions for reliability
+
+    if (nrow(bond_quality) == 0) {
+        return(
+            ggplot() +
+                annotate("text", x = 0.5, y = 0.5,
+                         label = "Insufficient auction data for heatmap\n(need 2+ auctions per bond)",
+                         size = 5, color = "grey50") +
+                theme_void()
+        )
+    }
+
+    # Reshape for heatmap
+    heatmap_data <- bond_quality %>%
+        pivot_longer(
+            cols = c(avg_btc, avg_tail, avg_inst, avg_concession, avg_quality),
+            names_to = "metric",
+            values_to = "value"
+        ) %>%
+        mutate(
+            metric = case_when(
+                metric == "avg_btc" ~ "Bid-to-Cover",
+                metric == "avg_tail" ~ "Tail (bps)",
+                metric == "avg_inst" ~ "Institutional %",
+                metric == "avg_concession" ~ "Concession (bps)",
+                metric == "avg_quality" ~ "Quality Score"
+            ),
+            metric = factor(metric, levels = c("Bid-to-Cover", "Tail (bps)",
+                                                "Institutional %", "Concession (bps)",
+                                                "Quality Score")),
+            # Normalize each metric to 0-100 for consistent color scale
+            value_normalized = case_when(
+                metric == "Bid-to-Cover" ~ pmin(100, pmax(0, (value - 1) / 4 * 100)),
+                metric == "Tail (bps)" ~ pmax(0, 100 - value * 10),  # Inverted (lower is better)
+                metric == "Institutional %" ~ pmin(100, value * 2.5),
+                metric == "Concession (bps)" ~ pmax(0, 100 - abs(value) * 10),  # Closer to 0 is better
+                metric == "Quality Score" ~ ifelse(is.na(value), 50, value),
+                TRUE ~ 50
+            ),
+            # Format display value
+            display_value = case_when(
+                is.na(value) ~ "—",
+                metric == "Bid-to-Cover" ~ sprintf("%.1fx", value),
+                metric == "Tail (bps)" ~ sprintf("%.0f", value),
+                metric == "Institutional %" ~ sprintf("%.0f%%", value),
+                metric == "Concession (bps)" ~ sprintf("%+.0f", value),
+                metric == "Quality Score" ~ sprintf("%.0f", value),
+                TRUE ~ sprintf("%.1f", value)
+            )
+        )
+
+    # Order bonds by quality score
+    bond_order <- bond_quality %>%
+        arrange(desc(avg_quality)) %>%
+        pull(bond)
+
+    heatmap_data <- heatmap_data %>%
+        mutate(bond = factor(bond, levels = rev(bond_order)))
+
+    # Build heatmap
+    ggplot(heatmap_data, aes(x = metric, y = bond, fill = value_normalized)) +
+        geom_tile(color = "white", linewidth = 1) +
+        geom_text(aes(label = display_value), size = 3.2, fontface = "bold") +
+        scale_fill_gradientn(
+            colors = c("#FFCDD2", "#FFF9C4", "#C8E6C9", "#81C784", "#388E3C"),
+            values = scales::rescale(c(0, 30, 50, 70, 100)),
+            limits = c(0, 100),
+            name = "Score",
+            guide = guide_colorbar(barwidth = 1, barheight = 10),
+            na.value = "#F5F5F5"
+        ) +
+        labs(
+            title = "Auction Quality Metrics by Bond",
+            subtitle = sprintf("Last 6 months | %d bonds with 2+ auctions", nrow(bond_quality)),
+            x = NULL,
+            y = NULL
+        ) +
+        theme_minimal(base_size = 11) +
+        theme(
+            plot.title = element_text(face = "bold", size = 13, color = "#1B3A6B"),
+            plot.subtitle = element_text(size = 9, color = "grey50"),
+            axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
+            axis.text.y = element_text(size = 10),
+            legend.position = "right",
+            panel.grid = element_blank()
+        )
+}
+
+#' @title Create Concession Trend Chart
+#' @description Creates a chart showing auction concession trends over time
+#' @param auction_data Enhanced auction data with concession metrics
+#' @return ggplot object
+#' @export
+create_concession_trend_chart <- function(auction_data) {
+
+    # Check for required columns
+    if (!"auction_concession_bps" %in% names(auction_data)) {
+        return(
+            ggplot() +
+                annotate("text", x = 0.5, y = 0.5,
+                         label = "Insufficient data for concession analysis\n(requires clearing_yield and secondary market YTM)",
+                         size = 4, color = "grey50") +
+                theme_void()
+        )
+    }
+
+    # Filter to auctions with concession data
+    concession_data <- auction_data %>%
+        filter(!is.na(auction_concession_bps)) %>%
+        arrange(offer_date)
+
+    if (nrow(concession_data) < 5) {
+        return(
+            ggplot() +
+                annotate("text", x = 0.5, y = 0.5,
+                         label = sprintf("Insufficient data for concession analysis\n(%d auctions, need 5+)",
+                                        nrow(concession_data)),
+                         size = 4, color = "grey50") +
+                theme_void()
+        )
+    }
+
+    # Calculate rolling average
+    concession_data <- concession_data %>%
+        arrange(offer_date) %>%
+        mutate(
+            rolling_avg = zoo::rollapply(auction_concession_bps, 5, mean,
+                                          fill = NA, align = "right")
+        )
+
+    # Get date range for annotations
+    min_date <- min(concession_data$offer_date)
+    max_date <- max(concession_data$offer_date)
+
+    ggplot(concession_data, aes(x = offer_date)) +
+        # Zero reference line
+        geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+
+        # Shaded regions for interpretation
+        annotate("rect", xmin = min_date, xmax = max_date,
+                 ymin = -Inf, ymax = -5, fill = "#C8E6C9", alpha = 0.3) +
+        annotate("rect", xmin = min_date, xmax = max_date,
+                 ymin = 5, ymax = Inf, fill = "#FFCDD2", alpha = 0.3) +
+
+        # Individual auction points
+        geom_point(aes(y = auction_concession_bps, color = bond),
+                   size = 2.5, alpha = 0.7) +
+
+        # Rolling average line
+        geom_line(aes(y = rolling_avg), color = "#1B3A6B", linewidth = 1.2,
+                  na.rm = TRUE) +
+
+        # Labels
+        scale_y_continuous(
+            labels = function(x) sprintf("%+d bps", x)
+        ) +
+        scale_x_date(
+            date_breaks = "2 months",
+            date_labels = "%b %Y"
+        ) +
+        scale_color_manual(values = insele_palette$categorical, name = "Bond") +
+
+        labs(
+            title = "Auction Concession Trend",
+            subtitle = "Clearing yield vs pre-auction secondary market | Line = 5-auction rolling avg",
+            x = NULL,
+            y = "Concession (bps)",
+            caption = "Green zone = Strong (below market) | Red zone = Weak (premium required)"
+        ) +
+        theme_minimal(base_size = 11) +
+        theme(
+            plot.title = element_text(face = "bold", size = 13, color = "#1B3A6B"),
+            plot.subtitle = element_text(size = 9, color = "grey50"),
+            plot.caption = element_text(size = 8, color = "grey50", hjust = 0),
+            legend.position = "bottom",
+            legend.title = element_blank(),
+            axis.text.x = element_text(angle = 45, hjust = 1)
+        )
 }
