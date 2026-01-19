@@ -142,6 +142,9 @@ server <- function(input, output, session) {
         excel_path = NULL   # Store the Excel file path for metadata creation
     )
 
+    # Reactive value for forward rate chart-table interactivity
+    selected_forward_period <- reactiveVal(NULL)
+
     # ================================================================================
     # TREASURY HOLDINGS MODULE
     # ================================================================================
@@ -4034,8 +4037,10 @@ server <- function(input, output, session) {
 
     output$forward_curve_plot <- renderPlot({
         req(processed_data())
-        p <- generate_forward_curve_plot(processed_data(), list())
-        if(!is.null(p)) print(p)
+        # Pass the selected forward period for chart-table interactivity
+        selected_period <- selected_forward_period()
+        p <- generate_forward_curve_plot(processed_data(), params = NULL, selected_period = selected_period)
+        if (!is.null(p)) print(p)
     })
 
 
@@ -6114,7 +6119,7 @@ server <- function(input, output, session) {
             rule = 2  # Extrapolate using nearest value
         )
 
-        for(i in 1:nrow(periods)) {
+        for (i in 1:nrow(periods)) {
             t1 <- periods$start_year[i]   # Start of forward period
             t2 <- periods$end_year[i]     # End of forward period
             tenor <- periods$tenor_years[i]  # Length of forward period
@@ -6130,10 +6135,10 @@ server <- function(input, output, session) {
             r_tenor <- r_tenor_pct / 100
 
             # Calculate forward rate using: f = [(1 + r_t2)^t2 / (1 + r_t1)^t1]^(1/(t2-t1)) - 1
-            if(t1 == 0) {
+            if (t1 == 0) {
                 # For 0yXy, forward rate equals the spot rate at tenor X
                 forward_rate <- r_t2
-            } else if(t2 > t1) {
+            } else if (t2 > t1) {
                 forward_rate <- ((1 + r_t2)^t2 / (1 + r_t1)^t1)^(1/tenor) - 1
             } else {
                 forward_rate <- NA
@@ -6146,9 +6151,9 @@ server <- function(input, output, session) {
             # This is the key fix - compare forward Y-year rate to current Y-year spot rate
             spread_bps <- (forward_rate_pct - r_tenor_pct) * 100
 
-            # Find reference bonds closest to t1 and t2 for display
+            # Find reference bonds closest to t1 and t2 for display (dynamic - no hardcoding)
             # Special handling for t1 = 0: use shortest duration bond
-            if(t1 == 0 || t1 <= 1) {
+            if (t1 == 0 || t1 <= 1) {
                 from_bond <- curve_data %>%
                     slice_min(modified_duration, n = 1)
             } else {
@@ -6163,17 +6168,17 @@ server <- function(input, output, session) {
                 slice_min(dur_diff, n = 1)
 
             # Ensure we don't show same bond twice unless necessary
-            from_bond_name <- if(nrow(from_bond) > 0) from_bond$bond[1] else NA
-            to_bond_name <- if(nrow(to_bond) > 0) to_bond$bond[1] else NA
+            from_bond_name <- if (nrow(from_bond) > 0) from_bond$bond[1] else NA
+            to_bond_name <- if (nrow(to_bond) > 0) to_bond$bond[1] else NA
 
-            if(!is.na(from_bond_name) && !is.na(to_bond_name) &&
+            if (!is.na(from_bond_name) && !is.na(to_bond_name) &&
                from_bond_name == to_bond_name && t1 != t2) {
                 # Find second closest bond to t2
                 alt_to_bond <- curve_data %>%
                     filter(bond != from_bond_name) %>%
                     mutate(dur_diff = abs(modified_duration - t2)) %>%
                     slice_min(dur_diff, n = 1)
-                if(nrow(alt_to_bond) > 0) {
+                if (nrow(alt_to_bond) > 0) {
                     to_bond_name <- alt_to_bond$bond[1]
                 }
             }
@@ -6195,61 +6200,60 @@ server <- function(input, output, session) {
         }
 
         # Add market implied expectations based on spread in bps
+        # Improved categorization with clearer thresholds
         forward_rates <- forward_rates %>%
             mutate(
                 Market_View = case_when(
-                    Spread_bps > 75 ~ "Rates Rising",
-                    Spread_bps > 30 ~ "Slightly Bearish",
-                    Spread_bps > -30 ~ "Neutral",
-                    Spread_bps > -75 ~ "Slightly Bullish",
-                    TRUE ~ "Rates Falling"
+                    Spread_bps <= -50 ~ "Rates Falling",
+                    Spread_bps <= -10 ~ "Slightly Bullish",
+                    Spread_bps <= 10 ~ "Neutral",
+                    Spread_bps <= 50 ~ "Slightly Bearish",
+                    Spread_bps <= 150 ~ "Rates Rising",
+                    TRUE ~ "Strongly Bearish"
                 ),
+                # Improved signal strength - "None" replaced with "Weak" for clarity
                 Signal_Strength = case_when(
-                    abs(Spread_bps) > 100 ~ "Strong",
-                    abs(Spread_bps) > 50 ~ "Moderate",
-                    abs(Spread_bps) > 25 ~ "Weak",
-                    TRUE ~ "None"
+                    abs(Spread_bps) <= 25 ~ "Weak",
+                    abs(Spread_bps) <= 100 ~ "Moderate",
+                    abs(Spread_bps) <= 200 ~ "Strong",
+                    TRUE ~ "Very Strong"
                 )
             )
 
-        # Format for display
+        # Format for display - FIXED: removed redundant duration from Spot Rate column
         display_table <- forward_rates %>%
             filter(!is.na(Forward_Rate)) %>%
             mutate(
                 Forward_Rate_Fmt = sprintf("%.2f%%", Forward_Rate),
-                Current_Spot_Fmt = sprintf("%.2f%% (%dy)", Current_Spot_Tenor, Tenor_Years),
+                # FIXED: Clean spot rate display without duration
+                Spot_Rate_Fmt = sprintf("%.2f%%", Current_Spot_Tenor),
                 Spread_Fmt = sprintf("%+.0f bps", Spread_bps),
                 Period_Desc = sprintf("Yr %d → %d", Start_Year, End_Year),
                 Bonds_Used = paste(From_Bond, "→", To_Bond)
             ) %>%
-            select(Period, Forward_Rate_Fmt, Current_Spot_Fmt, Spread_Fmt,
+            select(Period, Forward_Rate_Fmt, Spot_Rate_Fmt, Spread_Fmt,
                    Market_View, Signal_Strength, Bonds_Used)
 
-        # Create enhanced datatable
+        # Create enhanced datatable with better styling
         datatable(
             display_table,
+            selection = "single",  # Enable single row selection for chart interactivity
             options = list(
                 pageLength = 10,
-                dom = 'Bfrtip',
-                buttons = c('copy', 'csv', 'excel'),
+                dom = 'frtip',
                 columnDefs = list(
                     list(className = 'dt-center', targets = '_all'),
-                    list(width = '100px', targets = 0)
-                ),
-                initComplete = JS(
-                    "function(settings, json) {",
-                    "  $('td:contains(\"Rates Rising\")').css('color', '#dc3545');",
-                    "  $('td:contains(\"Rates Falling\")').css('color', '#28a745');",
-                    "  $('td:contains(\"Strong\")').css('font-weight', 'bold');",
-                    "}"
+                    list(width = '100px', targets = c(0, 1, 2, 3)),
+                    list(width = '120px', targets = c(4, 5)),
+                    list(width = '130px', targets = 6)
                 )
             ),
             rownames = FALSE,
-            class = 'table-striped table-bordered compact',
+            class = 'cell-border stripe hover',
             colnames = c(
                 "Forward Period",
                 "Forward Rate",
-                "Current Spot",
+                "Spot Rate",
                 "Spread",
                 "Market View",
                 "Signal",
@@ -6268,31 +6272,66 @@ server <- function(input, output, session) {
                         style = 'margin-top: 5px; margin-bottom: 0;',
                         "Spread compares the implied forward rate to the current spot rate for the same tenor. ",
                         "Positive spread = market expects rates to rise; Negative spread = expects rates to fall."
+                    ),
+                    htmltools::tags$p(
+                        style = 'margin-top: 8px; margin-bottom: 0; font-style: italic; color: #666;',
+                        htmltools::icon("hand-pointer"), " Click a row to highlight the corresponding forward period on the chart."
                     )
                 )
             )
         ) %>%
+            # Market View coloring - improved with consistent styling
             formatStyle(
                 "Market_View",
                 backgroundColor = styleEqual(
                     c("Rates Falling", "Slightly Bullish", "Neutral",
-                      "Slightly Bearish", "Rates Rising"),
-                    c("#C8E6C9", "#DCEDC8", "#F5F5F5", "#FFE0B2", "#FFCDD2")
+                      "Slightly Bearish", "Rates Rising", "Strongly Bearish"),
+                    c("#C8E6C9", "#E8F5E9", "#F5F5F5",
+                      "#FFF3E0", "#FFCDD2", "#FFAB91")
                 ),
                 color = styleEqual(
                     c("Rates Falling", "Slightly Bullish", "Neutral",
-                      "Slightly Bearish", "Rates Rising"),
-                    c("#1B5E20", "#33691E", "#666666", "#E65100", "#C62828")
+                      "Slightly Bearish", "Rates Rising", "Strongly Bearish"),
+                    c("#1B5E20", "#2E7D32", "#424242",
+                      "#E65100", "#C62828", "#BF360C")
                 ),
                 fontWeight = "bold"
             ) %>%
+            # Signal Strength coloring - improved visibility
             formatStyle(
                 "Signal_Strength",
+                backgroundColor = styleEqual(
+                    c("Weak", "Moderate", "Strong", "Very Strong"),
+                    c("#FAFAFA", "#E8EAF6", "#C5CAE9", "#7986CB")
+                ),
                 fontWeight = styleEqual(
-                    c("Strong", "Moderate"),
-                    c("bold", "600")
+                    c("Weak", "Moderate", "Strong", "Very Strong"),
+                    c("normal", "normal", "bold", "bold")
+                )
+            ) %>%
+            # Spread coloring - color based on value
+            formatStyle(
+                "Spread_Fmt",
+                color = styleInterval(
+                    cuts = c(-50, -10, 10, 50),
+                    values = c("#1B5E20", "#43A047", "#424242", "#E65100", "#C62828")
                 )
             )
+    })
+
+    # Observer to handle table row selection and update chart
+    observeEvent(input$forward_rate_table_rows_selected, {
+        req(input$forward_rate_table_rows_selected)
+
+        # Map row index to forward period
+        periods <- c("0y1y", "1y1y", "2y1y", "3y2y", "5y2y", "7y3y", "10y5y")
+        selected_row <- input$forward_rate_table_rows_selected
+
+        if (length(selected_row) > 0 && selected_row <= length(periods)) {
+            selected_forward_period(periods[selected_row])
+        } else {
+            selected_forward_period(NULL)
+        }
     })
 
 
@@ -8701,8 +8740,9 @@ server <- function(input, output, session) {
         },
         content = function(file) {
             req(processed_data())
-            p <- generate_forward_curve_plot(processed_data(), list())
-            if(!is.null(p)) {
+            # Export full chart without highlighting any specific period
+            p <- generate_forward_curve_plot(processed_data(), params = NULL, selected_period = NULL)
+            if (!is.null(p)) {
                 ggsave(file, plot = p, width = 12, height = 8, dpi = 300, bg = "white")
             }
         }
