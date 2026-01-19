@@ -227,6 +227,16 @@ generate_ytd_issuance_table <- function(data) {
         ))
     }
 
+    # Define numeric columns that need conversion
+    numeric_cols <- c("offer_amount", "bid_to_cover", "auction_quality_score",
+                      "auction_tail_bps", "non_comp_ratio", "auction_concession_bps",
+                      "number_bids_received")
+
+    # Ensure numeric columns are actually numeric BEFORE summarise
+    data <- data %>%
+        mutate(across(any_of(numeric_cols),
+                      ~ suppressWarnings(as.numeric(as.character(.x)))))
+
     # Calculate issuance statistics with new quality metrics
     issuance_table <- data %>%
         filter(!is.na(offer_amount), offer_amount > 0) %>%
