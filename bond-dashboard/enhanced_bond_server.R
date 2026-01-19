@@ -5545,6 +5545,79 @@ server <- function(input, output, session) {
     })
 
     # ═══════════════════════════════════════════════════════════════════════
+    # DYNAMIC INFO BOX - Reactive to funding rate slider
+    # ═══════════════════════════════════════════════════════════════════════
+    output$carry_roll_info_box <- renderUI({
+        tryCatch({
+            # Get current funding rate from slider (default 8.25%)
+            funding_rate <- if(!is.null(input$funding_rate)) input$funding_rate else 8.25
+
+        # Format as percentage for display
+        funding_rate_text <- sprintf("%.2f%%", funding_rate)
+
+        # Calculate example values using actual funding rate
+        example_coupon <- 10  # Example coupon rate
+        example_days <- 90
+        example_carry <- example_coupon * (example_days / 365)
+        example_funding <- funding_rate * (example_days / 365)
+
+        tags$div(
+            class = "alert alert-info",
+            style = "margin-bottom: 20px;",
+            tags$h4("Understanding Carry & Roll Analysis", style = "margin-top: 0;"),
+            tags$p(
+                tags$strong("What This Analysis Shows:"),
+                "This table calculates the expected total return from holding SA government bonds over different time periods (30, 90, 180, and 360 days), broken down into component parts."
+            ),
+            tags$div(
+                style = "margin-top: 15px;",
+                tags$h5("Return Components:", style = "color: #1B3A6B;"),
+                tags$ul(
+                    tags$li(tags$strong("Carry Income:"),
+                            sprintf("The coupon income earned during the holding period. For a %d%% coupon bond held %d days: %d%% x (%d/365) = %.2f%%",
+                                   example_coupon, example_days, example_coupon, example_days, example_carry)),
+                    tags$li(tags$strong("Roll-Down Return:"),
+                            "The price appreciation as the bond 'rolls down' the yield curve. As time passes and duration decreases, bonds typically move to lower-yielding parts of the curve, generating capital gains."),
+                    tags$li(tags$strong("Funding Cost:"),
+                            sprintf("The cost to finance the position, typically at the repo rate (currently %s annually). For %d days: %s x (%d/365) = %.2f%%",
+                                   funding_rate_text, example_days, funding_rate_text, example_days, example_funding)),
+                    tags$li(tags$strong("Net Return:"),
+                            "Total return after subtracting funding costs: (Carry + Roll) - Funding")
+                )
+            ),
+            tags$div(
+                style = "margin-top: 15px;",
+                tags$h5("How to Read the Results:", style = "color: #1B3A6B;"),
+                tags$ul(
+                    tags$li(tags$strong("Green cells:"), "Positive returns - bond generates profit after funding costs"),
+                    tags$li(tags$strong("Red/Yellow cells:"), "Negative or low returns - funding costs may exceed income"),
+                    tags$li(tags$strong("Return Type Options:"),
+                            tags$ul(
+                                tags$li("Gross: Total return before funding costs"),
+                                tags$li("Net: Return after funding costs (most realistic)"),
+                                tags$li("Risk-Adjusted: Return per unit of duration risk")
+                            ))
+                )
+            ),
+            # Key insight box with dynamic funding rate
+            tags$div(
+                style = "background-color: #FFF3CD; color: #856404; padding: 12px; border-radius: 4px; margin-top: 15px;",
+                tags$span(icon("lightbulb"), style = "margin-right: 8px;"),
+                tags$strong("Key Insight: "),
+                sprintf("Bonds with coupons above the funding rate (%s) generate positive carry. Longer holding periods typically show higher returns due to compound effects and roll-down benefits.",
+                       funding_rate_text)
+            )
+        )
+        }, error = function(e) {
+            warning(sprintf("Carry & Roll info box error: %s", e$message))
+            tags$div(
+                class = "alert alert-warning",
+                "Unable to load analysis information. Please refresh the page."
+            )
+        })
+    })
+
+    # ═══════════════════════════════════════════════════════════════════════
     # FIX 5: IMPROVED QUICK METRICS WITH SPECIFIC BOND NAMES
     # FIX 6: BREAKEVEN YIELD MOVE CALCULATION
     # ═══════════════════════════════════════════════════════════════════════
@@ -5563,26 +5636,8 @@ server <- function(input, output, session) {
         best_bond <- data_90d %>% slice_max(net_return, n = 1, with_ties = FALSE)
         worst_bond <- data_90d %>% slice_min(net_return, n = 1, with_ties = FALSE)
         positive_carry_count <- sum(data_90d$net_return > 0, na.rm = TRUE)
+        negative_carry_count <- sum(data_90d$net_return <= 0, na.rm = TRUE)
         total_bonds <- nrow(data_90d)
-
-        # Calculate risk-adjusted average
-        avg_risk_adj <- if("return_per_unit_risk" %in% names(data_90d)) {
-            mean(data_90d$return_per_unit_risk, na.rm = TRUE)
-        } else {
-            NA
-        }
-
-        # FIX 6: Calculate average breakeven yield move
-        # Breakeven = Net Return / Modified Duration * 10000 (bps)
-        data_90d_breakeven <- data_90d %>%
-            filter(!is.na(modified_duration), modified_duration > 0) %>%
-            mutate(
-                breakeven_bps = (net_return / 100) / modified_duration * 10000
-            )
-        avg_breakeven <- mean(data_90d_breakeven$breakeven_bps, na.rm = TRUE)
-
-        # Progress bar percentage
-        positive_pct <- (positive_carry_count / total_bonds) * 100
 
         tagList(
             # Section title with period specification
@@ -5594,72 +5649,113 @@ server <- function(input, output, session) {
                 style = "margin-bottom: 12px;",
                 tags$div(class = "text-muted", style = "font-size: 11px;", "Average Net Return:"),
                 tags$div(
-                    style = sprintf("font-size: 18px; font-weight: bold; color: %s;",
+                    style = sprintf("font-size: 20px; font-weight: bold; color: %s;",
                                     ifelse(avg_net_return > 0, "#1B5E20", "#C62828")),
                     sprintf("%.2f%%", avg_net_return)
                 )
             ),
 
-            # Best Performer (with bond name)
+            tags$hr(style = "margin: 8px 0;"),
+
+            # Best Performer - CLICKABLE to update decomposition
             tags$div(
                 style = "margin-bottom: 12px;",
                 tags$div(class = "text-muted", style = "font-size: 11px;", "Best Performer:"),
-                tags$div(
-                    style = "font-size: 14px; font-weight: bold; color: #1B5E20;",
-                    sprintf("%s: %.2f%%", best_bond$bond, best_bond$net_return)
+                actionLink(
+                    "select_best_bond",
+                    tags$div(
+                        style = "font-size: 14px; font-weight: bold; color: #1B5E20; cursor: pointer;",
+                        sprintf("%s: %.2f%%", best_bond$bond, best_bond$net_return),
+                        tags$small(style = "margin-left: 5px; color: #666; font-weight: normal;",
+                                   icon("arrow-right"))
+                    )
                 )
             ),
 
-            # Lowest Return (with bond name) - Color based on return sign
+            tags$hr(style = "margin: 8px 0;"),
+
+            # Lowest Return - CLICKABLE to update decomposition
             tags$div(
                 style = "margin-bottom: 12px;",
                 tags$div(class = "text-muted", style = "font-size: 11px;",
                          ifelse(worst_bond$net_return >= 0, "Lowest Return:", "Negative Return:")),
-                tags$div(
-                    style = sprintf("font-size: 14px; font-weight: bold; color: %s;",
-                                    # Use green for positive returns, orange for low positive, red for negative
-                                    case_when(
-                                        worst_bond$net_return < 0 ~ "#C62828",      # Red for negative
-                                        worst_bond$net_return < 0.5 ~ "#FF9800",    # Orange for low positive (< 0.5%)
-                                        TRUE ~ "#689F38"                             # Light green for decent positive
-                                    )),
-                    sprintf("%s: %.2f%%", worst_bond$bond, worst_bond$net_return)
-                ),
-                # Add context note if still positive
-                if(worst_bond$net_return > 0) {
-                    tags$small(
-                        class = "text-muted",
-                        style = "font-size: 10px;",
-                        "(still positive carry)"
+                actionLink(
+                    "select_worst_bond",
+                    tags$div(
+                        style = sprintf("font-size: 14px; font-weight: bold; color: %s; cursor: pointer;",
+                                        case_when(
+                                            worst_bond$net_return < 0 ~ "#C62828",
+                                            worst_bond$net_return < 0.5 ~ "#FF9800",
+                                            TRUE ~ "#689F38"
+                                        )),
+                        sprintf("%s: %.2f%%", worst_bond$bond, worst_bond$net_return),
+                        tags$small(style = "margin-left: 5px; color: #666; font-weight: normal;",
+                                   icon("arrow-right"))
                     )
+                ),
+                if(worst_bond$net_return > 0) {
+                    tags$small(class = "text-muted", style = "font-size: 10px; display: block;",
+                               "(still positive carry)")
                 }
             ),
 
-            # Positive Carry Count with Progress Bar
+            tags$hr(style = "margin: 8px 0;"),
+
+            # Returns breakdown - more useful than progress bar
             tags$div(
-                style = "margin-bottom: 12px;",
-                tags$div(class = "text-muted", style = "font-size: 11px;", "Positive Net Return:"),
+                style = "margin-bottom: 8px;",
+                tags$div(class = "text-muted", style = "font-size: 11px; margin-bottom: 6px;",
+                         "Return Distribution:"),
                 tags$div(
-                    style = "font-size: 14px; font-weight: bold;",
-                    sprintf("%d of %d bonds", positive_carry_count, total_bonds)
-                ),
-                # Progress bar
-                tags$div(
-                    style = "background: #E0E0E0; height: 6px; border-radius: 3px; margin-top: 4px;",
+                    style = "display: flex; justify-content: space-around; text-align: center;",
                     tags$div(
-                        style = sprintf("background: #4CAF50; width: %.0f%%; height: 100%%; border-radius: 3px;",
-                                        positive_pct)
+                        tags$span(positive_carry_count,
+                                  style = "font-size: 20px; font-weight: bold; color: #2E7D32;"),
+                        tags$br(),
+                        tags$span("Positive", class = "text-muted", style = "font-size: 10px;")
+                    ),
+                    tags$div(
+                        tags$span(negative_carry_count,
+                                  style = sprintf("font-size: 20px; font-weight: bold; color: %s;",
+                                                  ifelse(negative_carry_count > 0, "#C62828", "#9E9E9E"))),
+                        tags$br(),
+                        tags$span("Negative", class = "text-muted", style = "font-size: 10px;")
                     )
                 )
             ),
 
-            # Note: Risk metrics moved to separate panel
-            NULL
+            # Click hint
+            tags$div(
+                style = "margin-top: 10px; font-size: 9px; color: #999; font-style: italic;",
+                "Click bond names to view decomposition"
+            )
         )
     })
 
+    # Observer to handle best bond selection click
+    observeEvent(input$select_best_bond, {
+        req(carry_roll_data())
+        data_90d <- carry_roll_data() %>%
+            filter(holding_period == "90d")
+        if(nrow(data_90d) > 0) {
+            best_bond <- data_90d %>% slice_max(net_return, n = 1, with_ties = FALSE)
+            updateSelectInput(session, "selected_carry_bond", selected = best_bond$bond)
+        }
+    })
+
+    # Observer to handle worst bond selection click
+    observeEvent(input$select_worst_bond, {
+        req(carry_roll_data())
+        data_90d <- carry_roll_data() %>%
+            filter(holding_period == "90d")
+        if(nrow(data_90d) > 0) {
+            worst_bond <- data_90d %>% slice_min(net_return, n = 1, with_ties = FALSE)
+            updateSelectInput(session, "selected_carry_bond", selected = worst_bond$bond)
+        }
+    })
+
     # ═══════════════════════════════════════════════════════════════════════
-    # RISK METRICS PANEL (Separated for Option C layout)
+    # RISK METRICS PANEL - Enhanced with better explanations
     # ═══════════════════════════════════════════════════════════════════════
     output$risk_metrics_panel <- renderUI({
         req(carry_roll_data())
@@ -5686,15 +5782,17 @@ server <- function(input, output, session) {
             )
         avg_breakeven <- mean(data_90d_breakeven$breakeven_bps, na.rm = TRUE)
 
-        # Calculate max drawdown equivalent
-        min_breakeven <- min(data_90d_breakeven$breakeven_bps, na.rm = TRUE)
+        # Find the most sensitive bond (lowest breakeven)
+        min_breakeven_idx <- which.min(data_90d_breakeven$breakeven_bps)
+        min_breakeven <- data_90d_breakeven$breakeven_bps[min_breakeven_idx]
+        min_breakeven_bond <- data_90d_breakeven$bond[min_breakeven_idx]
 
         tagList(
             # Section title
             tags$small(class = "text-muted", "Based on 90-day holding period"),
             tags$hr(style = "margin: 8px 0;"),
 
-            # Average Yield Breakeven
+            # Average Yield Breakeven with better explanation
             tags$div(
                 style = "margin-bottom: 15px;",
                 tags$div(class = "text-muted", style = "font-size: 11px;", "Avg Yield Breakeven:"),
@@ -5704,35 +5802,45 @@ server <- function(input, output, session) {
                 ),
                 tags$small(
                     class = "text-muted",
-                    style = "font-size: 10px;",
-                    "(yields can rise this much before loss)"
+                    style = "font-size: 10px; display: block;",
+                    "Yields can rise this much before the trade loses money"
                 )
             ),
 
-            # Minimum Breakeven (worst case)
+            tags$hr(style = "margin: 8px 0;"),
+
+            # Minimum Breakeven (most sensitive) - now shows bond name
             tags$div(
                 style = "margin-bottom: 15px;",
-                tags$div(class = "text-muted", style = "font-size: 11px;", "Min Breakeven (Most Sensitive):"),
+                tags$div(class = "text-muted", style = "font-size: 11px;", "Most Sensitive Bond:"),
                 tags$div(
-                    style = sprintf("font-size: 16px; font-weight: bold; color: %s;",
+                    style = sprintf("font-size: 14px; font-weight: bold; color: %s;",
                                     ifelse(min_breakeven > 5, "#689F38", "#FF9800")),
-                    sprintf("+%.0f bps", min_breakeven)
+                    sprintf("%s: +%.0f bps", min_breakeven_bond, min_breakeven)
+                ),
+                tags$small(
+                    class = "text-muted",
+                    style = "font-size: 10px; display: block;",
+                    "This bond has the smallest margin of safety"
                 )
             ),
 
-            # Risk-Adjusted Return (if available)
+            tags$hr(style = "margin: 8px 0;"),
+
+            # Risk-Adjusted Return (if available) with clearer explanation
             if(!is.na(avg_risk_adj)) {
                 tags$div(
-                    style = "margin-bottom: 15px;",
+                    style = "margin-bottom: 8px;",
                     tags$div(class = "text-muted", style = "font-size: 11px;", "Avg Risk-Adjusted Return:"),
                     tags$div(
-                        style = "font-size: 16px; font-weight: bold;",
+                        style = sprintf("font-size: 18px; font-weight: bold; color: %s;",
+                                       ifelse(avg_risk_adj > 0, "#1B3A6B", "#C62828")),
                         sprintf("%.2f%%", avg_risk_adj)
                     ),
                     tags$small(
                         class = "text-muted",
-                        style = "font-size: 10px;",
-                        "per year of duration"
+                        style = "font-size: 10px; display: block;",
+                        "Return per year of duration risk"
                     )
                 )
             }
@@ -5740,7 +5848,7 @@ server <- function(input, output, session) {
     })
 
     # ═══════════════════════════════════════════════════════════════════════
-    # FIX 4: COMPONENT BREAKDOWN VIEW (Return Decomposition) - DYNAMIC PERIOD
+    # FIX 4: COMPONENT BREAKDOWN VIEW (Return Decomposition) - CONSISTENT ROUNDING
     # ═══════════════════════════════════════════════════════════════════════
     output$carry_decomposition <- renderUI({
         req(carry_roll_data(), input$selected_carry_bond)
@@ -5755,11 +5863,19 @@ server <- function(input, output, session) {
             return(tags$p("Select a bond to see decomposition"))
         }
 
-        # Get component values
+        # Get component values (raw, unrounded)
         carry_val <- if("carry_income" %in% names(data)) data$carry_income[1] else NA
         roll_val <- if("roll_return" %in% names(data)) data$roll_return[1] else NA
         funding_val <- if("funding_cost" %in% names(data)) data$funding_cost[1] else NA
-        net_val <- data$net_return[1]
+
+        # ROUNDING FIX: Calculate displayed net from rounded components
+        # This ensures components sum exactly to displayed net return
+        carry_display <- if(!is.na(carry_val)) round(carry_val, 2) else 0
+        roll_display <- if(!is.na(roll_val)) round(roll_val, 2) else 0
+        funding_display <- if(!is.na(funding_val)) round(funding_val, 2) else 0
+
+        # Net = Carry + Roll - Funding (using rounded values for display consistency)
+        net_display <- carry_display + roll_display - funding_display
 
         # Period label for display
         period_label <- switch(selected_period,
@@ -5799,7 +5915,7 @@ server <- function(input, output, session) {
                                 tags$td("Carry Income:"),
                                 tags$td(
                                     style = "color: #1B5E20; text-align: right; font-weight: bold;",
-                                    sprintf("+%.2f%%", carry_val)
+                                    sprintf("+%.2f%%", carry_display)
                                 )
                             )
                         },
@@ -5808,8 +5924,8 @@ server <- function(input, output, session) {
                                 tags$td("Roll-Down Benefit:"),
                                 tags$td(
                                     style = sprintf("color: %s; text-align: right; font-weight: bold;",
-                                                    ifelse(roll_val >= 0, "#1B5E20", "#C62828")),
-                                    sprintf("%s%.2f%%", ifelse(roll_val >= 0, "+", ""), roll_val)
+                                                    ifelse(roll_display >= 0, "#1B5E20", "#C62828")),
+                                    sprintf("%s%.2f%%", ifelse(roll_display >= 0, "+", ""), roll_display)
                                 )
                             )
                         },
@@ -5818,7 +5934,7 @@ server <- function(input, output, session) {
                                 tags$td("Funding Cost:"),
                                 tags$td(
                                     style = "color: #C62828; text-align: right; font-weight: bold;",
-                                    sprintf("-%.2f%%", funding_val)
+                                    sprintf("-%.2f%%", funding_display)
                                 )
                             )
                         },
@@ -5827,8 +5943,8 @@ server <- function(input, output, session) {
                             tags$td(tags$strong("Net Return:")),
                             tags$td(
                                 style = sprintf("color: %s; text-align: right; font-weight: bold; font-size: 14px;",
-                                                ifelse(net_val > 0, "#1B5E20", "#C62828")),
-                                sprintf("%.2f%%", net_val)
+                                                ifelse(net_display > 0, "#1B5E20", "#C62828")),
+                                sprintf("%.2f%%", net_display)
                             )
                         )
                     )
