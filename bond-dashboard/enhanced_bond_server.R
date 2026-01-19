@@ -1619,6 +1619,20 @@ server <- function(input, output, session) {
             unique(bond_data()$bond)
         })
 
+        # ═══════════════════════════════════════════════════════════════════════
+        # CRITICAL FIX: Explicitly filter out known matured bonds from dropdown
+        # This ensures R186 and other matured bonds never appear in Technical Analysis
+        # ═══════════════════════════════════════════════════════════════════════
+        known_matured_bonds <- c("R157", "R186", "R197", "R203", "R204", "R207", "R208", "R212", "R2023")
+        found_matured <- intersect(active, known_matured_bonds)
+        if (length(found_matured) > 0) {
+            message(sprintf("[Bond Selection] Excluding matured bonds from dropdown: %s",
+                           paste(found_matured, collapse = ", ")))
+            active <- setdiff(active, known_matured_bonds)
+        }
+        message(sprintf("[Bond Selection] Active bonds for dropdown: %d (%s)",
+                       length(active), paste(sort(active), collapse = ", ")))
+
         # Get currently selected bonds
         current_selection <- input$selected_bonds
 
@@ -4659,7 +4673,7 @@ server <- function(input, output, session) {
             tags$div(
                 class = "panel-body",
                 style = "padding: 10px;",
-                plotOutput("signal_history_sparkline", height = "180px"),  # INCREASED from 100px
+                plotOutput("signal_history_sparkline", height = "180px", width = "100%"),  # INCREASED from 100px, FIXED: explicit width
                 tags$div(
                     style = "font-size: 10px; color: #888; margin-top: 5px; text-align: center;",
                     HTML("&#x1F7E2; Oversold (buy zone) | &#x1F534; Overbought (sell zone)")
@@ -4873,7 +4887,7 @@ server <- function(input, output, session) {
             tags$div(
                 class = "panel-body",
                 style = "padding: 10px;",
-                plotOutput("yield_technicals_chart", height = "200px")
+                plotOutput("yield_technicals_chart", height = "200px", width = "100%")  # FIXED: explicit width
             )
         )
     })
@@ -4883,6 +4897,22 @@ server <- function(input, output, session) {
     # ════════════════════════════════════════════════════════════════════════
     output$technical_summary_panel <- renderUI({
         req(filtered_data(), input$tech_bond_select)
+
+        # ═══════════════════════════════════════════════════════════════════════
+        # VALIDATION: Ensure selected bond is not a matured bond
+        # ═══════════════════════════════════════════════════════════════════════
+        known_matured_bonds <- c("R157", "R186", "R197", "R203", "R204", "R207", "R208", "R212", "R2023")
+        if (input$tech_bond_select %in% known_matured_bonds) {
+            message(sprintf("[Technical Summary] Selected bond %s is matured - skipping render",
+                           input$tech_bond_select))
+            return(tags$div(
+                style = "padding: 20px; text-align: center; color: #999;",
+                tags$p("Please select an active bond from the dropdown."),
+                tags$p(style = "font-size: 11px;",
+                       sprintf("Bond %s has matured and is no longer available.",
+                              input$tech_bond_select))
+            ))
+        }
 
         # Get technical data for selected bond
         tech_data <- filtered_data() %>%

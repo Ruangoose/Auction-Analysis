@@ -1168,8 +1168,8 @@ ui <- dashboardPage(
                                        )
                                    ),
 
-                                   # Main Technical Chart
-                                   plotOutput("advanced_technical_plot", height = "500px")
+                                   # Main Technical Chart - FIXED: explicit width = 100%
+                                   plotOutput("advanced_technical_plot", height = "500px", width = "100%")
                                )
                            ),
 
@@ -1186,7 +1186,7 @@ ui <- dashboardPage(
                                    status = "primary",
                                    solidHeader = TRUE,
                                    width = 12,
-                                   plotOutput("signal_matrix_heatmap", height = "400px"),
+                                   plotOutput("signal_matrix_heatmap", height = "400px", width = "100%"),
                                    # === ADDED: download_signal_matrix ===
                                    tags$div(
                                        style = "margin-top: 15px;",
