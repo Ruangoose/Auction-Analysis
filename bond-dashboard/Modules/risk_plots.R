@@ -1733,9 +1733,14 @@ generate_scenario_analysis_plot <- function(data, params = list()) {
     horizon_days <- params$horizon_days %||% 90  # 3-month default
     confidence_level <- params$confidence_level %||% 0.95
     show_total_return <- params$show_total_return %||% FALSE
-    max_bonds <- params$max_bonds %||% 5  # FIXED: Reduced from 10 to 5 for better readability
+    max_bonds <- params$max_bonds %||% 8  # Maximum bonds for readability
     shift_range <- params$shift_range %||% c(-200, 200)
     shift_increment <- params$shift_increment %||% 25
+
+    # NEW PARAMETERS for user controls
+    selected_bonds_param <- params$selected_bonds %||% NULL  # User-selected bonds
+    y_scale <- params$y_scale %||% "fixed"  # "fixed" for unified, "free_y" for individual scales
+    show_confidence <- params$show_confidence %||% TRUE  # Toggle confidence bands
 
     # Validate required columns
     required_cols <- c("bond", "yield_to_maturity", "modified_duration", "convexity", "coupon")
@@ -1750,24 +1755,48 @@ generate_scenario_analysis_plot <- function(data, params = list()) {
         filter(date == max(date)) %>%
         ungroup()
 
-    # IMPROVED: Select representative bonds across duration spectrum
-    # This ensures we get short, medium, and long duration bonds for comparison
-    if (n_distinct(latest_data$bond) > max_bonds) {
-        # Sort by duration
-        duration_ranked <- latest_data %>%
-            arrange(modified_duration) %>%
-            mutate(row_num = row_number(), total_bonds = n())
+    # Handle bond selection - either use user-selected bonds or auto-select
+    if (!is.null(selected_bonds_param) && length(selected_bonds_param) > 0) {
+        # User has selected specific bonds - filter to those
+        # Remove any selected bonds that don't exist in data
+        valid_bonds <- intersect(selected_bonds_param, unique(latest_data$bond))
 
-        # Select evenly spaced bonds across the duration range
-        # Including first (shortest), last (longest), and evenly spaced middle bonds
-        n_bonds <- nrow(duration_ranked)
-        selected_indices <- unique(round(seq(1, n_bonds, length.out = max_bonds)))
+        if (length(valid_bonds) == 0) {
+            # No valid bonds selected - return empty plot with message
+            return(
+                ggplot() +
+                    annotate("text", x = 0.5, y = 0.5,
+                             label = "Please select at least one valid bond to analyze",
+                             size = 5, color = "grey50") +
+                    theme_void()
+            )
+        }
 
-        selected_bonds <- duration_ranked %>%
-            filter(row_num %in% selected_indices) %>%
-            pull(bond)
+        # Cap at max_bonds for readability
+        if (length(valid_bonds) > max_bonds) {
+            valid_bonds <- valid_bonds[1:max_bonds]
+        }
 
-        latest_data <- filter(latest_data, bond %in% selected_bonds)
+        latest_data <- filter(latest_data, bond %in% valid_bonds)
+
+    } else {
+        # Auto-select: representative bonds across duration spectrum
+        if (n_distinct(latest_data$bond) > max_bonds) {
+            # Sort by duration
+            duration_ranked <- latest_data %>%
+                arrange(modified_duration) %>%
+                mutate(row_num = row_number(), total_bonds = n())
+
+            # Select evenly spaced bonds across the duration range
+            n_bonds <- nrow(duration_ranked)
+            selected_indices <- unique(round(seq(1, n_bonds, length.out = max_bonds)))
+
+            auto_selected_bonds <- duration_ranked %>%
+                filter(row_num %in% selected_indices) %>%
+                pull(bond)
+
+            latest_data <- filter(latest_data, bond %in% auto_selected_bonds)
+        }
     }
 
     # Colorblind-friendly palette for scenario analysis (5 distinct colors)
@@ -1938,14 +1967,18 @@ generate_scenario_analysis_plot <- function(data, params = list()) {
         geom_vline(xintercept = 0,
                    linetype = "dashed",
                    color = insele_palette$primary,
-                   size = 0.8) +
+                   size = 0.8)
 
-        # Confidence bands (specific to each bond's volatility)
-        geom_ribbon(aes(ymin = confidence_lower,
-                        ymax = confidence_upper,
-                        fill = bond, group = bond),
-                    alpha = 0.15) +
+    # Conditionally add confidence bands based on show_confidence parameter
+    if (show_confidence) {
+        p <- p +
+            geom_ribbon(aes(ymin = confidence_lower,
+                            ymax = confidence_upper,
+                            fill = bond, group = bond),
+                        alpha = 0.15)
+    }
 
+    p <- p +
         # Main scenario lines
         geom_line(aes(color = bond, group = bond),
                   size = 1.2,
@@ -1980,8 +2013,8 @@ generate_scenario_analysis_plot <- function(data, params = list()) {
                    color = "#1B5E20",
                    stroke = 1.5) +
 
-        # Facet by scenario
-        facet_wrap(~scenario, ncol = 2, scales = "free_y") +
+        # Facet by scenario with user-controlled y-axis scaling
+        facet_wrap(~scenario, ncol = 2, scales = y_scale) +
 
         # Color and fill scales (using distinct colorblind-friendly palette)
         scale_color_manual(values = scenario_colors,
@@ -2002,20 +2035,24 @@ generate_scenario_analysis_plot <- function(data, params = list()) {
             breaks = pretty_breaks(n = 6)
         ) +
 
-        # Labels
+        # Labels - dynamic subtitle based on show_confidence
         labs(
             title = "Comprehensive Scenario Analysis: Yield Curve Shift Impacts",
             subtitle = sprintf(
-                "%s return shown | %d-day horizon | %d%% confidence bands based on historical volatility",
+                "%s return shown | %d-day horizon%s",
                 ifelse(show_total_return, "Total", "Price"),
                 horizon_days,
-                confidence_level * 100
+                ifelse(show_confidence,
+                       sprintf(" | %d%% confidence bands shown", confidence_level * 100),
+                       "")
             ),
             x = "Yield Change",
             y = sprintf("%s Return (%%)", ifelse(show_total_return, "Total", "Price")),
             caption = paste(
                 "Scenarios: Parallel (uniform shift) | Flattening (short\u2191 long\u2193) | Steepening (short\u2193 long\u2191) | Butterfly (belly outperforms)",
-                sprintf("\n%d%% confidence bands based on bond-specific historical volatility", confidence_level * 100),
+                ifelse(show_confidence,
+                       sprintf("\n%d%% confidence bands based on bond-specific historical volatility", confidence_level * 100),
+                       ""),
                 "\n\u00d7 = breakeven | \u25cb = key points (-100, 0, +100 bps) | \u2605 = best bond at +100bps",
                 sep = ""
             )
