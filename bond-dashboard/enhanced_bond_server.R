@@ -4176,10 +4176,114 @@ server <- function(input, output, session) {
         )
     })
 
+    # ========================================================================
+    # Auction Date Range Filter Logic (for Cumulative Issuance Chart)
+    # ========================================================================
+
+    # Get auction date range from data
+    auction_date_bounds <- reactive({
+        req(bond_data())
+
+        # Use bond_data() to get the full data range (not filtered_data which is already filtered)
+        auction_data <- bond_data() %>%
+            filter(!is.na(date), !is.na(offer_amount), offer_amount > 0)
+
+        if (nrow(auction_data) == 0) {
+            # Fallback to reasonable defaults if no auction data
+            return(list(
+                min_date = Sys.Date() - 365,
+                max_date = Sys.Date()
+            ))
+        }
+
+        list(
+            min_date = min(auction_data$date, na.rm = TRUE),
+            max_date = max(auction_data$date, na.rm = TRUE)
+        )
+    })
+
+    # Initialize the date range input with actual data bounds
+    observe({
+        bounds <- auction_date_bounds()
+        updateDateRangeInput(session, "auction_date_range",
+            start = bounds$min_date,
+            end = bounds$max_date,
+            min = bounds$min_date,
+            max = bounds$max_date
+        )
+    })
+
+    # YTD button - January 1 of current year to today
+    observeEvent(input$auction_ytd_btn, {
+        bounds <- auction_date_bounds()
+        ytd_start <- as.Date(paste0(lubridate::year(Sys.Date()), "-01-01"))
+        # Ensure start date isn't before available data
+        ytd_start <- max(ytd_start, bounds$min_date)
+        updateDateRangeInput(session, "auction_date_range",
+            start = ytd_start,
+            end = min(Sys.Date(), bounds$max_date)
+        )
+    })
+
+    # Last 6 months button
+    observeEvent(input$auction_6m_btn, {
+        bounds <- auction_date_bounds()
+        start_6m <- max(Sys.Date() - lubridate::months(6), bounds$min_date)
+        updateDateRangeInput(session, "auction_date_range",
+            start = start_6m,
+            end = min(Sys.Date(), bounds$max_date)
+        )
+    })
+
+    # Last 12 months button
+    observeEvent(input$auction_12m_btn, {
+        bounds <- auction_date_bounds()
+        start_12m <- max(Sys.Date() - lubridate::months(12), bounds$min_date)
+        updateDateRangeInput(session, "auction_date_range",
+            start = start_12m,
+            end = min(Sys.Date(), bounds$max_date)
+        )
+    })
+
+    # All Time button
+    observeEvent(input$auction_all_btn, {
+        bounds <- auction_date_bounds()
+        updateDateRangeInput(session, "auction_date_range",
+            start = bounds$min_date,
+            end = bounds$max_date
+        )
+    })
+
+    # Filtered auction data reactive
+    filtered_auction_data <- reactive({
+        req(bond_data(), input$auction_date_range)
+
+        date_range <- input$auction_date_range
+
+        # Validate date range exists
+        if (is.null(date_range) || length(date_range) < 2) {
+            return(bond_data())
+        }
+
+        # Filter data based on selected date range
+        bond_data() %>%
+            filter(
+                !is.na(date),
+                !is.na(offer_amount),
+                offer_amount > 0,
+                date >= date_range[1],
+                date <= date_range[2]
+            )
+    })
+
+    # ========================================================================
+    # YTD Bond Issuance Chart (now uses filtered_auction_data)
+    # ========================================================================
+
     # YTD Bond Issuance Chart
     output$ytd_bond_issuance_chart <- renderPlot({
-        req(filtered_data())
-        p <- generate_ytd_bond_issuance_chart(filtered_data(), list())
+        req(filtered_auction_data())
+        p <- generate_ytd_bond_issuance_chart(filtered_auction_data(), list())
         if(!is.null(p)) {
             print(p)
         } else {
@@ -4188,10 +4292,10 @@ server <- function(input, output, session) {
         }
     })
 
-    # YTD Bond Issuance Data Table
+    # YTD Bond Issuance Data Table (uses filtered_auction_data for date range filtering)
     output$ytd_issuance_data_table <- DT::renderDataTable({
-        req(filtered_data())
-        table_data <- generate_ytd_issuance_table(filtered_data())
+        req(filtered_auction_data())
+        table_data <- generate_ytd_issuance_table(filtered_auction_data())
 
         # Check if table_data has an error message column (no data case)
         if ("Message" %in% names(table_data)) {
@@ -10737,28 +10841,28 @@ server <- function(input, output, session) {
         }
     )
 
-    # YTD Bond Issuance Chart Download
+    # YTD Bond Issuance Chart Download (uses filtered_auction_data for date range filtering)
     output$download_ytd_issuance_chart <- downloadHandler(
         filename = function() {
             paste0("ytd_bond_issuance_", format(Sys.Date(), "%Y%m%d"), ".png")
         },
         content = function(file) {
-            req(filtered_data())
-            p <- generate_ytd_bond_issuance_chart(filtered_data(), list())
+            req(filtered_auction_data())
+            p <- generate_ytd_bond_issuance_chart(filtered_auction_data(), list())
             if(!is.null(p)) {
                 ggsave(file, plot = p, width = 14, height = 10, dpi = 300, bg = "white")
             }
         }
     )
 
-    # YTD Bond Issuance Table Download (CSV)
+    # YTD Bond Issuance Table Download (CSV) (uses filtered_auction_data for date range filtering)
     output$download_ytd_issuance_table <- downloadHandler(
         filename = function() {
             paste0("ytd_bond_issuance_table_", format(Sys.Date(), "%Y%m%d"), ".csv")
         },
         content = function(file) {
-            req(filtered_data())
-            table_data <- generate_ytd_issuance_table(filtered_data())
+            req(filtered_auction_data())
+            table_data <- generate_ytd_issuance_table(filtered_auction_data())
             write.csv(table_data, file, row.names = FALSE)
         }
     )
