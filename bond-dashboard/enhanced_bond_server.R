@@ -3644,35 +3644,44 @@ server <- function(input, output, session) {
 
         df <- df %>%
             mutate(
+                # Clean trade name - single line format (remove "Butterfly: " prefix)
+                Trade_Clean = gsub("Butterfly: ", "", Trade),
+
                 # Format for display
                 Z_Score_Display = sprintf("%.2f", Z_Score),
                 # Show "<0.01" for truncated p-values, otherwise show actual value
                 ADF_p_Display = case_when(
                     is.na(ADF_p) ~ "N/A",
                     ADF_p_truncated ~ "<0.01",
-                    TRUE ~ sprintf("%.3f", ADF_p)
+                    ADF_p < 0.05 ~ sprintf("%.3f", ADF_p),
+                    TRUE ~ sprintf("%.2f", ADF_p)
                 ),
                 ADF_stat_Display = ifelse(is.na(ADF_stat), "N/A", sprintf("%.2f", ADF_stat)),
-                Mean_Display = sprintf("%.2f%%", Mean),
-                Current_Display = sprintf("%.2f%%", Current),
-                Diff_Display = sprintf("%+.2f%%", Diff),
+                # Use 3 decimal places for precision consistency
+                Mean_Display = sprintf("%.3f%%", Mean),
+                Current_Display = sprintf("%.3f%%", Current),
+                Diff_Display = sprintf("%+.3f%%", Diff),
 
-                # Signal based on Z-Score
+                # Signal based on Z-Score - FULL TEXT with both legs
                 Signal = case_when(
-                    Z_Score > zscore_threshold ~ "SELL WINGS",
-                    Z_Score < -zscore_threshold ~ "BUY WINGS",
+                    Z_Score > zscore_threshold ~ "SELL WINGS / BUY BODY",
+                    Z_Score < -zscore_threshold ~ "BUY WINGS / SELL BODY",
                     TRUE ~ "NEUTRAL"
-                )
+                ),
+
+                # Keep raw Z-Score for sorting reference
+                Z_Score_Raw = Z_Score
             ) %>%
             select(
-                Trade,
+                Trade = Trade_Clean,
                 `Z-Score` = Z_Score_Display,
                 `ADF stat` = ADF_stat_Display,
                 `ADF p` = ADF_p_Display,
-                Avg = Mean_Display,
+                Mean = Mean_Display,
                 Current = Current_Display,
                 Diff = Diff_Display,
-                Signal
+                Signal,
+                Z_Score_Raw
             )
 
         DT::datatable(
@@ -3681,15 +3690,38 @@ server <- function(input, output, session) {
             rownames = FALSE,
             options = list(
                 pageLength = 10,
-                dom = 'tip',
-                ordering = FALSE  # Already sorted
-            )
+                dom = 'frtip',  # Add filter search box
+                ordering = FALSE,  # Already sorted
+                scrollX = FALSE,
+                columnDefs = list(
+                    list(visible = FALSE, targets = 8),  # Hide Z_Score_Raw column
+                    list(className = 'dt-center', targets = c(1, 2, 3, 4, 5, 6)),
+                    list(width = '120px', targets = 0),  # Trade column
+                    list(width = '60px', targets = c(1, 2, 3)),  # Z-Score, ADF columns
+                    list(width = '70px', targets = c(4, 5, 6)),  # Mean, Current, Diff
+                    list(width = '140px', targets = 7)  # Signal column
+                ),
+                # Add tooltips via headerCallback
+                headerCallback = DT::JS(
+                    "function(thead, data, start, end, display) {",
+                    "  $(thead).find('th').eq(1).attr('title', 'Standard deviations from historical mean');",
+                    "  $(thead).find('th').eq(2).attr('title', 'Augmented Dickey-Fuller test statistic (more negative = more stationary)');",
+                    "  $(thead).find('th').eq(3).attr('title', 'P-value for stationarity test (< 0.05 = mean-reverting)');",
+                    "  $(thead).find('th').eq(4).attr('title', 'Historical average spread');",
+                    "  $(thead).find('th').eq(5).attr('title', 'Current spread value');",
+                    "  $(thead).find('th').eq(6).attr('title', 'Difference from historical mean');",
+                    "  $(thead).find('th').eq(7).attr('title', 'Recommended trade direction');",
+                    "}"
+                )
+            ),
+            class = 'cell-border stripe hover'
         ) %>%
+            # Z-Score coloring with intermediate colors
             DT::formatStyle(
                 'Z-Score',
                 color = DT::styleInterval(
-                    c(-zscore_threshold, zscore_threshold),
-                    c('#C62828', '#666666', '#1B5E20')
+                    cuts = c(-2, -1, 1, 2),
+                    values = c('#C62828', '#E57373', '#424242', '#81C784', '#2E7D32')
                 ),
                 fontWeight = 'bold'
             ) %>%
@@ -3699,23 +3731,36 @@ server <- function(input, output, session) {
                 # Typical 5% critical value for ADF is around -2.86
                 color = DT::styleInterval(
                     c(-3.5, -2.86),
-                    c('#1B5E20', '#4CAF50', '#F44336')
+                    c('#1B5E20', '#4CAF50', '#757575')
                 )
             ) %>%
+            # Subtle ADF p-value highlighting (not jarring green)
             DT::formatStyle(
                 'ADF p',
-                backgroundColor = DT::styleEqual(
-                    c('<0.01', 'N/A'),
-                    c('#A5D6A7', '#EEEEEE')
+                backgroundColor = DT::styleInterval(
+                    cuts = c(0.01, 0.05),
+                    values = c('#E8F5E9', '#F1F8E9', 'transparent')
                 )
             ) %>%
+            # Signal column styling with text color
             DT::formatStyle(
                 'Signal',
-                backgroundColor = DT::styleEqual(
-                    c('SELL WINGS', 'NEUTRAL', 'BUY WINGS'),
-                    c('#FFCDD2', '#E0E0E0', '#C8E6C9')
+                color = DT::styleEqual(
+                    c('BUY WINGS / SELL BODY', 'SELL WINGS / BUY BODY', 'NEUTRAL'),
+                    c('#2E7D32', '#C62828', '#757575')
                 ),
-                fontWeight = 'bold'
+                fontWeight = DT::styleEqual(
+                    c('BUY WINGS / SELL BODY', 'SELL WINGS / BUY BODY', 'NEUTRAL'),
+                    c('bold', 'bold', 'normal')
+                )
+            ) %>%
+            # Diff column coloring (negative red, positive green)
+            DT::formatStyle(
+                'Diff',
+                color = DT::styleInterval(
+                    cuts = 0,
+                    values = c('#C62828', '#2E7D32')
+                )
             )
     })
 
@@ -3729,7 +3774,7 @@ server <- function(input, output, session) {
             filtered_df <- butterfly_filtered()
             if (row_idx <= nrow(filtered_df)) {
                 trade_name <- filtered_df$Trade[row_idx]
-                # Extract spread name from "Butterfly: R209-R2040-R2048"
+                # Extract spread name from "Butterfly: X-Y-Z" format
                 spread_name <- gsub("Butterfly: ", "", trade_name)
                 selected_butterfly(spread_name)
             }
@@ -3754,16 +3799,27 @@ server <- function(input, output, session) {
 
         zscore_threshold <- if (!is.null(input$zscore_threshold)) input$zscore_threshold else 2.0
 
+        # Generate full signal text consistent with table
         signal <- dplyr::case_when(
             bf$z_score > zscore_threshold ~ "SELL WINGS / BUY BODY",
             bf$z_score < -zscore_threshold ~ "BUY WINGS / SELL BODY",
-            TRUE ~ "NEUTRAL - No Action"
+            TRUE ~ "NEUTRAL"
         )
 
+        # Color based on signal direction
         signal_color <- dplyr::case_when(
             bf$z_score > zscore_threshold ~ "#C62828",
-            bf$z_score < -zscore_threshold ~ "#1B5E20",
-            TRUE ~ "#666666"
+            bf$z_score < -zscore_threshold ~ "#2E7D32",
+            TRUE ~ "#757575"
+        )
+
+        # Z-score color with intermediate shades
+        zscore_color <- dplyr::case_when(
+            bf$z_score < -2 ~ "#C62828",
+            bf$z_score < -1 ~ "#E57373",
+            bf$z_score > 2 ~ "#2E7D32",
+            bf$z_score > 1 ~ "#81C784",
+            TRUE ~ "#424242"
         )
 
         # Apply conversion factor based on yield units
@@ -3771,34 +3827,46 @@ server <- function(input, output, session) {
         cf <- if (yields_in_pct) 1 else 100
 
         tags$div(
-            class = "well well-sm",
-            style = "padding: 10px; margin-bottom: 10px;",
+            class = "butterfly-summary-card",
+            style = "background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; padding: 15px; margin-bottom: 10px;",
 
             fluidRow(
                 column(3,
-                       tags$div(class = "text-muted small", "Selected Trade"),
-                       tags$div(style = "font-weight: bold;", bf$name)
-                ),
-                column(2,
-                       tags$div(class = "text-muted small", "Z-Score"),
                        tags$div(
-                           style = sprintf("font-weight: bold; font-size: 18px; color: %s;", signal_color),
-                           sprintf("%.2f", bf$z_score)
+                           tags$p(class = "text-muted", style = "margin-bottom: 2px; font-size: 0.85em;", "Selected Trade"),
+                           tags$h5(style = "margin: 0; font-weight: bold;", bf$name)
                        )
                 ),
                 column(2,
-                       tags$div(class = "text-muted small", "Current"),
-                       tags$div(style = "font-weight: bold;", sprintf("%.2f%%", bf$current * cf))
+                       tags$div(
+                           tags$p(class = "text-muted", style = "margin-bottom: 2px; font-size: 0.85em;", "Z-Score"),
+                           tags$h4(
+                               style = sprintf("margin: 0; color: %s; font-weight: bold;", zscore_color),
+                               sprintf("%.2f", bf$z_score)
+                           )
+                       )
                 ),
                 column(2,
-                       tags$div(class = "text-muted small", "Mean"),
-                       tags$div(sprintf("%.2f%%", bf$mean * cf))
+                       tags$div(
+                           tags$p(class = "text-muted", style = "margin-bottom: 2px; font-size: 0.85em;", "Current"),
+                           # Use 3 decimal places for precision consistency
+                           tags$h5(style = "margin: 0;", sprintf("%.3f%%", bf$current * cf))
+                       )
+                ),
+                column(2,
+                       tags$div(
+                           tags$p(class = "text-muted", style = "margin-bottom: 2px; font-size: 0.85em;", "Mean"),
+                           # Use 3 decimal places for precision consistency
+                           tags$h5(style = "margin: 0;", sprintf("%.3f%%", bf$mean * cf))
+                       )
                 ),
                 column(3,
-                       tags$div(class = "text-muted small", "Signal"),
                        tags$div(
-                           style = sprintf("font-weight: bold; color: %s;", signal_color),
-                           signal
+                           tags$p(class = "text-muted", style = "margin-bottom: 2px; font-size: 0.85em;", "Signal"),
+                           tags$h5(
+                               style = sprintf("margin: 0; color: %s; font-weight: bold;", signal_color),
+                               signal
+                           )
                        )
                 )
             )
@@ -3876,7 +3944,7 @@ server <- function(input, output, session) {
                            yields_in_pct <- isTRUE(bf$yields_in_pct)
                            cf <- if (yields_in_pct) 1 else 100
                            tags$p(
-                               sprintf("Current spread (%.2f%%) is %.2f standard deviations from mean (%.2f%%).",
+                               sprintf("Current spread (%.3f%%) is %.2f standard deviations from mean (%.3f%%).",
                                        bf$current * cf, bf$z_score, bf$mean * cf)
                            )
                        }
@@ -3912,10 +3980,10 @@ server <- function(input, output, session) {
                                    tags$tr(tags$td("ADF statistic:"), tags$td(adf_stat_display)),
                                    tags$tr(tags$td("ADF p-value:"), tags$td(adf_p_display)),
                                    tags$tr(tags$td("Stationary:"), tags$td(ifelse(bf$is_stationary, "Yes (valid)", "No (caution)"))),
-                                   tags$tr(tags$td("Mean:"), tags$td(sprintf("%.2f%%", bf$mean * cf))),
-                                   tags$tr(tags$td("Std Dev:"), tags$td(sprintf("%.2f%%", bf$sd * cf))),
-                                   tags$tr(tags$td("Current:"), tags$td(sprintf("%.2f%%", bf$current * cf))),
-                                   tags$tr(tags$td("Diff from Mean:"), tags$td(sprintf("%+.2f%%", bf$diff_from_mean * cf)))
+                                   tags$tr(tags$td("Mean:"), tags$td(sprintf("%.3f%%", bf$mean * cf))),
+                                   tags$tr(tags$td("Std Dev:"), tags$td(sprintf("%.3f%%", bf$sd * cf))),
+                                   tags$tr(tags$td("Current:"), tags$td(sprintf("%.3f%%", bf$current * cf))),
+                                   tags$tr(tags$td("Diff from Mean:"), tags$td(sprintf("%+.3f%%", bf$diff_from_mean * cf)))
                                )
                            )
                        },
