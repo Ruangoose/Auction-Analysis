@@ -7643,19 +7643,53 @@ server <- function(input, output, session) {
     # UPCOMING AUCTIONS SELECTION (User selects up to 3 bonds)
     # ════════════════════════════════════════════════════════════════════════════
 
-    # Populate upcoming auction bond choices (active bonds only)
+    # Populate upcoming auction bond choices (active bonds with auction history)
     observe({
         req(filtered_data())
 
         active <- tryCatch(active_bonds(), error = function(e) unique(filtered_data()$bond))
 
-        # Default to first 3 active bonds
-        default_selected <- if (length(active) >= 3) active[1:3] else active
+        # Get bonds that have auction history
+        auction_data <- tryCatch(enhanced_auction_data(), error = function(e) NULL)
+
+        if (!is.null(auction_data) && nrow(auction_data) > 0) {
+            # Get bonds with auction history
+            bonds_with_auctions <- auction_data %>%
+                filter(!is.na(bid_to_cover)) %>%
+                distinct(bond) %>%
+                pull(bond)
+
+            # Only show active bonds with auction history
+            available_bonds <- intersect(active, bonds_with_auctions)
+
+            if (length(available_bonds) == 0) {
+                available_bonds <- active  # Fallback
+                message("[AUCTION PREDICTIONS] Warning: No bonds with auction history found")
+            }
+
+            # Sort by most recent auction
+            bond_order <- auction_data %>%
+                filter(bond %in% available_bonds, !is.na(offer_date)) %>%
+                group_by(bond) %>%
+                summarise(last_auction = max(offer_date, na.rm = TRUE), .groups = "drop") %>%
+                arrange(desc(last_auction)) %>%
+                pull(bond)
+
+            available_bonds <- bond_order
+
+            message(sprintf("[AUCTION PREDICTIONS] Available bonds (sorted by recent auction): %s",
+                            paste(available_bonds, collapse = ", ")))
+        } else {
+            available_bonds <- active
+        }
+
+        # Default to first 3 available bonds
+        default_selected <- if (length(available_bonds) >= 3) available_bonds[1:3] else available_bonds
 
         updateSelectInput(
             session,
             "upcoming_auction_bonds",
-            choices = active,
+            choices = available_bonds,
             selected = default_selected
         )
     })
@@ -7861,6 +7895,551 @@ server <- function(input, output, session) {
         )
     })
 
+    # ════════════════════════════════════════════════════════════════════════════
+    # REDESIGNED ML PREDICTIONS - NEW SERVER COMPONENTS (v2)
+    # Single bond selection, focused forecasts
+    # ════════════════════════════════════════════════════════════════════════════
+
+    # Reactive: Generate forecasts when button clicked
+    auction_forecasts_v2 <- eventReactive(input$generate_predictions, {
+        req(input$upcoming_auction_bonds)
+        req(enhanced_auction_data())
+
+        selected_bonds <- input$upcoming_auction_bonds
+
+        withProgress(message = "Generating forecasts...", value = 0, {
+
+            forecasts <- purrr::map_df(selected_bonds, function(bond_name) {
+                incProgress(1/length(selected_bonds), detail = bond_name)
+
+                # Get historical data for this bond
+                bond_history <- enhanced_auction_data() %>%
+                    filter(bond == bond_name) %>%
+                    arrange(offer_date)
+
+                n_auctions <- nrow(bond_history)
+
+                if (n_auctions < 3) {
+                    # Not enough data for forecast
+                    return(tibble::tibble(
+                        bond = bond_name,
+                        n_auctions = n_auctions,
+                        has_forecast = FALSE,
+                        forecast_btc = NA_real_,
+                        ci_lower = NA_real_,
+                        ci_upper = NA_real_,
+                        signal = "Insufficient Data",
+                        historical_avg_btc = ifelse(n_auctions > 0, mean(bond_history$bid_to_cover, na.rm = TRUE), NA),
+                        historical_avg_quality = ifelse(n_auctions > 0 && "auction_quality_score" %in% names(bond_history),
+                                                        mean(bond_history$auction_quality_score, na.rm = TRUE), NA),
+                        historical_avg_tail = ifelse(n_auctions > 0 && "auction_tail_bps" %in% names(bond_history),
+                                                     mean(bond_history$auction_tail_bps, na.rm = TRUE), NA),
+                        historical_avg_inst = ifelse(n_auctions > 0 && "non_comp_ratio" %in% names(bond_history),
+                                                     mean(bond_history$non_comp_ratio, na.rm = TRUE), NA),
+                        last_btc = ifelse(n_auctions > 0, tail(bond_history$bid_to_cover, 1), NA),
+                        last_date = ifelse(n_auctions > 0, as.character(max(bond_history$offer_date)), NA)
+                    ))
+                }
+
+                # Fit forecast model using existing function
+                tryCatch({
+                    pred <- predict_btc_arima(bond_history, bond_name, h = 1)
+
+                    forecast_value <- pred$forecast
+                    ci_lower <- pred$lower_80
+                    ci_upper <- pred$upper_80
+
+                    # Determine signal
+                    signal <- dplyr::case_when(
+                        is.na(forecast_value) ~ "Model Error",
+                        forecast_value >= 3.5 ~ "STRONG BUY",
+                        forecast_value >= 3.0 ~ "BUY",
+                        forecast_value >= 2.5 ~ "HOLD",
+                        forecast_value >= 2.0 ~ "CAUTION",
+                        TRUE ~ "WEAK"
+                    )
+
+                    tibble::tibble(
+                        bond = bond_name,
+                        n_auctions = n_auctions,
+                        has_forecast = !is.na(forecast_value),
+                        forecast_btc = round(forecast_value, 2),
+                        ci_lower = round(ci_lower, 2),
+                        ci_upper = round(ci_upper, 2),
+                        signal = signal,
+                        historical_avg_btc = round(mean(bond_history$bid_to_cover, na.rm = TRUE), 2),
+                        historical_avg_quality = if ("auction_quality_score" %in% names(bond_history))
+                            round(mean(bond_history$auction_quality_score, na.rm = TRUE), 0) else NA_real_,
+                        historical_avg_tail = if ("auction_tail_bps" %in% names(bond_history))
+                            round(mean(bond_history$auction_tail_bps, na.rm = TRUE), 1) else NA_real_,
+                        historical_avg_inst = if ("non_comp_ratio" %in% names(bond_history))
+                            round(mean(bond_history$non_comp_ratio, na.rm = TRUE), 1) else NA_real_,
+                        last_btc = round(tail(bond_history$bid_to_cover, 1), 2),
+                        last_date = as.character(max(bond_history$offer_date))
+                    )
+
+                }, error = function(e) {
+                    message(sprintf("[FORECAST] Error for %s: %s", bond_name, e$message))
+
+                    tibble::tibble(
+                        bond = bond_name,
+                        n_auctions = n_auctions,
+                        has_forecast = FALSE,
+                        forecast_btc = NA_real_,
+                        ci_lower = NA_real_,
+                        ci_upper = NA_real_,
+                        signal = "Model Error",
+                        historical_avg_btc = round(mean(bond_history$bid_to_cover, na.rm = TRUE), 2),
+                        historical_avg_quality = if ("auction_quality_score" %in% names(bond_history))
+                            round(mean(bond_history$auction_quality_score, na.rm = TRUE), 0) else NA_real_,
+                        historical_avg_tail = if ("auction_tail_bps" %in% names(bond_history))
+                            round(mean(bond_history$auction_tail_bps, na.rm = TRUE), 1) else NA_real_,
+                        historical_avg_inst = if ("non_comp_ratio" %in% names(bond_history))
+                            round(mean(bond_history$non_comp_ratio, na.rm = TRUE), 1) else NA_real_,
+                        last_btc = round(tail(bond_history$bid_to_cover, 1), 2),
+                        last_date = as.character(max(bond_history$offer_date))
+                    )
+                })
+            })
+
+            return(forecasts)
+        })
+    }, ignoreNULL = TRUE)
+
+    # Market Outlook Card
+    output$auction_market_outlook_card <- renderUI({
+
+        forecasts <- tryCatch(auction_forecasts_v2(), error = function(e) NULL)
+
+        if (is.null(forecasts) || nrow(forecasts) == 0) {
+            return(
+                tags$div(
+                    class = "alert alert-info",
+                    style = "margin-bottom: 15px;",
+                    icon("info-circle"),
+                    " Select bonds and click 'Generate Forecasts' to see predictions."
+                )
+            )
+        }
+
+        # Calculate overall outlook
+        valid_forecasts <- forecasts %>% filter(has_forecast)
+
+        if (nrow(valid_forecasts) == 0) {
+            avg_forecast <- mean(forecasts$historical_avg_btc, na.rm = TRUE)
+            outlook_text <- "INSUFFICIENT DATA"
+            outlook_color <- "#6c757d"
+            outlook_icon <- "question-circle"
+        } else {
+            avg_forecast <- mean(valid_forecasts$forecast_btc, na.rm = TRUE)
+            outlook_text <- dplyr::case_when(
+                avg_forecast >= 3.5 ~ "STRONG DEMAND",
+                avg_forecast >= 3.0 ~ "GOOD DEMAND",
+                avg_forecast >= 2.5 ~ "MODERATE DEMAND",
+                avg_forecast >= 2.0 ~ "WEAK DEMAND",
+                TRUE ~ "VERY WEAK"
+            )
+            outlook_color <- dplyr::case_when(
+                avg_forecast >= 3.5 ~ "#1B5E20",
+                avg_forecast >= 3.0 ~ "#388E3C",
+                avg_forecast >= 2.5 ~ "#F57C00",
+                TRUE ~ "#C62828"
+            )
+            outlook_icon <- ifelse(avg_forecast >= 2.5, "arrow-up", "arrow-down")
+        }
+
+        # Build card
+        tags$div(
+            class = "market-outlook-card",
+            style = sprintf("background: linear-gradient(135deg, %s 0%%, %s 100%%);
+                             color: white; padding: 20px; border-radius: 8px; margin-bottom: 15px;",
+                            outlook_color, grDevices::adjustcolor(outlook_color, alpha.f = 0.8)),
+
+            tags$div(
+                style = "display: flex; justify-content: space-between; align-items: flex-start;",
+
+                tags$div(
+                    tags$span("MARKET OUTLOOK", style = "opacity: 0.9; font-size: 0.85em;"),
+                    tags$h3(
+                        icon(outlook_icon),
+                        outlook_text,
+                        style = "margin: 5px 0; font-weight: bold;"
+                    ),
+                    tags$p(
+                        sprintf("Avg Forecast: %.2fx", avg_forecast),
+                        style = "margin: 0; font-size: 0.95em;"
+                    ),
+                    tags$p(
+                        sprintf("%d of %d bonds with forecasts",
+                                sum(forecasts$has_forecast), nrow(forecasts)),
+                        style = "margin-top: 5px; opacity: 0.8; font-size: 0.85em;"
+                    )
+                ),
+
+                # Mini list for each bond
+                tags$div(
+                    style = "text-align: right;",
+                    lapply(1:nrow(forecasts), function(i) {
+                        f <- forecasts[i, ]
+                        tags$div(
+                            style = "margin-bottom: 3px;",
+                            tags$span(f$bond, style = "font-weight: bold; margin-right: 10px;"),
+                            if (f$has_forecast) {
+                                tags$span(sprintf("%.1fx", f$forecast_btc))
+                            } else {
+                                tags$span("\u2014", style = "opacity: 0.6;")
+                            }
+                        )
+                    })
+                )
+            )
+        )
+    })
+
+    # Forecast Table v2
+    output$auction_forecast_table_v2 <- DT::renderDataTable({
+
+        forecasts <- tryCatch(auction_forecasts_v2(), error = function(e) NULL)
+
+        if (is.null(forecasts) || nrow(forecasts) == 0) {
+            return(DT::datatable(
+                tibble::tibble(Message = "Click 'Generate Forecasts' to see predictions"),
+                options = list(dom = 't'),
+                rownames = FALSE
+            ))
+        }
+
+        display_data <- forecasts %>%
+            dplyr::mutate(
+                Bond = bond,
+                Forecast = ifelse(has_forecast, sprintf("%.2fx", forecast_btc), "\u2014"),
+                `CI 80%` = ifelse(has_forecast, sprintf("[%.2f-%.2f]", ci_lower, ci_upper), "\u2014"),
+                Signal = signal,
+                `Hist Avg` = ifelse(!is.na(historical_avg_btc), sprintf("%.2fx", historical_avg_btc), "\u2014"),
+                Quality = ifelse(!is.na(historical_avg_quality), sprintf("%.0f", historical_avg_quality), "\u2014"),
+                `Tail (bps)` = ifelse(!is.na(historical_avg_tail), sprintf("%.1f", historical_avg_tail), "\u2014"),
+                `Inst %%` = ifelse(!is.na(historical_avg_inst), sprintf("%.0f%%", historical_avg_inst), "\u2014"),
+                `Last` = ifelse(!is.na(last_btc), sprintf("%.2fx", last_btc), "\u2014"),
+                n = n_auctions
+            ) %>%
+            dplyr::select(Bond, Forecast, `CI 80%`, Signal, `Hist Avg`, Quality, `Tail (bps)`, `Inst %%`, `Last`, n)
+
+        DT::datatable(
+            display_data,
+            rownames = FALSE,
+            selection = "none",
+            options = list(
+                dom = 't',
+                pageLength = 5,
+                columnDefs = list(
+                    list(className = 'dt-center', targets = '_all')
+                )
+            ),
+            class = 'cell-border stripe compact'
+        ) %>%
+            DT::formatStyle(
+                'Signal',
+                backgroundColor = DT::styleEqual(
+                    c('STRONG BUY', 'BUY', 'HOLD', 'CAUTION', 'WEAK', 'Insufficient Data', 'Model Error'),
+                    c('#C8E6C9', '#DCEDC8', '#FFF9C4', '#FFCC80', '#FFCDD2', '#E0E0E0', '#E0E0E0')
+                ),
+                fontWeight = 'bold'
+            ) %>%
+            DT::formatStyle(
+                'Quality',
+                backgroundColor = DT::styleInterval(
+                    c(40, 60, 80),
+                    c('#FFCDD2', '#FFF9C4', '#DCEDC8', '#C8E6C9')
+                )
+            )
+    })
+
+    # Market Sentiment
+    output$auction_market_sentiment <- renderUI({
+        forecasts <- tryCatch(auction_forecasts_v2(), error = function(e) NULL)
+
+        if (is.null(forecasts) || nrow(forecasts) == 0) {
+            return(NULL)
+        }
+
+        valid_forecasts <- forecasts %>% filter(has_forecast)
+
+        if (nrow(valid_forecasts) == 0) {
+            return(
+                tags$div(
+                    class = "alert alert-warning",
+                    style = "font-size: 0.9em;",
+                    icon("exclamation-triangle"),
+                    " Insufficient data for sentiment analysis"
+                )
+            )
+        }
+
+        # Calculate sentiment indicators
+        avg_btc <- mean(valid_forecasts$forecast_btc, na.rm = TRUE)
+        avg_quality <- mean(forecasts$historical_avg_quality, na.rm = TRUE)
+        avg_tail <- mean(forecasts$historical_avg_tail, na.rm = TRUE)
+
+        btc_sentiment <- if (avg_btc >= 3.0) "positive" else if (avg_btc >= 2.5) "neutral" else "negative"
+        quality_sentiment <- if (!is.na(avg_quality) && avg_quality >= 70) "positive" else if (!is.na(avg_quality) && avg_quality >= 50) "neutral" else "negative"
+        tail_sentiment <- if (!is.na(avg_tail) && avg_tail <= 5) "positive" else if (!is.na(avg_tail) && avg_tail <= 8) "neutral" else "negative"
+
+        sentiment_icon <- function(s) {
+            if (s == "positive") icon("arrow-up", style = "color: #2E7D32;")
+            else if (s == "neutral") icon("minus", style = "color: #F57C00;")
+            else icon("arrow-down", style = "color: #C62828;")
+        }
+
+        tags$div(
+            style = "background: #f8f9fa; padding: 12px; border-radius: 8px;",
+            tags$h6("Market Sentiment", style = "color: #1B3A6B; font-weight: bold; margin-bottom: 10px;"),
+            tags$div(
+                style = "display: flex; justify-content: space-between; font-size: 0.9em;",
+                tags$div(
+                    sentiment_icon(btc_sentiment),
+                    tags$span(" Demand", style = "margin-left: 4px;")
+                ),
+                tags$div(
+                    sentiment_icon(quality_sentiment),
+                    tags$span(" Quality", style = "margin-left: 4px;")
+                ),
+                tags$div(
+                    sentiment_icon(tail_sentiment),
+                    tags$span(" Pricing", style = "margin-left: 4px;")
+                )
+            )
+        )
+    })
+
+    # Historical Performance Chart (v2)
+    output$auction_forecast_chart_v2 <- renderPlot({
+        req(input$upcoming_auction_bonds)
+        req(enhanced_auction_data())
+
+        selected_bonds <- input$upcoming_auction_bonds
+        auction_data <- enhanced_auction_data()
+
+        # Filter to selected bonds
+        chart_data <- auction_data %>%
+            filter(bond %in% selected_bonds, !is.na(bid_to_cover)) %>%
+            arrange(offer_date)
+
+        if (nrow(chart_data) == 0) {
+            plot.new()
+            text(0.5, 0.5, "No historical auction data for selected bonds", cex = 1.2)
+            return()
+        }
+
+        # Get forecasts if available
+        forecasts <- tryCatch(auction_forecasts_v2(), error = function(e) NULL)
+
+        # Create plot
+        p <- ggplot2::ggplot(chart_data, ggplot2::aes(x = offer_date, y = bid_to_cover, color = bond)) +
+            ggplot2::geom_line(linewidth = 1) +
+            ggplot2::geom_point(size = 2) +
+            ggplot2::geom_hline(yintercept = 2, linetype = "dashed", color = "#C62828", alpha = 0.5) +
+            ggplot2::geom_hline(yintercept = 3, linetype = "dashed", color = "#388E3C", alpha = 0.5) +
+            ggplot2::labs(
+                x = NULL,
+                y = "Bid-to-Cover Ratio",
+                color = "Bond"
+            ) +
+            ggplot2::theme_minimal() +
+            ggplot2::theme(
+                plot.background = ggplot2::element_rect(fill = "white", color = NA),
+                panel.background = ggplot2::element_rect(fill = "white", color = NA),
+                legend.position = "bottom",
+                legend.title = ggplot2::element_text(size = 9),
+                legend.text = ggplot2::element_text(size = 8),
+                axis.text = ggplot2::element_text(size = 9),
+                axis.title = ggplot2::element_text(size = 10)
+            ) +
+            ggplot2::scale_color_manual(
+                values = c("#1B3A6B", "#E53935", "#43A047", "#FB8C00", "#8E24AA")[1:length(selected_bonds)]
+            )
+
+        # Add forecast points if available
+        if (!is.null(forecasts) && any(forecasts$has_forecast)) {
+            forecast_date <- if (!is.null(input$upcoming_auction_date)) {
+                input$upcoming_auction_date
+            } else {
+                max(chart_data$offer_date, na.rm = TRUE) + 7
+            }
+
+            forecast_points <- forecasts %>%
+                filter(has_forecast) %>%
+                mutate(offer_date = forecast_date)
+
+            p <- p +
+                ggplot2::geom_point(
+                    data = forecast_points,
+                    ggplot2::aes(x = offer_date, y = forecast_btc, color = bond),
+                    shape = 18, size = 4
+                ) +
+                ggplot2::geom_errorbar(
+                    data = forecast_points,
+                    ggplot2::aes(x = offer_date, ymin = ci_lower, ymax = ci_upper, color = bond),
+                    width = 5, alpha = 0.5
+                )
+        }
+
+        return(p)
+    }, bg = "white")
+
+    # Selected Bonds History
+    output$selected_bonds_history <- renderUI({
+        req(input$upcoming_auction_bonds)
+        req(enhanced_auction_data())
+
+        selected_bonds <- input$upcoming_auction_bonds
+
+        # Get history for each selected bond
+        history_cards <- lapply(selected_bonds, function(bond_name) {
+
+            bond_data <- enhanced_auction_data() %>%
+                filter(bond == bond_name) %>%
+                arrange(desc(offer_date))
+
+            n_auctions <- nrow(bond_data)
+
+            if (n_auctions == 0) {
+                return(
+                    tags$div(
+                        class = "bond-history-card",
+                        style = "padding: 10px; margin-bottom: 8px; background: #f8f9fa;
+                                 border-radius: 4px; border-left: 4px solid #6c757d;",
+                        tags$strong(bond_name),
+                        tags$span(" - No auction history", class = "text-muted")
+                    )
+                )
+            }
+
+            avg_btc <- mean(bond_data$bid_to_cover, na.rm = TRUE)
+            last_btc <- bond_data$bid_to_cover[1]
+            last_date <- format(bond_data$offer_date[1], "%Y-%m-%d")
+
+            # Color based on historical performance
+            card_color <- dplyr::case_when(
+                avg_btc >= 3.5 ~ "#2E7D32",
+                avg_btc >= 3.0 ~ "#388E3C",
+                avg_btc >= 2.5 ~ "#F57C00",
+                TRUE ~ "#C62828"
+            )
+
+            tags$div(
+                class = "bond-history-card",
+                style = sprintf("padding: 10px; margin-bottom: 8px; background: #f8f9fa;
+                                 border-radius: 4px; border-left: 4px solid %s;", card_color),
+
+                tags$div(
+                    style = "display: flex; justify-content: space-between;",
+                    tags$strong(bond_name, style = sprintf("color: %s;", card_color)),
+                    tags$span(sprintf("n=%d", n_auctions), class = "text-muted")
+                ),
+                tags$div(
+                    style = "display: flex; justify-content: space-between; margin-top: 5px;",
+                    tags$span(sprintf("Avg: %.2fx", avg_btc)),
+                    tags$span(sprintf("Last: %.2fx (%s)", last_btc, last_date),
+                             style = "font-size: 0.85em;", class = "text-muted")
+                )
+            )
+        })
+
+        tags$div(
+            tags$h5(
+                tagList(icon("history"), " Selected Bonds History"),
+                style = "color: #1B3A6B; font-weight: bold;"
+            ),
+            history_cards,
+            tags$hr(),
+            tags$p(
+                sprintf("Next auction: %s", format(input$upcoming_auction_date, "%b %d")),
+                class = "text-muted", style = "font-size: 0.9em;"
+            )
+        )
+    })
+
+    # Quick Stats v2
+    output$auction_quick_stats_v2 <- renderUI({
+        req(input$upcoming_auction_bonds)
+
+        selected_bonds <- input$upcoming_auction_bonds
+        n_selected <- length(selected_bonds)
+
+        # Count bonds with sufficient data
+        auction_data <- tryCatch(enhanced_auction_data(), error = function(e) NULL)
+
+        if (is.null(auction_data)) {
+            return(
+                tags$div(
+                    style = "font-size: 12px; color: #666; padding: 8px; background: #f8f9fa; border-radius: 4px;",
+                    tags$span(icon("check-circle", style = "color: #4CAF50;"), sprintf(" %d bonds selected", n_selected))
+                )
+            )
+        }
+
+        sufficient_data <- sapply(selected_bonds, function(bond_name) {
+            n <- auction_data %>%
+                filter(bond == bond_name, !is.na(bid_to_cover)) %>%
+                nrow()
+            n >= 10
+        })
+
+        n_sufficient <- sum(sufficient_data)
+
+        tags$div(
+            style = "font-size: 12px; color: #666; padding: 10px; background: #f8f9fa; border-radius: 4px;",
+            tags$div(
+                style = "display: flex; justify-content: space-between; margin: 3px 0;",
+                tags$span(icon("check-circle", style = "color: #4CAF50;"), " Selected:"),
+                tags$strong(sprintf("%d bonds", n_selected))
+            ),
+            tags$div(
+                style = "display: flex; justify-content: space-between; margin: 3px 0;",
+                tags$span(icon("database", style = "color: #2196F3;"), " Sufficient data:"),
+                tags$strong(sprintf("%d bonds", n_sufficient),
+                           style = ifelse(n_sufficient < n_selected, "color: #FF9800;", "color: #4CAF50;"))
+            )
+        )
+    })
+
+    # Download forecast chart
+    output$download_forecast_chart <- downloadHandler(
+        filename = function() {
+            paste0("auction_forecast_", format(Sys.Date(), "%Y%m%d"), ".png")
+        },
+        content = function(file) {
+            req(input$upcoming_auction_bonds)
+            req(enhanced_auction_data())
+
+            selected_bonds <- input$upcoming_auction_bonds
+            auction_data <- enhanced_auction_data()
+
+            chart_data <- auction_data %>%
+                filter(bond %in% selected_bonds, !is.na(bid_to_cover)) %>%
+                arrange(offer_date)
+
+            p <- ggplot2::ggplot(chart_data, ggplot2::aes(x = offer_date, y = bid_to_cover, color = bond)) +
+                ggplot2::geom_line(linewidth = 1) +
+                ggplot2::geom_point(size = 2) +
+                ggplot2::geom_hline(yintercept = 2, linetype = "dashed", color = "#C62828", alpha = 0.5) +
+                ggplot2::geom_hline(yintercept = 3, linetype = "dashed", color = "#388E3C", alpha = 0.5) +
+                ggplot2::labs(
+                    title = "Auction Bid-to-Cover Historical Performance",
+                    subtitle = paste("Bonds:", paste(selected_bonds, collapse = ", ")),
+                    x = "Auction Date",
+                    y = "Bid-to-Cover Ratio",
+                    color = "Bond"
+                ) +
+                ggplot2::theme_minimal() +
+                ggplot2::theme(
+                    plot.background = ggplot2::element_rect(fill = "white", color = NA),
+                    panel.background = ggplot2::element_rect(fill = "white", color = NA)
+                )
+
+            ggplot2::ggsave(file, plot = p, width = 10, height = 6, dpi = 300, bg = "white")
+        }
+    )
 
     output$auction_sentiment_gauge <- renderPlot({
         req(filtered_data())

@@ -3356,6 +3356,54 @@ calculate_fair_value <- function(data, method = "smooth.spline") {
 # ENHANCED AUCTION METRICS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+#' @title Clean Auction Data - Ensure Numeric Types
+#' @description Ensures all numeric auction columns are properly typed.
+#'   Handles character/factor columns that should be numeric.
+#' @param auction_data Raw auction data frame
+#' @return Cleaned auction data with proper numeric types
+#' @export
+clean_auction_data <- function(auction_data) {
+
+    if (is.null(auction_data) || nrow(auction_data) == 0) {
+        return(auction_data)
+    }
+
+    # Define columns that MUST be numeric
+    numeric_columns <- c(
+        "bid_to_cover", "bids_received", "offer_amount", "allocation",
+        # NEW COLUMNS - ensure these are numeric
+        "clearing_yield", "non_comps", "number_bids_received",
+        "best_bid", "worst_bid", "auction_tail"
+    )
+
+    # Convert each to numeric, handling any character/factor issues
+    for (col in numeric_columns) {
+        if (col %in% names(auction_data)) {
+            # Check current type
+            if (!is.numeric(auction_data[[col]])) {
+                message(sprintf("[AUCTION DATA] Converting %s from %s to numeric",
+                                col, class(auction_data[[col]])[1]))
+
+                # Remove any commas, spaces, percentage signs
+                if (is.character(auction_data[[col]]) || is.factor(auction_data[[col]])) {
+                    auction_data[[col]] <- as.character(auction_data[[col]])
+                    auction_data[[col]] <- gsub("[,%\\s]", "", auction_data[[col]])
+                    auction_data[[col]] <- as.numeric(auction_data[[col]])
+                }
+            }
+
+            # Log summary
+            n_valid <- sum(!is.na(auction_data[[col]]))
+            n_total <- nrow(auction_data)
+            message(sprintf("[AUCTION DATA] %s: %d/%d valid values (%.1f%%)",
+                            col, n_valid, n_total, n_valid/n_total*100))
+        }
+    }
+
+    return(auction_data)
+}
+
+
 #' @title Calculate Enhanced Auction Metrics
 #' @description Calculates derived auction metrics from raw auction data
 #' @param auction_data Raw auction data with columns: clearing_yield, non_comps,
@@ -3364,6 +3412,9 @@ calculate_fair_value <- function(data, method = "smooth.spline") {
 #' @return Enhanced auction data with derived metrics
 #' @export
 calculate_enhanced_auction_metrics <- function(auction_data, bond_data = NULL) {
+
+    # FIRST: Clean auction data to ensure proper numeric types
+    auction_data <- clean_auction_data(auction_data)
 
     # Check for required base columns
     required_base <- c("bid_to_cover", "bids_received", "offer_amount")
@@ -3384,6 +3435,19 @@ calculate_enhanced_auction_metrics <- function(auction_data, bond_data = NULL) {
         message(sprintf("Note: Missing auction columns: %s. Some metrics will be NA.",
                         paste(missing_cols, collapse = ", ")))
     }
+
+    # Log data availability for new columns
+    has_non_comps <- "non_comps" %in% names(auction_data) &&
+                     any(!is.na(auction_data$non_comps))
+    has_num_bids <- "number_bids_received" %in% names(auction_data) &&
+                    any(!is.na(auction_data$number_bids_received))
+    has_best_worst <- all(c("best_bid", "worst_bid") %in% names(auction_data)) &&
+                      any(!is.na(auction_data$best_bid))
+    has_clearing <- "clearing_yield" %in% names(auction_data) &&
+                    any(!is.na(auction_data$clearing_yield))
+
+    message(sprintf("[AUCTION METRICS] Data availability: non_comps=%s, num_bids=%s, best/worst=%s, clearing=%s",
+                    has_non_comps, has_num_bids, has_best_worst, has_clearing))
 
     enhanced_data <- auction_data %>%
         mutate(

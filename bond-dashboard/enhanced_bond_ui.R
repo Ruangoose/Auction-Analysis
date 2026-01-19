@@ -1779,168 +1779,138 @@ ui <- dashboardPage(
 
                            fluidRow(
                                box(
-                                   title = "ML-Powered Auction Predictions",
+                                   title = tagList(icon("brain"), " ML-Powered Auction Predictions"),
                                    status = "primary",
                                    solidHeader = TRUE,
                                    width = 12,
                                    collapsible = TRUE,
 
                                    fluidRow(
-                                       # Left Column: Configuration + Model Performance (compact)
+                                       # ═══════════════════════════════════════════════════════════════
+                                       # LEFT COLUMN: Upcoming Auction Selection (SINGLE ENTRY POINT)
+                                       # ═══════════════════════════════════════════════════════════════
                                        column(3,
-                                              # Configuration Panel
                                               tags$div(
-                                                  class = "well",
-                                                  style = "padding: 12px; margin-bottom: 10px; background: #f8f9fa; border-radius: 8px;",
+                                                  class = "config-panel",
+                                                  style = "background: #f8f9fa; padding: 15px; border-radius: 8px;
+                                                           border: 2px solid #1B3A6B;",
 
-                                                  tags$h5("Configuration", style = "margin-top: 0; margin-bottom: 12px; color: #1B3A6B; font-weight: bold;"),
-
-                                                  # Quick Select for Auction Weeks
-                                                  uiOutput("auction_quick_select"),
-
-                                                  # Bond selection for next auction
-                                                  pickerInput(
-                                                      "auction_bonds_select",
-                                                      "Select Bonds:",
-                                                      choices = NULL,
-                                                      selected = NULL,
-                                                      multiple = TRUE,
-                                                      options = list(
-                                                          `actions-box` = TRUE,
-                                                          `selected-text-format` = "count > 3",
-                                                          `count-selected-text` = "{0} bonds selected",
-                                                          `live-search` = TRUE,
-                                                          `max-options` = 30
-                                                      )
+                                                  tags$h5(
+                                                      tagList(icon("calendar-plus"), " Upcoming Auctions"),
+                                                      style = "color: #1B3A6B; font-weight: bold; margin-top: 0;"
                                                   ),
 
-                                                  # Compact row for date and offer
-                                                  fluidRow(
-                                                      column(6, style = "padding-right: 5px;",
-                                                             dateInput(
-                                                                 "next_auction_date",
-                                                                 "Auction Date:",
-                                                                 value = today() + days(7),
-                                                                 min = today() + days(1),
-                                                                 width = "100%"
-                                                             )
-                                                      ),
-                                                      column(6, style = "padding-left: 5px;",
-                                                             numericInput(
-                                                                 "expected_offer_size",
-                                                                 "Offer (Rm):",
-                                                                 value = 5000,
-                                                                 min = 100,
-                                                                 max = 20000,
-                                                                 step = 500,
-                                                                 width = "100%"
-                                                             )
-                                                      )
+                                                  tags$p(
+                                                      "Select bonds expected in the next auction(s):",
+                                                      class = "text-muted",
+                                                      style = "font-size: 0.9em; margin-bottom: 10px;"
                                                   ),
 
-                                                  selectInput(
-                                                      "prediction_model",
-                                                      "Model:",
-                                                      choices = list(
-                                                          "ARIMA (Auto)" = "arima_auto",
-                                                          "ETS (Exp. Smoothing)" = "ets",
-                                                          "Ensemble (Best)" = "ensemble"
-                                                      ),
-                                                      selected = "ensemble",
-                                                      width = "100%"
-                                                  ),
-
-                                                  actionButton(
-                                                      "update_predictions",
-                                                      "Update Predictions",
-                                                      class = "btn-primary btn-block",
-                                                      icon = icon("sync-alt"),
-                                                      style = "margin-top: 8px;"
-                                                  ),
-
-                                                  # Quick Stats
-                                                  tags$hr(style = "margin: 10px 0;"),
-                                                  uiOutput("auction_quick_stats")
-                                              ),
-
-                                              # Model Performance Card (compact)
-                                              uiOutput("model_performance_card")
-                                       ),
-
-                                       # Middle Column: Market Outlook + Forecast Table
-                                       column(5,
-                                              # Market Outlook Summary (replaces empty cards)
-                                              uiOutput("market_outlook_summary"),
-
-                                              # Auction Insight Summary (3-bond workflow optimization)
-                                              uiOutput("auction_insight_summary"),
-
-                                              # Detailed Forecast Table (replaces vertical cards)
-                                              tags$div(
-                                                  style = "margin-top: 12px;",
-                                                  # Table header with filter toggle
-                                                  tags$div(
-                                                      style = "display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;",
-                                                      tags$h5("Detailed Forecasts", class = "text-primary", style = "margin: 0; color: #1B3A6B; font-weight: bold;"),
-                                                      checkboxInput(
-                                                          "show_all_bonds",
-                                                          "Show bonds without forecasts",
-                                                          value = TRUE,
-                                                          width = "auto"
-                                                      )
-                                                  ),
-                                                  DT::dataTableOutput("auction_forecast_table", height = "auto")
-                                              ),
-
-                                              # Market Sentiment (compact)
-                                              tags$div(
-                                                  style = "margin-top: 12px;",
-                                                  uiOutput("market_sentiment_compact")
-                                              )
-                                       ),
-
-                                       # Right Column: Chart + Upcoming Auctions + Calendar
-                                       column(4,
-                                              tags$h5("Bid-to-Cover Forecast", style = "color: #1B3A6B; font-weight: bold; margin-bottom: 10px;"),
-                                              plotOutput("auction_forecast_plot", height = "280px"),
-
-                                              # Upcoming Auctions Selection Panel
-                                              tags$div(
-                                                  class = "upcoming-auctions-panel",
-                                                  style = "background: white; border: 1px solid #dee2e6; border-radius: 8px;
-                                                           padding: 12px; margin-top: 10px;",
-
-                                                  tags$h6(
-                                                      tagList(icon("calendar-alt"), " Upcoming Auctions"),
-                                                      style = "color: #1B3A6B; margin-bottom: 10px; font-weight: bold;"
-                                                  ),
-
-                                                  # User selects next 3 bonds
+                                                  # SINGLE bond selection - THIS IS THE ONLY PLACE TO SELECT
                                                   selectInput(
                                                       "upcoming_auction_bonds",
-                                                      "Select Bonds for Next Auction(s):",
+                                                      label = NULL,
                                                       choices = NULL,  # Populated dynamically
                                                       selected = NULL,
                                                       multiple = TRUE,
                                                       width = "100%"
                                                   ),
 
+                                                  # Help text
                                                   tags$small(
-                                                      "Select up to 3 bonds expected in upcoming auctions",
-                                                      style = "font-size: 0.85em; color: #6c757d;"
+                                                      tagList(icon("info-circle"), " Select up to 3 bonds. Typically announced on Treasury's website."),
+                                                      style = "font-size: 0.8em; color: #6c757d;"
                                                   ),
 
-                                                  tags$hr(style = "margin: 10px 0;"),
+                                                  tags$hr(style = "margin: 12px 0;"),
 
-                                                  # Display selected upcoming auctions
-                                                  uiOutput("upcoming_auctions_display")
+                                                  # Auction date input
+                                                  dateInput(
+                                                      "upcoming_auction_date",
+                                                      "Expected Auction Date:",
+                                                      value = Sys.Date() + 7,
+                                                      min = Sys.Date(),
+                                                      max = Sys.Date() + 90,
+                                                      width = "100%"
+                                                  ),
+
+                                                  # Offer size input
+                                                  numericInput(
+                                                      "upcoming_offer_amount",
+                                                      "Offer Size (R millions):",
+                                                      value = 5000,
+                                                      min = 500,
+                                                      max = 20000,
+                                                      step = 500,
+                                                      width = "100%"
+                                                  ),
+
+                                                  tags$hr(style = "margin: 12px 0;"),
+
+                                                  # Generate predictions button
+                                                  actionButton(
+                                                      "generate_predictions",
+                                                      label = tagList(icon("calculator"), " Generate Forecasts"),
+                                                      class = "btn-primary btn-block",
+                                                      style = "margin-top: 10px;"
+                                                  )
                                               ),
 
-                                              # Download buttons
+                                              # Quick Stats below
                                               tags$div(
-                                                  style = "margin-top: 10px;",
-                                                  downloadButton("download_auction_sentiment", "Download Chart",
-                                                                 class = "btn-sm btn-primary")
+                                                  style = "margin-top: 12px;",
+                                                  uiOutput("auction_quick_stats_v2")
+                                              )
+                                       ),
+
+                                       # ═══════════════════════════════════════════════════════════════
+                                       # MIDDLE COLUMN: Forecast Results
+                                       column(5,
+                                              # Market Outlook Card
+                                              uiOutput("auction_market_outlook_card"),
+
+                                              tags$br(),
+
+                                              # Detailed Forecasts Table
+                                              tags$div(
+                                                  tags$h5(
+                                                      tagList(icon("table"), " Forecast Details"),
+                                                      style = "color: #1B3A6B; font-weight: bold;"
+                                                  ),
+                                                  DT::dataTableOutput("auction_forecast_table_v2", height = "auto")
+                                              ),
+
+                                              tags$br(),
+
+                                              # Market Sentiment
+                                              uiOutput("auction_market_sentiment")
+                                       ),
+
+                                       # ═══════════════════════════════════════════════════════════════
+                                       # RIGHT COLUMN: Historical Context
+                                       # ═══════════════════════════════════════════════════════════════
+                                       column(4,
+                                              # Forecast Chart
+                                              tags$div(
+                                                  tags$h5(
+                                                      tagList(icon("chart-line"), " Historical Performance"),
+                                                      style = "color: #1B3A6B; font-weight: bold;"
+                                                  ),
+                                                  plotOutput("auction_forecast_chart_v2", height = "280px")
+                                              ),
+
+                                              tags$br(),
+
+                                              # Historical Stats for Selected Bonds
+                                              uiOutput("selected_bonds_history"),
+
+                                              tags$br(),
+
+                                              # Download button
+                                              downloadButton(
+                                                  "download_forecast_chart",
+                                                  "Download Chart",
+                                                  class = "btn-primary btn-sm"
                                               )
                                        )
                                    )
