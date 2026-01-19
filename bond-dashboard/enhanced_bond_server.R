@@ -4228,7 +4228,7 @@ server <- function(input, output, session) {
     # Last 6 months button
     observeEvent(input$auction_6m_btn, {
         bounds <- auction_date_bounds()
-        start_6m <- max(Sys.Date() - lubridate::months(6), bounds$min_date)
+        start_6m <- max(Sys.Date() - lubridate::period(6, "months"), bounds$min_date)
         updateDateRangeInput(session, "auction_date_range",
             start = start_6m,
             end = min(Sys.Date(), bounds$max_date)
@@ -4238,7 +4238,7 @@ server <- function(input, output, session) {
     # Last 12 months button
     observeEvent(input$auction_12m_btn, {
         bounds <- auction_date_bounds()
-        start_12m <- max(Sys.Date() - lubridate::months(12), bounds$min_date)
+        start_12m <- max(Sys.Date() - lubridate::period(12, "months"), bounds$min_date)
         updateDateRangeInput(session, "auction_date_range",
             start = start_12m,
             end = min(Sys.Date(), bounds$max_date)
