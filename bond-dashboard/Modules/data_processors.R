@@ -986,10 +986,37 @@ calculate_technical_signal <- function(rsi, macd_signal, trend_status, bb_positi
     # Composite Score
     total_score <- rsi_score + macd_score + trend_score + bb_score
 
-    # Confidence based on agreement
-    signals <- c(sign(rsi_score), sign(macd_score), sign(trend_score))
-    signals <- signals[signals != 0]
-    agreement <- if(length(signals) > 0) abs(sum(signals)) / length(signals) else 0
+    # ════════════════════════════════════════════════════════════════════════
+    # IMPROVED SIGNAL STRENGTH: Combines indicator agreement + signal magnitude
+    # Replaces confusing "Confidence" with more intuitive "Signal Strength"
+    # ════════════════════════════════════════════════════════════════════════
+
+    # Factor 1: Indicator agreement (how many point same direction)
+    signals <- c(rsi_score, macd_score, trend_score, bb_score)
+    non_zero <- signals[signals != 0]
+
+    if (length(non_zero) == 0) {
+        # All neutral - moderate confidence in neutral signal
+        agreement_score <- 0.5
+    } else {
+        # Count how many agree with the dominant direction
+        dominant_dir <- sign(sum(non_zero))
+        agreeing <- sum(sign(non_zero) == dominant_dir)
+        agreement_score <- agreeing / length(non_zero)
+    }
+
+    # Factor 2: Signal magnitude (how strong is the total score)
+    # Max possible score is 100 (25+30+30+15), so normalize
+    magnitude_score <- min(1, abs(total_score) / 50)
+
+    # Factor 3: Key indicator contribution (RSI and MACD most reliable)
+    key_contribution <- (abs(rsi_score) + abs(macd_score)) / 55  # Max RSI + MACD = 25+30 = 55
+
+    # Weighted combination: 40% agreement + 35% magnitude + 25% key indicators
+    signal_strength <- (agreement_score * 0.4) + (magnitude_score * 0.35) + (key_contribution * 0.25)
+
+    # Clamp to 0.15-1.0 range (never show 0% which is confusing)
+    signal_strength <- max(0.15, min(1, signal_strength))
 
     # Overall signal (bond-specific terminology)
     signal <- case_when(
@@ -1013,7 +1040,7 @@ calculate_technical_signal <- function(rsi, macd_signal, trend_status, bb_positi
         score = total_score,
         signal = signal,
         recommendation = recommendation,
-        confidence = agreement,
+        confidence = signal_strength,  # Now uses improved signal strength calculation
         components = list(
             rsi = rsi_score,
             macd = macd_score,
