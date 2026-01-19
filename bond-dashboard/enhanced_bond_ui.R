@@ -2102,6 +2102,60 @@ ui <- dashboardPage(
                                )
                            ),
 
+                           # Summary Statistics Bar
+                           fluidRow(
+                               style = "margin-top: 15px;",
+                               column(
+                                   width = 12,
+                                   div(
+                                       class = "auction-summary-bar",
+                                       style = "background-color: #f8f9fa; border-radius: 8px; padding: 12px 20px;
+                                                display: flex; justify-content: space-around; align-items: center;
+                                                border: 1px solid #dee2e6;",
+
+                                       # Summary stat 1 - Total Auctions
+                                       div(
+                                           style = "text-align: center;",
+                                           div(style = "font-size: 0.85em; color: #666;", "Total Auctions Analyzed"),
+                                           div(style = "font-size: 1.4em; font-weight: bold; color: #1B3A6B;",
+                                               textOutput("total_auctions_analyzed", inline = TRUE))
+                                       ),
+
+                                       # Divider
+                                       div(style = "width: 1px; height: 40px; background-color: #dee2e6;"),
+
+                                       # Summary stat 2 - Avg Bid-to-Cover
+                                       div(
+                                           style = "text-align: center;",
+                                           div(style = "font-size: 0.85em; color: #666;", "Avg Bid-to-Cover"),
+                                           div(style = "font-size: 1.4em; font-weight: bold; color: #1B3A6B;",
+                                               textOutput("overall_avg_btc", inline = TRUE))
+                                       ),
+
+                                       # Divider
+                                       div(style = "width: 1px; height: 40px; background-color: #dee2e6;"),
+
+                                       # Summary stat 3 - Strong Auctions
+                                       div(
+                                           style = "text-align: center;",
+                                           div(style = "font-size: 0.85em; color: #666;", "Strong Auctions (>3x)"),
+                                           div(style = "font-size: 1.4em; font-weight: bold; color: #28a745;",
+                                               textOutput("strong_auction_pct", inline = TRUE))
+                                       ),
+
+                                       # Divider
+                                       div(style = "width: 1px; height: 40px; background-color: #dee2e6;"),
+
+                                       # Summary stat 4 - Selected Bonds Avg
+                                       div(
+                                           style = "text-align: center;",
+                                           div(style = "font-size: 0.85em; color: #666;", "Selected Bonds Avg"),
+                                           uiOutput("selected_bonds_avg_btc")
+                                       )
+                                   )
+                               )
+                           ),
+
                            fluidRow(
                                box(
                                    title = "Auction Performance Analytics",

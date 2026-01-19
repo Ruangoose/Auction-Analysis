@@ -170,7 +170,10 @@ collect_report_charts <- function(processed_data, filtered_data, filtered_data_w
                         filter(!is.na(bid_to_cover))
 
                     if(nrow(auction_data) > 5) {
-                        generate_auction_pattern_analysis(filtered_data, list())
+                        # Get selected bonds for highlighting
+                        selected_bonds <- input_params$auction_bonds_select %||% character(0)
+                        generate_auction_pattern_analysis(filtered_data, list(),
+                                                          selected_bonds = selected_bonds)
                     } else { NULL }
                 } else { NULL }
             },
@@ -205,7 +208,10 @@ collect_report_charts <- function(processed_data, filtered_data, filtered_data_w
             # ✨ NEW PLOT
             bid_distribution = function() {
                 if(!is.null(filtered_data) && nrow(filtered_data) > 0) {
-                    generate_bid_distribution_plot(filtered_data, list())
+                    # Get selected bonds for highlighting
+                    selected_bonds <- input_params$auction_bonds_select %||% character(0)
+                    generate_bid_distribution_plot(filtered_data, list(),
+                                                   selected_bonds = selected_bonds)
                 } else { NULL }
             },
             # ✨ NEW PLOT

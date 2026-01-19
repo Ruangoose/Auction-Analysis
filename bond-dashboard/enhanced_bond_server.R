@@ -4067,7 +4067,14 @@ server <- function(input, output, session) {
 
     output$auction_pattern_analysis <- renderPlot({
         req(filtered_data())
-        p <- generate_auction_pattern_analysis(filtered_data(), list())
+        # Get selected bonds for highlighting (default to empty if not set)
+        selected_bonds <- if (!is.null(input$auction_bonds_select)) {
+            input$auction_bonds_select
+        } else {
+            character(0)
+        }
+        p <- generate_auction_pattern_analysis(filtered_data(), list(),
+                                                selected_bonds = selected_bonds)
         if(!is.null(p)) {
             gridExtra::grid.arrange(p)
         } else {
@@ -4078,13 +4085,95 @@ server <- function(input, output, session) {
 
     output$bid_distribution_plot <- renderPlot({
         req(filtered_data())
-        p <- generate_bid_distribution_plot(filtered_data(), list())
+        # Get selected bonds for highlighting (default to empty if not set)
+        selected_bonds <- if (!is.null(input$auction_bonds_select)) {
+            input$auction_bonds_select
+        } else {
+            character(0)
+        }
+        p <- generate_bid_distribution_plot(filtered_data(), list(),
+                                            selected_bonds = selected_bonds)
         if(!is.null(p)) {
             print(p)
         } else {
             plot.new()
             text(0.5, 0.5, "No bid distribution data available", cex = 1.2)
         }
+    })
+
+    # =====================================================
+    # Auction Summary Statistics Bar Outputs
+    # =====================================================
+
+    output$total_auctions_analyzed <- renderText({
+        auction_data <- filtered_data()
+        req(auction_data)
+        n_auctions <- auction_data %>% filter(!is.na(bid_to_cover)) %>% nrow()
+        as.character(n_auctions)
+    })
+
+    output$overall_avg_btc <- renderText({
+        auction_data <- filtered_data()
+        req(auction_data)
+        avg_btc <- mean(auction_data$bid_to_cover, na.rm = TRUE)
+        if (is.na(avg_btc) || is.nan(avg_btc)) {
+            "—"
+        } else {
+            sprintf("%.2fx", avg_btc)
+        }
+    })
+
+    output$strong_auction_pct <- renderText({
+        auction_data <- filtered_data()
+        req(auction_data)
+        auction_data_valid <- auction_data %>% filter(!is.na(bid_to_cover))
+        if (nrow(auction_data_valid) == 0) {
+            "—"
+        } else {
+            strong_pct <- mean(auction_data_valid$bid_to_cover >= 3.0, na.rm = TRUE) * 100
+            sprintf("%.0f%%", strong_pct)
+        }
+    })
+
+    output$selected_bonds_avg_btc <- renderUI({
+        auction_data <- filtered_data()
+        selected_bonds <- if (!is.null(input$auction_bonds_select)) {
+            input$auction_bonds_select
+        } else {
+            character(0)
+        }
+        req(auction_data)
+
+        if (length(selected_bonds) == 0) {
+            return(div(style = "font-size: 1.4em; color: #666;", "—"))
+        }
+
+        selected_data <- auction_data %>%
+            filter(bond %in% selected_bonds, !is.na(bid_to_cover))
+
+        if (nrow(selected_data) == 0) {
+            return(div(style = "font-size: 1.4em; color: #666;", "—"))
+        }
+
+        selected_avg <- mean(selected_data$bid_to_cover, na.rm = TRUE)
+
+        # Color based on value
+        color <- if (is.na(selected_avg) || is.nan(selected_avg)) {
+            "#666"
+        } else if (selected_avg >= 3.0) {
+            "#28a745"
+        } else if (selected_avg >= 2.5) {
+            "#20c997"
+        } else if (selected_avg >= 2.0) {
+            "#ffc107"
+        } else {
+            "#dc3545"
+        }
+
+        div(
+            style = sprintf("font-size: 1.4em; font-weight: bold; color: %s;", color),
+            sprintf("%.2fx", selected_avg)
+        )
     })
 
     # YTD Bond Issuance Chart
@@ -10394,7 +10483,13 @@ server <- function(input, output, session) {
         },
         content = function(file) {
             req(filtered_data())
-            p <- generate_bid_distribution_plot(filtered_data(), list())
+            selected_bonds <- if (!is.null(input$auction_bonds_select)) {
+                input$auction_bonds_select
+            } else {
+                character(0)
+            }
+            p <- generate_bid_distribution_plot(filtered_data(), list(),
+                                                selected_bonds = selected_bonds)
             if(!is.null(p)) {
                 ggsave(file, plot = p, width = 12, height = 8, dpi = 300, bg = "white")
             }
@@ -10507,7 +10602,13 @@ server <- function(input, output, session) {
         },
         content = function(file) {
             req(filtered_data())
-            p <- generate_auction_pattern_analysis(filtered_data(), list())
+            selected_bonds <- if (!is.null(input$auction_bonds_select)) {
+                input$auction_bonds_select
+            } else {
+                character(0)
+            }
+            p <- generate_auction_pattern_analysis(filtered_data(), list(),
+                                                   selected_bonds = selected_bonds)
             if(!is.null(p)) {
                 ggsave(file, plot = p, width = 12, height = 10, dpi = 300, bg = "white")
             }
