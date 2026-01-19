@@ -8125,17 +8125,26 @@ server <- function(input, output, session) {
         }
 
         # Build display data with model type column
+        # Ensure optional columns exist to avoid reference errors
+        if (!("model_type" %in% names(forecasts))) {
+            forecasts$model_type <- NA_character_
+        }
+        if (!("quality_score" %in% names(forecasts))) {
+            forecasts$quality_score <- NA_real_
+        }
+
         display_data <- forecasts %>%
             dplyr::mutate(
                 Bond = bond,
                 Forecast = ifelse(has_forecast, sprintf("%.2fx", forecast_btc), "\u2014"),
                 `CI 80%` = ifelse(has_forecast, sprintf("[%.2f-%.2f]", ci_lower, ci_upper), "\u2014"),
                 Signal = signal,
-                Model = ifelse("model_type" %in% names(.) && !is.na(model_type) && model_type != "None",
+                # Use vectorized & operator (not scalar &&) for multiple conditions
+                Model = ifelse(!is.na(model_type) & model_type != "None" & model_type != "",
                               model_type, "\u2014"),
                 `Hist Avg` = ifelse(!is.na(historical_avg_btc), sprintf("%.2fx", historical_avg_btc), "\u2014"),
                 # Use quality_score if available, else historical_avg_quality
-                Quality = ifelse("quality_score" %in% names(.) && !is.na(quality_score) && quality_score > 0,
+                Quality = ifelse(!is.na(quality_score) & quality_score > 0,
                                 quality_score,
                                 ifelse(!is.na(historical_avg_quality), historical_avg_quality, 0)),
                 `Last` = ifelse(!is.na(last_btc), sprintf("%.2fx", last_btc), "\u2014"),
