@@ -1263,51 +1263,10 @@ ui <- dashboardPage(
                            "Carry & Roll Analytics",
                            icon = icon("calculator"),
 
-                           # ADD THIS: Information/Explanation Panel
+                           # DYNAMIC Information/Explanation Panel - now reactive to funding rate
                            fluidRow(
                                column(12,
-                                      tags$div(
-                                          class = "alert alert-info",
-                                          style = "margin-bottom: 20px;",
-                                          tags$h4("Understanding Carry & Roll Analysis", style = "margin-top: 0;"),
-                                          tags$p(
-                                              tags$strong("What This Analysis Shows:"),
-                                              "This table calculates the expected total return from holding SA government bonds over different time periods (30, 90, 180, and 360 days), broken down into component parts."
-                                          ),
-                                          tags$div(
-                                              style = "margin-top: 15px;",
-                                              tags$h5("Return Components:", style = "color: #1B3A6B;"),
-                                              tags$ul(
-                                                  tags$li(tags$strong("Carry Income:"),
-                                                          "The coupon income earned during the holding period. For a 10% coupon bond held 90 days: 10% × (90/365) = 2.47%"),
-                                                  tags$li(tags$strong("Roll-Down Return:"),
-                                                          "The price appreciation as the bond 'rolls down' the yield curve. As time passes and duration decreases, bonds typically move to lower-yielding parts of the curve, generating capital gains."),
-                                                  tags$li(tags$strong("Funding Cost:"),
-                                                          "The cost to finance the position, typically at the repo rate (currently around 8.25% annually)."),
-                                                  tags$li(tags$strong("Net Return:"),
-                                                          "Total return after subtracting funding costs: (Carry + Roll) - Funding")
-                                              )
-                                          ),
-                                          tags$div(
-                                              style = "margin-top: 15px;",
-                                              tags$h5("How to Read the Results:", style = "color: #1B3A6B;"),
-                                              tags$ul(
-                                                  tags$li(tags$strong("Green cells:"), "Positive returns - bond generates profit after funding costs"),
-                                                  tags$li(tags$strong("Red cells:"), "Negative returns - funding costs exceed income"),
-                                                  tags$li(tags$strong("Return Type Options:"),
-                                                          tags$ul(
-                                                              tags$li("Gross: Total return before funding costs"),
-                                                              tags$li("Net: Return after funding costs (most realistic)"),
-                                                              tags$li("Risk-Adjusted: Return per unit of duration risk")
-                                                          ))
-                                              )
-                                          ),
-                                          tags$div(
-                                              style = "margin-top: 15px; padding: 10px; background: #1B3A6B; border-radius: 5px;",
-                                              tags$strong("💡 Key Insight:"),
-                                              "Bonds with coupons above the funding rate generate positive carry. Longer holding periods typically show higher returns due to compound effects and roll-down benefits."
-                                          )
-                                      )
+                                      uiOutput("carry_roll_info_box")
                                )
                            ),
 

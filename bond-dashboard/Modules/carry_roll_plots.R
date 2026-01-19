@@ -1,24 +1,50 @@
 #' @export
 # 10. Enhanced Carry & Roll Heatmap Generation
 generate_enhanced_carry_roll_heatmap <- function(data, return_type = "net", funding_rate = 8.25) {
-    # Select return column based on input
-    return_col <- switch(return_type,
-                         "gross" = "gross_return",
-                         "net" = "net_return",
-                         "risk_adj" = "return_per_unit_risk",
-                         "net_return")  # Default fallback
 
-    # Check if the column exists
-    if(!return_col %in% names(data)) {
-        return_col <- "net_return"
-    }
+    # Error handling wrapper for robustness
+    tryCatch({
+        # Input validation
+        if(is.null(data) || nrow(data) == 0) {
+            return(
+                ggplot() +
+                    annotate("text", x = 0.5, y = 0.5,
+                             label = "No data available for Carry & Roll analysis",
+                             size = 5, color = "grey50") +
+                    theme_void() +
+                    labs(title = "Carry & Roll Analysis")
+            )
+        }
 
-    # Get return type label for display
-    return_type_label <- switch(return_type,
-                                "gross" = "Gross",
-                                "net" = "Net",
-                                "risk_adj" = "Risk-Adjusted",
-                                "Net")
+        # Select return column based on input
+        return_col <- switch(return_type,
+                             "gross" = "gross_return",
+                             "net" = "net_return",
+                             "risk_adj" = "return_per_unit_risk",
+                             "net_return")  # Default fallback
+
+        # Check if the column exists
+        if(!return_col %in% names(data)) {
+            return_col <- "net_return"
+            if(!return_col %in% names(data)) {
+                warning("No return column found in data")
+                return(
+                    ggplot() +
+                        annotate("text", x = 0.5, y = 0.5,
+                                 label = "Required return data not available",
+                                 size = 5, color = "grey50") +
+                        theme_void() +
+                        labs(title = "Carry & Roll Analysis")
+                )
+            }
+        }
+
+        # Get return type label for display
+        return_type_label <- switch(return_type,
+                                    "gross" = "Gross",
+                                    "net" = "Net",
+                                    "risk_adj" = "Risk-Adjusted",
+                                    "Net")
 
     # ═══════════════════════════════════════════════════════════════════════
     # FIX 1: SORT BONDS BY 90-DAY RETURN (Most common trading horizon)
@@ -61,68 +87,69 @@ generate_enhanced_carry_roll_heatmap <- function(data, return_type = "net", fund
     }
 
     # ═══════════════════════════════════════════════════════════════════════
-    # FIX 2: UPDATED COLOR SCALE FOR WIDER RETURN RANGE (removed 4% cap)
+    # FIX 2: PROPER COLOR SCALE - GREEN FOR POSITIVE, RED FOR NEGATIVE
     # ═══════════════════════════════════════════════════════════════════════
 
     # Determine dynamic limits based on actual data
     max_return <- max(heatmap_data$return_value, na.rm = TRUE)
     min_return <- min(heatmap_data$return_value, na.rm = TRUE)
 
-    # Extended color scale for returns up to 8%+ (high coupon bonds)
-    return_colors <- c(
-        "#FFEBEE",      # 0% - very light red (poor)
-        "#FFCDD2",      # 0.5% - light red
-        "#FFF9C4",      # 1.0% - yellow (break-even zone)
-        "#C8E6C9",      # 2.0% - light green (acceptable)
-        "#81C784",      # 3.0% - medium-light green
-        "#66BB6A",      # 4.0% - medium green (good)
-        "#43A047",      # 5.0% - medium-dark green
-        "#2E7D32",      # 6.0% - dark green
-        "#1B5E20"       # 8%+ - darkest green (excellent)
-    )
-
-    # Dynamic scale limits based on actual data range
-    scale_max <- max(8, ceiling(max_return))
-
     # Use appropriate scale based on return range
     if(min_return < 0) {
-        # Diverging scale for negative returns
+        # Diverging scale when negative returns exist - centered on zero
+        max_abs <- max(abs(min_return), abs(max_return))
         color_scale <- scale_fill_gradient2(
-            low = "#C62828",           # Dark red for negative
-            mid = "#FFF9C4",           # Yellow at zero
-            high = "#1B5E20",          # Dark green for positive
+            low = "#D32F2F",           # Red for negative (bad)
+            mid = "#FFFDE7",           # Light yellow at zero (neutral)
+            high = "#388E3C",          # Green for positive (good)
             midpoint = 0,
-            limits = c(min(min_return, -1), max(max_return, 6)),
+            limits = c(-max_abs, max_abs),
             oob = scales::squish,
             name = "Return (%)",
+            labels = function(x) sprintf("%.1f%%", x),
             guide = guide_colorbar(
                 title.position = "top",
-                barwidth = 10,
+                barwidth = 12,
                 barheight = 0.5
             )
         )
     } else {
-        # Sequential scale with dynamic breakpoints based on data
-        color_scale <- scale_fill_gradientn(
-            colors = return_colors,
-            values = scales::rescale(c(0, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0)),
-            limits = c(0, scale_max),
+        # ALL POSITIVE RETURNS: Use sequential GREEN scale (light to dark)
+        # This is the critical fix - positive values should ALWAYS be green
+        color_scale <- scale_fill_gradient(
+            low = "#E8F5E9",           # Very light green for lowest positive
+            high = "#1B5E20",          # Dark green for highest positive
+            limits = c(max(0, min_return - 0.1), max_return + 0.1),
             oob = scales::squish,
             name = "Return (%)",
+            labels = function(x) sprintf("%.1f%%", x),
             guide = guide_colorbar(
                 title.position = "top",
-                barwidth = 10,
+                barwidth = 12,
                 barheight = 0.5
             )
         )
     }
 
-    # Dynamic text color based on return value (white on dark backgrounds)
-    text_colors <- case_when(
-        heatmap_data$return_value > 4 ~ "white",     # White text on dark green
-        heatmap_data$return_value < -0.5 ~ "white",  # White text on dark red
-        TRUE ~ "black"                               # Black text otherwise
-    )
+    # Dynamic text color based on return value and background darkness
+    # For all-positive (green scale): higher values = darker green = need white text
+    # For diverging (red-yellow-green): extreme values on both ends need white text
+    if(min_return < 0) {
+        # Diverging scale: white text on dark ends (both high positive and low negative)
+        text_colors <- case_when(
+            heatmap_data$return_value > (max_return * 0.6) ~ "white",
+            heatmap_data$return_value < (min_return * 0.6) ~ "white",
+            TRUE ~ "grey20"
+        )
+    } else {
+        # All-positive green scale: white text on darker greens (higher values)
+        return_range <- max_return - min_return
+        threshold <- min_return + (return_range * 0.55)  # Above 55% of range = dark green
+        text_colors <- case_when(
+            heatmap_data$return_value > threshold ~ "white",
+            TRUE ~ "grey20"
+        )
+    }
 
     # Check if any projections are truncated (for caption)
     has_truncated <- any(heatmap_data$is_truncated, na.rm = TRUE)
@@ -172,7 +199,18 @@ generate_enhanced_carry_roll_heatmap <- function(data, return_type = "net", fund
             legend.position = "bottom"
         )
 
-    return(p)
+        return(p)
+
+    }, error = function(e) {
+        # Error handler - return informative plot on failure
+        warning(sprintf("Carry & Roll heatmap generation error: %s", e$message))
+        ggplot() +
+            annotate("text", x = 0.5, y = 0.5,
+                     label = "Error generating Carry & Roll heatmap.\nPlease check data availability.",
+                     size = 4, color = "grey50") +
+            theme_void() +
+            labs(title = "Carry & Roll Analysis", subtitle = "Data processing error")
+    })
 }
 
 #' @export
