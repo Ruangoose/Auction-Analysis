@@ -1786,10 +1786,12 @@ ui <- dashboardPage(
                                    collapsible = TRUE,
 
                                    fluidRow(
+                                       style = "display: flex; flex-wrap: wrap;",
                                        # ═══════════════════════════════════════════════════════════════
                                        # LEFT COLUMN: Upcoming Auction Selection (SINGLE ENTRY POINT)
                                        # ═══════════════════════════════════════════════════════════════
                                        column(3,
+                                              style = "min-height: 100%;",
                                               tags$div(
                                                   class = "config-panel",
                                                   style = "background: #f8f9fa; padding: 15px; border-radius: 8px;
@@ -1864,53 +1866,60 @@ ui <- dashboardPage(
                                        ),
 
                                        # ═══════════════════════════════════════════════════════════════
-                                       # MIDDLE COLUMN: Forecast Results
-                                       column(5,
+                                       # MIDDLE COLUMN: Forecast Results (width 6)
+                                       # ═══════════════════════════════════════════════════════════════
+                                       column(6,
+                                              style = "min-height: 100%;",
                                               # Market Outlook Card
                                               uiOutput("auction_market_outlook_card"),
 
-                                              tags$br(),
-
                                               # Detailed Forecasts Table
                                               tags$div(
+                                                  style = "margin-bottom: 15px;",
                                                   tags$h5(
                                                       tagList(icon("table"), " Forecast Details"),
                                                       style = "color: #1B3A6B; font-weight: bold;"
                                                   ),
-                                                  DT::dataTableOutput("auction_forecast_table_v2", height = "auto")
+                                                  tags$div(
+                                                      style = "max-height: 250px; overflow-y: auto;",
+                                                      DT::dataTableOutput("auction_forecast_table_v2", height = "auto")
+                                                  )
                                               ),
 
-                                              tags$br(),
-
-                                              # Market Sentiment
+                                              # Market Sentiment - HORIZONTAL LAYOUT
                                               uiOutput("auction_market_sentiment")
                                        ),
 
                                        # ═══════════════════════════════════════════════════════════════
-                                       # RIGHT COLUMN: Historical Context
+                                       # RIGHT COLUMN: Historical Context (width 3)
                                        # ═══════════════════════════════════════════════════════════════
-                                       column(4,
+                                       column(3,
+                                              style = "min-height: 100%;",
                                               # Forecast Chart
                                               tags$div(
+                                                  style = "margin-bottom: 15px;",
                                                   tags$h5(
                                                       tagList(icon("chart-line"), " Historical Performance"),
                                                       style = "color: #1B3A6B; font-weight: bold;"
                                                   ),
-                                                  plotOutput("auction_forecast_chart_v2", height = "280px")
+                                                  tags$div(
+                                                      style = "height: 200px;",
+                                                      plotOutput("auction_forecast_chart_v2", height = "100%")
+                                                  )
                                               ),
 
-                                              tags$br(),
-
                                               # Historical Stats for Selected Bonds
-                                              uiOutput("selected_bonds_history"),
-
-                                              tags$br(),
-
-                                              # Download button
-                                              downloadButton(
-                                                  "download_forecast_chart",
-                                                  "Download Chart",
-                                                  class = "btn-primary btn-sm"
+                                              tags$div(
+                                                  style = "background-color: #f8f9fa; border-radius: 8px; padding: 15px;",
+                                                  uiOutput("selected_bonds_history"),
+                                                  tags$hr(style = "margin: 10px 0;"),
+                                                  # Download button
+                                                  downloadButton(
+                                                      "download_forecast_chart",
+                                                      "Download Chart",
+                                                      class = "btn-sm btn-outline-primary",
+                                                      style = "width: 100%;"
+                                                  )
                                               )
                                        )
                                    )

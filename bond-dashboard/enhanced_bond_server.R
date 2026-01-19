@@ -7946,39 +7946,23 @@ server <- function(input, output, session) {
 
                 n_auctions <- nrow(bond_history)
 
-                if (n_auctions < 3) {
-                    # Not enough data for forecast
-                    return(tibble::tibble(
-                        bond = bond_name,
-                        n_auctions = n_auctions,
-                        has_forecast = FALSE,
-                        forecast_btc = NA_real_,
-                        ci_lower = NA_real_,
-                        ci_upper = NA_real_,
-                        signal = "Insufficient Data",
-                        historical_avg_btc = ifelse(n_auctions > 0, mean(bond_history$bid_to_cover, na.rm = TRUE), NA),
-                        historical_avg_quality = ifelse(n_auctions > 0 && "auction_quality_score" %in% names(bond_history),
-                                                        mean(bond_history$auction_quality_score, na.rm = TRUE), NA),
-                        historical_avg_tail = ifelse(n_auctions > 0 && "auction_tail_bps" %in% names(bond_history),
-                                                     mean(bond_history$auction_tail_bps, na.rm = TRUE), NA),
-                        historical_avg_inst = ifelse(n_auctions > 0 && "non_comp_ratio" %in% names(bond_history),
-                                                     mean(bond_history$non_comp_ratio, na.rm = TRUE), NA),
-                        last_btc = ifelse(n_auctions > 0, tail(bond_history$bid_to_cover, 1), NA),
-                        last_date = ifelse(n_auctions > 0, as.character(max(bond_history$offer_date)), NA)
-                    ))
-                }
+                # Allow tiered forecasting even for low data - removed n_auctions < 3 restriction
+                # The predict_btc_arima function now handles tiered forecasting with fallbacks
 
-                # Fit forecast model using existing function
+                # Fit forecast model using existing function with tiered fallbacks
                 tryCatch({
                     pred <- predict_btc_arima(bond_history, bond_name, h = 1)
 
                     forecast_value <- pred$forecast
                     ci_lower <- pred$lower_80
                     ci_upper <- pred$upper_80
+                    model_type <- if (!is.null(pred$model_type)) pred$model_type else "None"
+                    quality_score <- if (!is.null(pred$quality_score)) pred$quality_score else 0
 
-                    # Determine signal
+                    # Determine signal based on forecast and quality
                     signal <- dplyr::case_when(
-                        is.na(forecast_value) ~ "Model Error",
+                        is.na(forecast_value) ~ "Insufficient Data",
+                        quality_score < 30 ~ "Low Confidence",
                         forecast_value >= 3.5 ~ "STRONG BUY",
                         forecast_value >= 3.0 ~ "BUY",
                         forecast_value >= 2.5 ~ "HOLD",
@@ -7994,6 +7978,8 @@ server <- function(input, output, session) {
                         ci_lower = round(ci_lower, 2),
                         ci_upper = round(ci_upper, 2),
                         signal = signal,
+                        model_type = model_type,
+                        quality_score = quality_score,
                         historical_avg_btc = round(mean(bond_history$bid_to_cover, na.rm = TRUE), 2),
                         historical_avg_quality = if ("auction_quality_score" %in% names(bond_history))
                             round(mean(bond_history$auction_quality_score, na.rm = TRUE), 0) else NA_real_,
@@ -8015,7 +8001,9 @@ server <- function(input, output, session) {
                         forecast_btc = NA_real_,
                         ci_lower = NA_real_,
                         ci_upper = NA_real_,
-                        signal = "Model Error",
+                        signal = "Error",
+                        model_type = "Error",
+                        quality_score = 0,
                         historical_avg_btc = round(mean(bond_history$bid_to_cover, na.rm = TRUE), 2),
                         historical_avg_quality = if ("auction_quality_score" %in% names(bond_history))
                             round(mean(bond_history$auction_quality_score, na.rm = TRUE), 0) else NA_real_,
@@ -8123,7 +8111,7 @@ server <- function(input, output, session) {
         )
     })
 
-    # Forecast Table v2
+    # Forecast Table v2 - ENHANCED with model type column
     output$auction_forecast_table_v2 <- DT::renderDataTable({
 
         forecasts <- tryCatch(auction_forecasts_v2(), error = function(e) NULL)
@@ -8136,20 +8124,24 @@ server <- function(input, output, session) {
             ))
         }
 
+        # Build display data with model type column
         display_data <- forecasts %>%
             dplyr::mutate(
                 Bond = bond,
                 Forecast = ifelse(has_forecast, sprintf("%.2fx", forecast_btc), "\u2014"),
                 `CI 80%` = ifelse(has_forecast, sprintf("[%.2f-%.2f]", ci_lower, ci_upper), "\u2014"),
                 Signal = signal,
+                Model = ifelse("model_type" %in% names(.) && !is.na(model_type) && model_type != "None",
+                              model_type, "\u2014"),
                 `Hist Avg` = ifelse(!is.na(historical_avg_btc), sprintf("%.2fx", historical_avg_btc), "\u2014"),
-                Quality = ifelse(!is.na(historical_avg_quality), sprintf("%.0f", historical_avg_quality), "\u2014"),
-                `Tail (bps)` = ifelse(!is.na(historical_avg_tail), sprintf("%.1f", historical_avg_tail), "\u2014"),
-                `Inst %%` = ifelse(!is.na(historical_avg_inst), sprintf("%.0f%%", historical_avg_inst), "\u2014"),
+                # Use quality_score if available, else historical_avg_quality
+                Quality = ifelse("quality_score" %in% names(.) && !is.na(quality_score) && quality_score > 0,
+                                quality_score,
+                                ifelse(!is.na(historical_avg_quality), historical_avg_quality, 0)),
                 `Last` = ifelse(!is.na(last_btc), sprintf("%.2fx", last_btc), "\u2014"),
                 n = n_auctions
             ) %>%
-            dplyr::select(Bond, Forecast, `CI 80%`, Signal, `Hist Avg`, Quality, `Tail (bps)`, `Inst %%`, `Last`, n)
+            dplyr::select(Bond, Forecast, `CI 80%`, Signal, Model, `Hist Avg`, Quality, `Last`, n)
 
         DT::datatable(
             display_data,
@@ -8167,72 +8159,159 @@ server <- function(input, output, session) {
             DT::formatStyle(
                 'Signal',
                 backgroundColor = DT::styleEqual(
-                    c('STRONG BUY', 'BUY', 'HOLD', 'CAUTION', 'WEAK', 'Insufficient Data', 'Model Error'),
-                    c('#C8E6C9', '#DCEDC8', '#FFF9C4', '#FFCC80', '#FFCDD2', '#E0E0E0', '#E0E0E0')
+                    c('STRONG BUY', 'BUY', 'HOLD', 'CAUTION', 'WEAK',
+                      'Insufficient Data', 'Low Confidence', 'Error'),
+                    c('#C8E6C9', '#DCEDC8', '#FFF9C4', '#FFCC80', '#FFCDD2',
+                      '#E0E0E0', '#CFD8DC', '#FFCDD2')
                 ),
                 fontWeight = 'bold'
             ) %>%
             DT::formatStyle(
                 'Quality',
-                backgroundColor = DT::styleInterval(
-                    c(40, 60, 80),
-                    c('#FFCDD2', '#FFF9C4', '#DCEDC8', '#C8E6C9')
+                background = DT::styleColorBar(c(0, 100), '#1B3A6B30'),
+                backgroundSize = '98% 60%',
+                backgroundRepeat = 'no-repeat',
+                backgroundPosition = 'left center'
+            ) %>%
+            DT::formatStyle(
+                'Model',
+                color = DT::styleEqual(
+                    c('ARIMA', 'ETS', 'Linear Trend', 'Weighted Average', 'Simple Average', '\u2014'),
+                    c('#1B5E20', '#2E7D32', '#F57C00', '#FF9800', '#FFB74D', '#9E9E9E')
+                ),
+                fontWeight = DT::styleEqual(
+                    c('ARIMA', 'ETS', 'Linear Trend', 'Weighted Average', 'Simple Average'),
+                    rep('bold', 5)
                 )
             )
     })
 
-    # Market Sentiment
+    # Market Sentiment - ENHANCED with actual values and colored indicators
     output$auction_market_sentiment <- renderUI({
         forecasts <- tryCatch(auction_forecasts_v2(), error = function(e) NULL)
 
+        # Default empty sentiment state
+        default_sentiment <- function() {
+            tags$div(
+                style = "background: #f8f9fa; padding: 15px; border-radius: 8px;",
+                tags$h5("Market Sentiment", style = "color: #1B3A6B; font-weight: bold; margin-top: 0; margin-bottom: 15px;"),
+                fluidRow(
+                    column(4, style = "text-align: center;",
+                        tags$div(style = "padding: 10px; border-radius: 8px; background-color: #e0e0e020;",
+                            tags$div(style = "font-size: 1.8em; color: gray;", icon("minus")),
+                            tags$div(style = "font-weight: bold; color: gray; font-size: 1.1em;", "\u2014"),
+                            tags$div(style = "font-size: 0.85em; color: #666;", "Demand")
+                        )
+                    ),
+                    column(4, style = "text-align: center;",
+                        tags$div(style = "padding: 10px; border-radius: 8px; background-color: #e0e0e020;",
+                            tags$div(style = "font-size: 1.8em; color: gray;", icon("minus")),
+                            tags$div(style = "font-weight: bold; color: gray; font-size: 1.1em;", "\u2014"),
+                            tags$div(style = "font-size: 0.85em; color: #666;", "Quality")
+                        )
+                    ),
+                    column(4, style = "text-align: center;",
+                        tags$div(style = "padding: 10px; border-radius: 8px; background-color: #e0e0e020;",
+                            tags$div(style = "font-size: 1.8em; color: gray;", icon("minus")),
+                            tags$div(style = "font-weight: bold; color: gray; font-size: 1.1em;", "\u2014"),
+                            tags$div(style = "font-size: 0.85em; color: #666;", "Pricing")
+                        )
+                    )
+                )
+            )
+        }
+
         if (is.null(forecasts) || nrow(forecasts) == 0) {
-            return(NULL)
+            return(default_sentiment())
         }
 
         valid_forecasts <- forecasts %>% filter(has_forecast)
 
         if (nrow(valid_forecasts) == 0) {
-            return(
+            return(default_sentiment())
+        }
+
+        # Calculate sentiment metrics
+        avg_btc <- mean(valid_forecasts$forecast_btc, na.rm = TRUE)
+
+        # Calculate quality from quality_score if available, else from historical_avg_quality
+        avg_quality <- if ("quality_score" %in% names(valid_forecasts)) {
+            mean(valid_forecasts$quality_score, na.rm = TRUE)
+        } else {
+            mean(forecasts$historical_avg_quality, na.rm = TRUE)
+        }
+
+        # Calculate pricing confidence based on CI width relative to forecast
+        avg_ci_width <- mean(sapply(1:nrow(valid_forecasts), function(i) {
+            f <- valid_forecasts[i, ]
+            if (is.na(f$ci_upper) || is.na(f$ci_lower) || is.na(f$forecast_btc) || f$forecast_btc == 0) return(NA)
+            (f$ci_upper - f$ci_lower) / f$forecast_btc
+        }), na.rm = TRUE)
+
+        # DEMAND sentiment (based on forecast BTC)
+        demand <- if (avg_btc >= 3.5) {
+            list(value = avg_btc, label = "Strong", color = "#28a745", icon_name = "arrow-up")
+        } else if (avg_btc >= 2.5) {
+            list(value = avg_btc, label = "Moderate", color = "#ffc107", icon_name = "minus")
+        } else {
+            list(value = avg_btc, label = "Weak", color = "#dc3545", icon_name = "arrow-down")
+        }
+
+        # QUALITY sentiment (based on quality score)
+        quality <- if (!is.na(avg_quality) && avg_quality >= 70) {
+            list(value = avg_quality, label = "High", color = "#28a745", icon_name = "check-circle")
+        } else if (!is.na(avg_quality) && avg_quality >= 40) {
+            list(value = avg_quality, label = "Medium", color = "#ffc107", icon_name = "exclamation-circle")
+        } else if (!is.na(avg_quality)) {
+            list(value = avg_quality, label = "Low", color = "#dc3545", icon_name = "times-circle")
+        } else {
+            list(value = NA, label = "\u2014", color = "gray", icon_name = "minus")
+        }
+
+        # PRICING sentiment (based on CI width - tighter = better)
+        pricing <- if (is.na(avg_ci_width)) {
+            list(value = NA, label = "\u2014", color = "gray", icon_name = "minus")
+        } else if (avg_ci_width <= 0.3) {
+            list(value = avg_ci_width, label = "Tight", color = "#28a745", icon_name = "compress-arrows-alt")
+        } else if (avg_ci_width <= 0.6) {
+            list(value = avg_ci_width, label = "Normal", color = "#ffc107", icon_name = "arrows-alt-h")
+        } else {
+            list(value = avg_ci_width, label = "Wide", color = "#dc3545", icon_name = "expand-arrows-alt")
+        }
+
+        # Build sentiment indicator card
+        build_indicator <- function(sentiment, label, value_fmt) {
+            tags$div(
+                style = sprintf("padding: 10px; border-radius: 8px; background-color: %s20;", sentiment$color),
                 tags$div(
-                    class = "alert alert-warning",
-                    style = "font-size: 0.9em;",
-                    icon("exclamation-triangle"),
-                    " Insufficient data for sentiment analysis"
-                )
+                    style = sprintf("font-size: 1.8em; color: %s;", sentiment$color),
+                    icon(sentiment$icon_name)
+                ),
+                tags$div(
+                    style = sprintf("font-weight: bold; color: %s; font-size: 1.1em;", sentiment$color),
+                    sentiment$label
+                ),
+                if (!is.na(sentiment$value)) {
+                    tags$div(style = "font-size: 0.8em; color: #666;", value_fmt)
+                }
             )
         }
 
-        # Calculate sentiment indicators
-        avg_btc <- mean(valid_forecasts$forecast_btc, na.rm = TRUE)
-        avg_quality <- mean(forecasts$historical_avg_quality, na.rm = TRUE)
-        avg_tail <- mean(forecasts$historical_avg_tail, na.rm = TRUE)
-
-        btc_sentiment <- if (avg_btc >= 3.0) "positive" else if (avg_btc >= 2.5) "neutral" else "negative"
-        quality_sentiment <- if (!is.na(avg_quality) && avg_quality >= 70) "positive" else if (!is.na(avg_quality) && avg_quality >= 50) "neutral" else "negative"
-        tail_sentiment <- if (!is.na(avg_tail) && avg_tail <= 5) "positive" else if (!is.na(avg_tail) && avg_tail <= 8) "neutral" else "negative"
-
-        sentiment_icon <- function(s) {
-            if (s == "positive") icon("arrow-up", style = "color: #2E7D32;")
-            else if (s == "neutral") icon("minus", style = "color: #F57C00;")
-            else icon("arrow-down", style = "color: #C62828;")
-        }
-
         tags$div(
-            style = "background: #f8f9fa; padding: 12px; border-radius: 8px;",
-            tags$h6("Market Sentiment", style = "color: #1B3A6B; font-weight: bold; margin-bottom: 10px;"),
-            tags$div(
-                style = "display: flex; justify-content: space-between; font-size: 0.9em;",
-                tags$div(
-                    sentiment_icon(btc_sentiment),
-                    tags$span(" Demand", style = "margin-left: 4px;")
+            style = "background: #f8f9fa; padding: 15px; border-radius: 8px;",
+            tags$h5("Market Sentiment", style = "color: #1B3A6B; font-weight: bold; margin-top: 0; margin-bottom: 15px;"),
+            fluidRow(
+                column(4, style = "text-align: center;",
+                    build_indicator(demand, "Demand",
+                        if (!is.na(demand$value)) sprintf("%.2fx avg", demand$value) else NULL)
                 ),
-                tags$div(
-                    sentiment_icon(quality_sentiment),
-                    tags$span(" Quality", style = "margin-left: 4px;")
+                column(4, style = "text-align: center;",
+                    build_indicator(quality, "Quality",
+                        if (!is.na(quality$value)) sprintf("%d/100", round(quality$value)) else NULL)
                 ),
-                tags$div(
-                    sentiment_icon(tail_sentiment),
-                    tags$span(" Pricing", style = "margin-left: 4px;")
+                column(4, style = "text-align: center;",
+                    build_indicator(pricing, "Pricing",
+                        if (!is.na(pricing$value)) sprintf("\u00B1%.0f%%", pricing$value * 100) else NULL)
                 )
             )
         )
@@ -8288,9 +8367,18 @@ server <- function(input, output, session) {
                     ggplot2::xlim(0, 1) + ggplot2::ylim(0, 1))
             }
 
-            # Get forecasts if available
-            forecasts <- tryCatch(auction_forecasts_v2(), error = function(e) {
-                message("[Historical Performance] Forecast error: ", e$message)
+            # Get forecasts if available (silent fail - chart will still show historical data)
+            forecasts <- tryCatch({
+                result <- auction_forecasts_v2()
+                if (is.null(result) || nrow(result) == 0) {
+                    message("[Historical Performance] No forecast data available yet")
+                    NULL
+                } else {
+                    result
+                }
+            }, error = function(e) {
+                err_msg <- if (!is.null(e$message) && nchar(e$message) > 0) e$message else "Unknown error"
+                message("[Historical Performance] Forecast retrieval skipped: ", err_msg)
                 NULL
             })
 
@@ -8353,10 +8441,11 @@ server <- function(input, output, session) {
             return(p)
 
         }, error = function(e) {
-            message("[Historical Performance] Error: ", e$message)
+            err_msg <- if (!is.null(e$message) && nchar(e$message) > 0) e$message else "Unknown rendering error"
+            message("[Historical Performance] Render error: ", err_msg)
             ggplot2::ggplot() +
                 ggplot2::annotate("text", x = 0.5, y = 0.5,
-                    label = paste("Unable to render chart:\n", e$message),
+                    label = paste("Chart error:\n", substr(err_msg, 1, 50)),
                     size = 4, color = "gray50") +
                 ggplot2::theme_void() +
                 ggplot2::xlim(0, 1) + ggplot2::ylim(0, 1)
