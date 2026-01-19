@@ -6275,7 +6275,7 @@ server <- function(input, output, session) {
                     ),
                     htmltools::tags$p(
                         style = 'margin-top: 8px; margin-bottom: 0; font-style: italic; color: #666;',
-                        htmltools::icon("hand-pointer"), " Click a row to highlight the corresponding forward period on the chart."
+                        shiny::icon("hand-pointer"), " Click a row to highlight the corresponding forward period on the chart."
                     )
                 )
             )
