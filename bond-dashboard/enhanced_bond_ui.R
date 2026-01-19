@@ -1969,7 +1969,7 @@ ui <- dashboardPage(
                                                       tags$span(
                                                           `data-toggle` = "tooltip",
                                                           `data-placement` = "top",
-                                                          title = "Composite score (0-100) combining bid-to-cover, tail, participation, and concession. A=85+, B=70-84, C=55-69, D=40-54, F=<40",
+                                                          title = "Composite score (0-100) combining bid-to-cover (35%), tail (30%), participation (20%), and breadth (15%). A=85+, B=70-84, C=55-69, D=40-54, F=<40",
                                                           style = "cursor: help; opacity: 0.8;",
                                                           icon("info-circle")
                                                       )
@@ -2030,11 +2030,11 @@ ui <- dashboardPage(
                                                            text-align: center; border: 1px solid #dee2e6;",
                                                   tags$div(
                                                       style = "display: flex; align-items: center; justify-content: center; gap: 5px;",
-                                                      tags$p("Avg Concession", class = "text-muted", style = "margin-bottom: 0;"),
+                                                      tags$p("Yield Trend", class = "text-muted", style = "margin-bottom: 0;"),
                                                       tags$span(
                                                           `data-toggle` = "tooltip",
                                                           `data-placement` = "top",
-                                                          title = "Difference between auction clearing yield and pre-auction secondary market yield. Positive = weak demand (discount), Negative = strong demand (premium). Normal range: +/-5 bps.",
+                                                          title = "Average change in clearing yield between consecutive auctions (same bond). Positive = yields rising, Negative = yields falling. Shows market rate direction.",
                                                           style = "cursor: help;",
                                                           icon("info-circle", class = "text-muted")
                                                       )
@@ -2064,7 +2064,7 @@ ui <- dashboardPage(
                                               DT::DTOutput("auction_quality_heatmap_dt", height = "350px")
                                        ),
                                        column(6,
-                                              tags$h5("Auction Concession Trend",
+                                              tags$h5("Auction Demand Trend",
                                                       style = "color: #1B3A6B; font-weight: bold;"),
                                               plotOutput("concession_trend_chart", height = "350px")
                                        )

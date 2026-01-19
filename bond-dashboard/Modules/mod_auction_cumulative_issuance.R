@@ -228,8 +228,9 @@ generate_ytd_issuance_table <- function(data) {
     }
 
     # Define numeric columns that need conversion
+    # NOTE: Removed auction_concession_bps - replaced with calculated yield_trend
     numeric_cols <- c("offer_amount", "bid_to_cover", "auction_quality_score",
-                      "auction_tail_bps", "non_comp_ratio", "auction_concession_bps",
+                      "auction_tail_bps", "non_comp_ratio", "clearing_yield",
                       "number_bids_received")
 
     # Ensure numeric columns are actually numeric BEFORE summarise
@@ -238,9 +239,15 @@ generate_ytd_issuance_table <- function(data) {
                       ~ suppressWarnings(as.numeric(as.character(.x)))))
 
     # Calculate issuance statistics with new quality metrics
+    # NEW: Calculate yield trend (change between consecutive auctions) instead of concession
     issuance_table <- data %>%
         filter(!is.na(offer_amount), offer_amount > 0) %>%
         group_by(bond) %>%
+        arrange(date) %>%
+        mutate(
+            # Calculate clearing yield change from previous auction (same bond)
+            yield_change_bps = (clearing_yield - lag(clearing_yield)) * 100
+        ) %>%
         summarise(
             `# Auctions` = n(),
             `Total (R mil)` = round(sum(offer_amount, na.rm = TRUE) / 1e6, 2),
@@ -253,8 +260,8 @@ generate_ytd_issuance_table <- function(data) {
                 round(mean(auction_tail_bps, na.rm = TRUE), 1) else NA_real_,
             `Non-Comp %` = if ("non_comp_ratio" %in% names(.))
                 round(mean(non_comp_ratio, na.rm = TRUE), 0) else NA_real_,
-            `Concession` = if ("auction_concession_bps" %in% names(.))
-                round(mean(auction_concession_bps, na.rm = TRUE), 1) else NA_real_,
+            # NEW: Yield Trend replaces Concession
+            `Yield Trend` = round(mean(yield_change_bps, na.rm = TRUE), 1),
             `# Bidders` = if ("number_bids_received" %in% names(.))
                 round(mean(number_bids_received, na.rm = TRUE), 0) else NA_real_,
             `First Auction` = format(min(date, na.rm = TRUE), "%Y-%m-%d"),
@@ -276,7 +283,7 @@ generate_ytd_issuance_table <- function(data) {
             `Avg Quality` = round(mean(issuance_table$`Avg Quality`, na.rm = TRUE), 0),
             `Avg Tail` = round(mean(issuance_table$`Avg Tail`, na.rm = TRUE), 1),
             `Non-Comp %` = round(mean(issuance_table$`Non-Comp %`, na.rm = TRUE), 0),
-            `Concession` = round(mean(issuance_table$`Concession`, na.rm = TRUE), 1),
+            `Yield Trend` = round(mean(issuance_table$`Yield Trend`, na.rm = TRUE), 1),
             `# Bidders` = round(mean(issuance_table$`# Bidders`, na.rm = TRUE), 0),
             `First Auction` = "",
             `Last Auction` = "",
@@ -293,7 +300,7 @@ generate_ytd_issuance_table <- function(data) {
             `Avg Quality` = ifelse(is.na(`Avg Quality`), "—", as.character(`Avg Quality`)),
             `Avg Tail` = ifelse(is.na(`Avg Tail`), "—", as.character(`Avg Tail`)),
             `Non-Comp %` = ifelse(is.na(`Non-Comp %`), "—", paste0(`Non-Comp %`, "%")),
-            `Concession` = ifelse(is.na(`Concession`), "—", sprintf("%+.1f", `Concession`)),
+            `Yield Trend` = ifelse(is.na(`Yield Trend`), "—", sprintf("%+.1f bps", `Yield Trend`)),
             `# Bidders` = ifelse(is.na(`# Bidders`), "—", as.character(`# Bidders`))
         )
 

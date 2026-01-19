@@ -3675,21 +3675,19 @@ calculate_enhanced_auction_metrics <- function(auction_data, bond_data = NULL) {
                 50  # Neutral if no data
             },
 
-            concession_score = case_when(
-                is.na(auction_concession_bps) ~ 50,
-                abs(auction_concession_bps) <= 2 ~ 100,  # Close to fair value
-                abs(auction_concession_bps) <= 5 ~ 80,
-                abs(auction_concession_bps) <= 10 ~ 60,
-                TRUE ~ 40
-            ),
+            # NEW: Quality score v2 - removes unreliable concession metric
+            # Redistributed weights focus on self-contained auction metrics only
+            # Bid-to-Cover: Primary demand indicator (35%)
+            # Tail: Pricing efficiency indicator (30%)
+            # Non-Comp: Stable demand base indicator (20%)
+            # Breadth: Market participation indicator (15%)
 
-            # Weighted composite score
+            # Weighted composite score (v2 - without concession)
             auction_quality_score = round(
-                btc_score * 0.30 +
-                    tail_score * 0.20 +
+                btc_score * 0.35 +
+                    tail_score * 0.30 +
                     institutional_score * 0.20 +
-                    breadth_score * 0.15 +
-                    concession_score * 0.15,
+                    breadth_score * 0.15,
                 0
             ),
 

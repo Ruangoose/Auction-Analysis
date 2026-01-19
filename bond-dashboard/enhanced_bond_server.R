@@ -6863,38 +6863,64 @@ server <- function(input, output, session) {
         }
     })
 
-    # KPI: Average Concession
+    # KPI: Average Yield Trend (replaces broken Concession metric)
+    # Shows average change in clearing yield between consecutive auctions (same bond)
     output$avg_concession_text <- renderText({
         req(enhanced_auction_data())
 
-        if ("auction_concession_bps" %in% names(enhanced_auction_data())) {
-            avg_conc <- mean(enhanced_auction_data()$auction_concession_bps, na.rm = TRUE)
-            if (!is.na(avg_conc)) {
-                sprintf("%+.1f bps", avg_conc)
-            } else {
-                "—"
-            }
+        # Calculate yield trend: change in clearing yield between consecutive auctions
+        data <- enhanced_auction_data()
+        if (!"clearing_yield" %in% names(data) || !"bond" %in% names(data)) {
+            return("—")
+        }
+
+        yield_trend <- data %>%
+            dplyr::filter(!is.na(clearing_yield), !is.na(offer_date)) %>%
+            dplyr::group_by(bond) %>%
+            dplyr::arrange(offer_date) %>%
+            dplyr::mutate(
+                yield_change_bps = (clearing_yield - dplyr::lag(clearing_yield)) * 100
+            ) %>%
+            dplyr::ungroup() %>%
+            dplyr::summarise(avg_yield_trend = mean(yield_change_bps, na.rm = TRUE)) %>%
+            dplyr::pull(avg_yield_trend)
+
+        if (!is.na(yield_trend)) {
+            sprintf("%+.0f bps", yield_trend)
         } else {
             "—"
         }
     })
 
-    # KPI: Concession Interpretation
+    # KPI: Yield Trend Interpretation (replaces Concession Interpretation)
     output$concession_interpretation <- renderText({
         req(enhanced_auction_data())
 
-        if ("auction_concession_bps" %in% names(enhanced_auction_data())) {
-            avg_conc <- mean(enhanced_auction_data()$auction_concession_bps, na.rm = TRUE)
-            dplyr::case_when(
-                is.na(avg_conc) ~ "No data",
-                avg_conc <= -5 ~ "Strong demand (below market)",
-                avg_conc <= 2 ~ "Fair pricing",
-                avg_conc <= 8 ~ "Slight premium required",
-                TRUE ~ "Weak demand (premium required)"
-            )
-        } else {
-            "No data"
+        # Calculate yield trend
+        data <- enhanced_auction_data()
+        if (!"clearing_yield" %in% names(data) || !"bond" %in% names(data)) {
+            return("No data")
         }
+
+        yield_trend <- data %>%
+            dplyr::filter(!is.na(clearing_yield), !is.na(offer_date)) %>%
+            dplyr::group_by(bond) %>%
+            dplyr::arrange(offer_date) %>%
+            dplyr::mutate(
+                yield_change_bps = (clearing_yield - dplyr::lag(clearing_yield)) * 100
+            ) %>%
+            dplyr::ungroup() %>%
+            dplyr::summarise(avg_yield_trend = mean(yield_change_bps, na.rm = TRUE)) %>%
+            dplyr::pull(avg_yield_trend)
+
+        dplyr::case_when(
+            is.na(yield_trend) ~ "Insufficient data",
+            yield_trend > 20 ~ "Yields rising sharply",
+            yield_trend > 5 ~ "Yields drifting higher",
+            yield_trend > -5 ~ "Yields stable",
+            yield_trend > -20 ~ "Yields easing",
+            TRUE ~ "Yields falling sharply"
+        )
     })
 
     # Auction Quality Heatmap - OLD ggplot version (kept for download report)
@@ -6918,15 +6944,22 @@ server <- function(input, output, session) {
         # Aggregate by bond - latest 6 months
         six_months_ago <- Sys.Date() - 180
 
+        # NEW: Calculate yield trend (change between consecutive auctions) instead of concession
         bond_quality <- enhanced_auction_data() %>%
             dplyr::filter(offer_date >= six_months_ago, !is.na(bid_to_cover)) %>%
             dplyr::group_by(bond) %>%
+            dplyr::arrange(offer_date) %>%
+            dplyr::mutate(
+                # Calculate clearing yield change from previous auction (same bond)
+                yield_change_bps = (clearing_yield - dplyr::lag(clearing_yield)) * 100
+            ) %>%
             dplyr::summarise(
                 n_auctions = dplyr::n(),
                 avg_btc = mean(bid_to_cover, na.rm = TRUE),
                 avg_tail = if ("auction_tail_bps" %in% names(.)) mean(auction_tail_bps, na.rm = TRUE) else NA_real_,
                 avg_non_comp = if ("non_comp_ratio" %in% names(.)) mean(non_comp_ratio, na.rm = TRUE) else NA_real_,
-                avg_concession = if ("auction_concession_bps" %in% names(.)) mean(auction_concession_bps, na.rm = TRUE) else NA_real_,
+                # NEW: Yield trend replaces concession
+                yield_trend_bps = mean(yield_change_bps, na.rm = TRUE),
                 avg_quality = if ("auction_quality_score" %in% names(.)) mean(auction_quality_score, na.rm = TRUE) else NA_real_,
                 .groups = "drop"
             ) %>%
@@ -6942,13 +6975,14 @@ server <- function(input, output, session) {
         }
 
         # Create display table with formatted values
+        # NEW: Shows Yield Trend instead of Concession
         display_data <- bond_quality %>%
             dplyr::transmute(
                 Bond = bond,
                 `Bid-to-Cover` = sprintf("%.2fx", avg_btc),
                 `Tail (bps)` = ifelse(is.na(avg_tail), "—", sprintf("%.1f", avg_tail)),
                 `Non-Comp %%` = ifelse(is.na(avg_non_comp), "—", sprintf("%.0f%%", avg_non_comp)),
-                `Concession` = ifelse(is.na(avg_concession), "—", sprintf("%+.1f bps", avg_concession)),
+                `Yield Trend` = ifelse(is.na(yield_trend_bps), "—", sprintf("%+.0f bps", yield_trend_bps)),
                 `Quality` = ifelse(is.na(avg_quality), "—", sprintf("%.0f", avg_quality)),
                 is_selected = is_selected
             )
