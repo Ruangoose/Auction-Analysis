@@ -1053,6 +1053,74 @@ load_auction_data <- function(excel_path) {
         result <- result %>%
             dplyr::select(dplyr::all_of(select_cols))
 
+        # ═══════════════════════════════════════════════════════════════════════
+        # CLEARING YIELD VALIDATION AND NORMALIZATION
+        # Fix mixed units issue: some values stored as decimals (0.0185),
+        # others as percentages (11.88). SA govt bonds should be 5-15%.
+        # ═══════════════════════════════════════════════════════════════════════
+        if ("clearing_yield" %in% names(result)) {
+            cy_values <- as.numeric(result$clearing_yield)
+            cy_values <- cy_values[!is.na(cy_values)]
+
+            if (length(cy_values) > 0) {
+                # Count values by type
+                n_looks_decimal <- sum(cy_values < 0.5, na.rm = TRUE)
+                n_looks_percent <- sum(cy_values >= 1 & cy_values <= 20, na.rm = TRUE)
+
+                message(sprintf("    Clearing yield analysis: %d values < 0.5 (decimals), %d values 1-20 (percentages)",
+                                n_looks_decimal, n_looks_percent))
+
+                # Store original for debugging
+                result <- result %>%
+                    dplyr::mutate(clearing_yield_raw = clearing_yield)
+
+                # Normalize: Convert decimals to percentages
+                result <- result %>%
+                    dplyr::mutate(
+                        clearing_yield = dplyr::case_when(
+                            is.na(clearing_yield) ~ NA_real_,
+                            # Values < 0.5 are almost certainly decimals (0.0185 -> 1.85%)
+                            clearing_yield < 0.5 ~ clearing_yield * 100,
+                            # Values 0.5-1.0 are ambiguous but likely decimals in SA context
+                            clearing_yield >= 0.5 & clearing_yield < 1 ~ clearing_yield * 100,
+                            # Values 1-20 are already in percentage form
+                            clearing_yield >= 1 & clearing_yield <= 20 ~ clearing_yield,
+                            # Values > 20 are suspicious but keep as is
+                            TRUE ~ clearing_yield
+                        )
+                    )
+
+                # Validate results and warn if still problematic
+                cy_fixed <- result$clearing_yield[!is.na(result$clearing_yield)]
+                if (length(cy_fixed) > 0) {
+                    n_in_range <- sum(cy_fixed >= 5 & cy_fixed <= 15, na.rm = TRUE)
+                    pct_in_range <- n_in_range / length(cy_fixed) * 100
+
+                    message(sprintf("    After normalization: %.1f%% of clearing yields in expected 5-15%% range",
+                                    pct_in_range))
+
+                    if (pct_in_range < 70) {
+                        message("    ⚠️ WARNING: Many clearing yields still outside expected range - check Excel source data!")
+                    }
+                }
+            }
+        }
+
+        # Apply same normalization to best_bid and worst_bid if present
+        for (yield_col in c("best_bid", "worst_bid")) {
+            if (yield_col %in% names(result)) {
+                result <- result %>%
+                    dplyr::mutate(
+                        !!yield_col := dplyr::case_when(
+                            is.na(.data[[yield_col]]) ~ NA_real_,
+                            .data[[yield_col]] < 0.5 ~ .data[[yield_col]] * 100,
+                            .data[[yield_col]] >= 0.5 & .data[[yield_col]] < 1 ~ .data[[yield_col]] * 100,
+                            TRUE ~ .data[[yield_col]]
+                        )
+                    )
+            }
+        }
+
         message(sprintf("    Loaded %d auction records with %d columns",
                        nrow(result), ncol(result)))
 
