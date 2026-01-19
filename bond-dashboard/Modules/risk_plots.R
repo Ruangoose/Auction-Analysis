@@ -1558,6 +1558,17 @@ generate_dv01_ladder_plot <- function(data, params = list()) {
                 dv01_millions > quantile(dv01_millions, 0.75, na.rm = TRUE) ~ "High",
                 dv01_millions > quantile(dv01_millions, 0.25, na.rm = TRUE) ~ "Medium",
                 TRUE ~ "Low"
+            ),
+
+            # IMPROVED DV01 FORMATTING: More precision for smaller values
+            # >= 0.10m: 2 decimal places (e.g., "R0.10m")
+            # >= 0.01m and < 0.10m: 3 decimal places (e.g., "R0.095m")
+            # < 0.01m: show in thousands (e.g., "R9.5k")
+            dv01_label = case_when(
+                is.na(dv01_millions) ~ "N/A",
+                dv01_millions >= 0.10 ~ sprintf("R%.2fm", dv01_millions),
+                dv01_millions >= 0.01 ~ sprintf("R%.3fm", dv01_millions),
+                TRUE ~ sprintf("R%.1fk", dv01_absolute / 1e3)
             )
         ) %>%
         arrange(dv01_millions)  # Sort ascending so highest at top after coord_flip
@@ -1602,9 +1613,9 @@ generate_dv01_ladder_plot <- function(data, params = list()) {
                        linewidth = 1)
         }} +
 
-        # Value labels on bars (DV01 in Rands)
+        # Value labels on bars (DV01 in Rands) - using adaptive precision
         {if(show_labels) {
-            geom_text(aes(label = sprintf("R%.2fm", dv01_millions)),
+            geom_text(aes(label = dv01_label),
                       hjust = -0.1,
                       size = 3.5,
                       fontface = "bold")
@@ -1619,12 +1630,19 @@ generate_dv01_ladder_plot <- function(data, params = list()) {
                       color = "white")
         }} +
 
-        # Average line annotation
+        # Average line annotation - with adaptive precision
         {if(show_average) {
+            avg_label <- if(avg_dv01 >= 0.10) {
+                sprintf("Avg: R%.2fm", avg_dv01)
+            } else if(avg_dv01 >= 0.01) {
+                sprintf("Avg: R%.3fm", avg_dv01)
+            } else {
+                sprintf("Avg: R%.1fk", avg_dv01 * 1000)
+            }
             annotate("text",
                      x = nrow(dv01_data) + 0.3,
                      y = avg_dv01,
-                     label = sprintf("Avg: R%.2fm", avg_dv01),
+                     label = avg_label,
                      hjust = 0,
                      vjust = -0.5,
                      color = "#E65100",
@@ -1638,8 +1656,16 @@ generate_dv01_ladder_plot <- function(data, params = list()) {
             name = "Duration (years)"
         ) +
 
+        # Adaptive y-axis labels for DV01 precision
         scale_y_continuous(
-            labels = function(x) sprintf("R%.2fm", x),
+            labels = function(x) {
+                sapply(x, function(v) {
+                    if(is.na(v)) return("")
+                    if(v >= 0.10) sprintf("R%.2fm", v)
+                    else if(v >= 0.01) sprintf("R%.3fm", v)
+                    else sprintf("R%.1fk", v * 1000)
+                })
+            },
             expand = expansion(mult = c(0, 0.15)),
             breaks = pretty_breaks(n = 6)
         ) +
