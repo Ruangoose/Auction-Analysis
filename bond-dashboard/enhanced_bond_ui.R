@@ -199,6 +199,54 @@ ui <- dashboardPage(
         .butterfly-summary-card:hover {
           box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
+
+        /* ════════════════════════════════════════════════════════════════════════
+           Regime Analysis Tab Styles
+           ════════════════════════════════════════════════════════════════════════ */
+
+        /* Scrollable right panel for regime metrics */
+        .regime-panel-scroll {
+          max-height: 500px;
+          overflow-y: auto;
+          overflow-x: hidden;
+        }
+
+        .regime-panel-scroll::-webkit-scrollbar {
+          width: 6px;
+        }
+
+        .regime-panel-scroll::-webkit-scrollbar-track {
+          background: #f1f1f1;
+          border-radius: 3px;
+        }
+
+        .regime-panel-scroll::-webkit-scrollbar-thumb {
+          background: #c1c1c1;
+          border-radius: 3px;
+        }
+
+        .regime-panel-scroll::-webkit-scrollbar-thumb:hover {
+          background: #a1a1a1;
+        }
+
+        /* Remove extra padding from chart containers */
+        .chart-container .shiny-plot-output {
+          margin-bottom: 0 !important;
+        }
+
+        /* Compact section headers */
+        .regime-section-header {
+          color: #1B3A6B;
+          font-weight: 600;
+          font-size: 13px;
+          margin-bottom: 10px;
+          margin-top: 0;
+        }
+
+        /* Reduce vertical spacing in regime summary */
+        .regime-panel-scroll hr {
+          margin: 12px 0;
+        }
       ")))
         ),
 
@@ -2552,23 +2600,34 @@ ui <- dashboardPage(
                                    solidHeader = TRUE,
                                    width = 12,
                                    fluidRow(
+                                       # LEFT COLUMN: Main Chart (8 units width)
                                        column(8,
-                                              plotOutput("regime_analysis_plot", height = "450px"),
-                                              # ADD THE DOWNLOAD BUTTON HERE
-                                              tags$div(
-                                                  style = "margin-top: 15px;",
-                                                  downloadButton("download_regime_analysis", "Download Chart",
-                                                                 class = "btn-sm btn-primary")
+                                              style = "padding-right: 10px;",
+                                              div(
+                                                  class = "chart-container",
+                                                  style = "background: white; border-radius: 8px; padding: 10px;",
+                                                  plotOutput("regime_analysis_plot", height = "420px"),
+                                                  # Download button directly below chart
+                                                  tags$div(
+                                                      style = "margin-top: 10px;",
+                                                      downloadButton("download_regime_analysis", "Download Chart",
+                                                                     class = "btn-sm btn-primary")
+                                                  )
                                               )
                                        ),
+                                       # RIGHT COLUMN: Metrics Panel (4 units width)
                                        column(4,
+                                              style = "padding-left: 10px;",
+                                              # Scrollable container for right panel
                                               tags$div(
-                                                  style = "background: #f8f9fa; border-radius: 8px; padding: 15px;",
-                                                  h5("Current Regime", style = "color: #1B3A6B;"),
+                                                  class = "regime-panel-scroll",
+                                                  style = "background: #f8f9fa; border-radius: 8px; padding: 15px; max-height: 500px; overflow-y: auto;",
+                                                  h6("Current Regime", style = "color: #1B3A6B; margin-bottom: 10px; font-weight: 600;"),
                                                   uiOutput("regime_summary"),
-                                                  hr(),
-                                                  h5("Regime Probabilities", style = "color: #1B3A6B;"),
-                                                  plotOutput("regime_probability_gauge", height = "200px")
+                                                  hr(style = "margin: 15px 0;"),
+                                                  h6("Regime Probabilities", style = "color: #1B3A6B; margin-bottom: 10px; font-weight: 600;"),
+                                                  # Use smaller fixed height for probability plot
+                                                  plotOutput("regime_probability_gauge", height = "150px")
                                               )
                                        )
                                    )

@@ -1803,7 +1803,7 @@ detect_market_regime <- function(data) {
         }
 
         # ══════════════════════════════════════════════════════════════════════════
-        # PHASE 2: CALCULATE DAILY MARKET METRICS (cross-sectional)
+        # PHASE 2: CALCULATE DAILY MARKET METRICS (IMPROVED AUCTION HANDLING)
         # ══════════════════════════════════════════════════════════════════════════
 
         market_metrics <- data %>%
@@ -1811,7 +1811,14 @@ detect_market_regime <- function(data) {
             summarise(
                 avg_yield = mean(yield_to_maturity, na.rm = TRUE),
                 yield_dispersion = sd(yield_to_maturity, na.rm = TRUE),
-                avg_bid_cover = mean(bid_to_cover, na.rm = TRUE),
+
+                # Auction metrics - calculate daily average if any auctions occurred
+                # Keep as NA on non-auction days for forward-filling later
+                daily_bid_cover = if(any(!is.na(bid_to_cover))) {
+                    mean(bid_to_cover, na.rm = TRUE)
+                } else {
+                    NA_real_
+                },
 
                 # Curve slope: long-end minus short-end yields
                 curve_slope = mean(yield_to_maturity[modified_duration > 10], na.rm = TRUE) -
@@ -1825,7 +1832,18 @@ detect_market_regime <- function(data) {
 
                 .groups = "drop"
             ) %>%
-            arrange(date)
+            arrange(date) %>%
+            mutate(
+                # FORWARD-FILL bid-to-cover: carry last known value forward
+                # This eliminates discontinuities on non-auction days
+                avg_bid_cover = zoo::na.locf(daily_bid_cover, na.rm = FALSE),
+                # Fill any leading NAs with median of available data
+                avg_bid_cover = ifelse(
+                    is.na(avg_bid_cover),
+                    median(daily_bid_cover, na.rm = TRUE),
+                    avg_bid_cover
+                )
+            )
 
         # ══════════════════════════════════════════════════════════════════════════
         # PHASE 3: CALCULATE ROBUST VOLATILITY (20-day and 60-day)
@@ -1951,7 +1969,7 @@ detect_market_regime <- function(data) {
             )
 
         # ══════════════════════════════════════════════════════════════════════════
-        # PHASE 5: CALCULATE STRESS COMPONENTS (with enhanced weighting)
+        # PHASE 5A: CALCULATE RAW STRESS COMPONENTS
         # ══════════════════════════════════════════════════════════════════════════
 
         market_metrics <- market_metrics %>%
@@ -1980,19 +1998,63 @@ detect_market_regime <- function(data) {
                     abs(stress_volatility_raw) > 2,
                     stress_volatility_raw * (1 + 0.5 * (abs(stress_volatility_raw) - 2)),
                     stress_volatility_raw
-                ),
-
-                # ═══════════════════════════════════════════════════════════════════
-                # IMPROVED STRESS SCORE: Volatility now 50% (was 30%)
-                # ═══════════════════════════════════════════════════════════════════
-                stress_score = (
-                    stress_volatility * 0.50 +      # ↑ Increased from 0.30
-                        stress_dispersion_raw * 0.20 +  # Unchanged
-                        stress_momentum_raw * 0.15 +    # ↓ Decreased from 0.20
-                        stress_bid_cover_raw * 0.10 +   # ↓ Decreased from 0.15
-                        stress_curve_raw * 0.05         # ↓ Decreased from 0.15
                 )
             )
+
+        # ══════════════════════════════════════════════════════════════════════════
+        # PHASE 5B: SMOOTH STRESS COMPONENTS (reduces jagged line)
+        # ══════════════════════════════════════════════════════════════════════════
+
+        # Apply 5-day EMA smoothing to reduce noise in stress components
+        smooth_window <- 5
+
+        market_metrics <- market_metrics %>%
+            arrange(date) %>%
+            mutate(
+                # Smooth each component with exponential moving average
+                stress_volatility_smooth = TTR::EMA(stress_volatility, n = smooth_window),
+                stress_dispersion_smooth = TTR::EMA(stress_dispersion_raw, n = smooth_window),
+                stress_momentum_smooth = TTR::EMA(stress_momentum_raw, n = smooth_window),
+                stress_bid_cover_smooth = TTR::EMA(stress_bid_cover_raw, n = smooth_window),
+                stress_curve_smooth = TTR::EMA(stress_curve_raw, n = smooth_window),
+
+                # Handle NAs from EMA initialization (first few rows)
+                stress_volatility_smooth = ifelse(is.na(stress_volatility_smooth),
+                                                  stress_volatility, stress_volatility_smooth),
+                stress_dispersion_smooth = ifelse(is.na(stress_dispersion_smooth),
+                                                  stress_dispersion_raw, stress_dispersion_smooth),
+                stress_momentum_smooth = ifelse(is.na(stress_momentum_smooth),
+                                                stress_momentum_raw, stress_momentum_smooth),
+                stress_bid_cover_smooth = ifelse(is.na(stress_bid_cover_smooth),
+                                                 stress_bid_cover_raw, stress_bid_cover_smooth),
+                stress_curve_smooth = ifelse(is.na(stress_curve_smooth),
+                                             stress_curve_raw, stress_curve_smooth)
+            )
+
+        # ══════════════════════════════════════════════════════════════════════════
+        # PHASE 5C: CALCULATE SMOOTHED COMPOSITE STRESS SCORE
+        # ══════════════════════════════════════════════════════════════════════════
+
+        market_metrics <- market_metrics %>%
+            mutate(
+                # Composite stress score from SMOOTHED components
+                stress_score_raw = (
+                    stress_volatility_smooth * 0.50 +
+                    stress_dispersion_smooth * 0.20 +
+                    stress_momentum_smooth * 0.15 +
+                    stress_bid_cover_smooth * 0.10 +
+                    stress_curve_smooth * 0.05
+                ),
+
+                # Apply final smoothing pass to composite (3-day EMA for extra smoothness)
+                stress_score = TTR::EMA(stress_score_raw, n = 3),
+                stress_score = ifelse(is.na(stress_score), stress_score_raw, stress_score)
+            )
+
+        # Diagnostic message for stress score range
+        message(sprintf("Stress score range: %.2f to %.2f",
+                        min(market_metrics$stress_score, na.rm = TRUE),
+                        max(market_metrics$stress_score, na.rm = TRUE)))
 
         # ══════════════════════════════════════════════════════════════════════════
         # PHASE 6: REGIME CLASSIFICATION (with balanced thresholds)

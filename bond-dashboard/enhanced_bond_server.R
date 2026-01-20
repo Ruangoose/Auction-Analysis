@@ -9378,8 +9378,10 @@ server <- function(input, output, session) {
         }
 
         # Calculate regime statistics for last 30 days
+        # FIX: Use max date in data instead of today() to handle historical data properly
+        max_data_date <- max(regime_data()$date, na.rm = TRUE)
         last_30_data <- regime_data() %>%
-            filter(date >= lubridate::today() - lubridate::days(30))
+            filter(date >= max_data_date - 30)
 
         total_days <- nrow(last_30_data)
 
@@ -9529,7 +9531,7 @@ server <- function(input, output, session) {
         req(regime_data())
         p <- generate_regime_probability_gauge(regime_data(), list())
         if(!is.null(p)) print(p)
-    }, height = 250)
+    }, height = 150)
 
 
 
