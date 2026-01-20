@@ -4593,25 +4593,29 @@ server <- function(input, output, session) {
             )
         }
 
-        # Determine colors based on values (contextual coloring)
+        # Color logic:
+        # - Yields FALLING (negative change) = GREEN (bullish for bond holders)
+        # - Yields RISING (positive change) = RED (bearish)
+        # - Curve STEEP (>200bps) = GREEN (normal/healthy)
+        # - Curve FLAT (<100bps) = RED (potential inversion warning)
         change_color <- if (is.na(metrics$yield_change_1m)) {
             "yellow"
-        } else if (metrics$yield_change_1m > 10) {
-            "red"      # Yields rising significantly (bearish)
-        } else if (metrics$yield_change_1m < -10) {
-            "green"    # Yields falling significantly (bullish)
+        } else if (metrics$yield_change_1m < -5) {
+            "green"    # Yields falling = bullish
+        } else if (metrics$yield_change_1m > 5) {
+            "red"      # Yields rising = bearish
         } else {
             "yellow"   # Modest change
         }
 
         slope_color <- if (is.na(metrics$curve_slope)) {
             "blue"
-        } else if (metrics$curve_slope > 250) {
-            "green"    # Very steep (normal/healthy)
+        } else if (metrics$curve_slope > 200) {
+            "green"    # Steep = healthy
         } else if (metrics$curve_slope < 100) {
-            "red"      # Flat/inverted (warning)
+            "red"      # Flat/inverted = warning
         } else {
-            "blue"     # Normal
+            "yellow"   # Normal
         }
 
         # Determine icon for yield change
@@ -4657,10 +4661,10 @@ server <- function(input, output, session) {
         )
     })
 
-    # Yield Percentile Heatmap
+    # Yield Percentile Heatmap - Use FULL data for meaningful percentile calculations
     output$yield_percentile_heatmap <- renderPlot({
-        req(filtered_data())
-        p <- generate_yield_percentile_heatmap(filtered_data(), list())
+        req(bond_data())  # Use full historical data, not filtered date range
+        p <- generate_yield_percentile_heatmap(bond_data(), list())
         if (!is.null(p)) {
             print(p)
         } else {
