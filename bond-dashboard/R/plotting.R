@@ -598,6 +598,30 @@ create_btc_evolution_plot <- function(df, add_events = TRUE) {
         ) %>%
         ungroup()
 
+    # Dynamic date axis formatting based on time range
+    date_range <- range(btc_data$date, na.rm = TRUE)
+    date_span_days <- as.numeric(difftime(date_range[2], date_range[1], units = "days"))
+
+    if (date_span_days <= 90) {
+        date_breaks <- "1 week"
+        date_labels <- "%b %d"
+    } else if (date_span_days <= 365) {
+        date_breaks <- "1 month"
+        date_labels <- "%b %y"
+    } else if (date_span_days <= 730) {
+        date_breaks <- "2 months"
+        date_labels <- "%b %y"
+    } else if (date_span_days <= 1095) {
+        date_breaks <- "3 months"
+        date_labels <- "%b %y"
+    } else if (date_span_days <= 1825) {
+        date_breaks <- "6 months"
+        date_labels <- "%b %y"
+    } else {
+        date_breaks <- "1 year"
+        date_labels <- "%Y"
+    }
+
     # Create plot
     p <- ggplot(btc_data, aes(x = date)) +
         # Add stress periods (btc < 2)
@@ -645,7 +669,7 @@ create_btc_evolution_plot <- function(df, add_events = TRUE) {
             "Long (10-15y)" = insele_colors$orange,
             "Ultra-Long (>15y)" = insele_colors$red
         ), name = "Maturity\nBucket") +
-        scale_x_date(date_breaks = "1 month", date_labels = "%b %y") +
+        scale_x_date(date_breaks = date_breaks, date_labels = date_labels) +
 
         labs(
             title = "Bid-to-Cover Evolution by Maturity Bucket",

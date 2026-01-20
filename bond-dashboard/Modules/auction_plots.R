@@ -753,6 +753,30 @@ generate_auction_forecast_plot <- function(data, selected_bonds) {
         return(NULL)
     }
 
+    # Dynamic date axis formatting based on time range
+    date_range <- range(forecast_data$date, na.rm = TRUE)
+    date_span_days <- as.numeric(difftime(date_range[2], date_range[1], units = "days"))
+
+    if (date_span_days <= 90) {
+        date_breaks <- "1 week"
+        date_labels <- "%b %d"
+    } else if (date_span_days <= 365) {
+        date_breaks <- "1 month"
+        date_labels <- "%b\n%Y"
+    } else if (date_span_days <= 730) {
+        date_breaks <- "2 months"
+        date_labels <- "%b\n%Y"
+    } else if (date_span_days <= 1095) {
+        date_breaks <- "3 months"
+        date_labels <- "%b\n%Y"
+    } else if (date_span_days <= 1825) {
+        date_breaks <- "6 months"
+        date_labels <- "%b\n%Y"
+    } else {
+        date_breaks <- "1 year"
+        date_labels <- "%Y"
+    }
+
     p <- ggplot(forecast_data, aes(x = date)) +
 
         # 95% CI
@@ -789,7 +813,7 @@ generate_auction_forecast_plot <- function(data, selected_bonds) {
         scale_color_manual(values = insele_palette$categorical) +
         scale_fill_manual(values = insele_palette$categorical, guide = "none") +
 
-        scale_x_date(date_breaks = "1 month", date_labels = "%b\n%Y") +
+        scale_x_date(date_breaks = date_breaks, date_labels = date_labels) +
 
         labs(
             title = "Bid-to-Cover Forecast",
