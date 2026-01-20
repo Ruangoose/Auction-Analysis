@@ -1247,20 +1247,59 @@ generate_enhanced_correlation_plot <- function(data, params) {
         arrange(avg_duration) %>%
         pull(bond)
 
-    cor_melted$bond1 <- factor(cor_melted$bond1, levels = bond_order)
-    cor_melted$bond2 <- factor(cor_melted$bond2, levels = bond_order)
+    # ENHANCED: Add flags for low correlations and format labels
+    cor_melted <- cor_melted %>%
+        mutate(
+            bond1 = factor(bond1, levels = bond_order),
+            bond2 = factor(bond2, levels = bond_order),
+            # Flag low correlations for highlighting (useful for diversification analysis)
+            low_corr = abs(correlation) < 0.7,
+            # Format correlation for display
+            corr_label = sprintf("%.2f", correlation)
+        )
+
+    # ENHANCED: Dynamic text sizing based on number of bonds
+    # With 17 bonds, fixed size=3 is too small; adapt based on matrix size
+    n_bonds <- length(bond_order)
+    text_size <- if(n_bonds > 15) {
+        2.2   # Many bonds: smaller text to fit
+    } else if(n_bonds > 10) {
+        2.8   # Medium number: moderate text
+    } else {
+        3.2   # Few bonds: larger text
+    }
+
+    # Dynamic axis text size
+    axis_text_size <- if(n_bonds > 15) {
+        8
+    } else if(n_bonds > 10) {
+        9
+    } else {
+        10
+    }
 
     p <- ggplot(cor_melted, aes(x = bond1, y = bond2, fill = correlation)) +
 
-        # Heatmap tiles
-        geom_tile(color = "white", size = 0.5) +
+        # Heatmap tiles with thin white borders
+        geom_tile(color = "white", linewidth = 0.3) +
 
-        # Correlation values
-        geom_text(aes(label = sprintf("%.2f", correlation)),
-                  color = ifelse(abs(cor_melted$correlation) > 0.5, "white", "black"),
-                  size = 3) +
+        # ENHANCED: Correlation values with dynamic styling
+        # - Low correlations (<0.7) are bold to highlight diversification opportunities
+        # - Text color adapts to background for readability
+        geom_text(
+            aes(
+                label = corr_label,
+                fontface = ifelse(low_corr, "bold", "plain")
+            ),
+            color = ifelse(
+                abs(cor_melted$correlation) > 0.5,
+                "white",
+                "black"
+            ),
+            size = text_size
+        ) +
 
-        # Advanced color scale
+        # Advanced color scale using Insele branding
         scale_fill_gradient2(
             low = insele_palette$danger,
             mid = "white",
@@ -1270,39 +1309,43 @@ generate_enhanced_correlation_plot <- function(data, params) {
             breaks = c(-1, -0.5, 0, 0.5, 1),
             name = "Correlation",
             guide = guide_colorbar(
-                barwidth = 20,
-                barheight = 0.5,
+                barwidth = unit(2, "cm"),
+                barheight = unit(0.3, "cm"),
                 title.position = "top",
                 title.hjust = 0.5
             )
         ) +
-
-        # Add clustering dendrogram lines (visual enhancement)
-        annotate("segment", x = 0.5, xend = length(bond_order) + 0.5,
-                 y = 0.5, yend = 0.5, color = insele_palette$dark_gray, size = 0.5) +
-        annotate("segment", x = 0.5, xend = 0.5,
-                 y = 0.5, yend = length(bond_order) + 0.5, color = insele_palette$dark_gray, size = 0.5) +
 
         scale_x_discrete(expand = c(0, 0)) +
         scale_y_discrete(expand = c(0, 0)) +
 
         labs(
             title = "Cross-Asset Correlation Matrix",
-            subtitle = paste("Based on", nrow(data), "observations | Ordered by duration"),
-            x = "",
-            y = "",
-            caption = paste("Date range:", min(data$date), "to", max(data$date))
+            subtitle = paste0("Based on ", format(nrow(data), big.mark = ","),
+                              " observations | Ordered by duration | Bold = low correlation (<0.7)"),
+            x = NULL,
+            y = NULL,
+            caption = paste0("Date range: ", format(min(data$date), "%Y-%m-%d"),
+                             " to ", format(max(data$date), "%Y-%m-%d"),
+                             " | Based on yield changes (not levels)")
         ) +
 
         create_insele_theme() +
         theme(
-            axis.text.x = element_text(angle = 45, hjust = 1),
-            axis.text.y = element_text(hjust = 1),
-            panel.border = element_rect(fill = NA, color = insele_palette$dark_gray, size = 1),
+            axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = axis_text_size),
+            axis.text.y = element_text(hjust = 1, size = axis_text_size),
+            panel.border = element_rect(fill = NA, color = insele_palette$dark_gray, linewidth = 1),
             legend.position = "bottom",
+            legend.key.width = unit(2, "cm"),
+            legend.key.height = unit(0.3, "cm"),
             plot.title = element_text(hjust = 0.5),
-            plot.subtitle = element_text(hjust = 0.5)
-        )
+            plot.subtitle = element_text(hjust = 0.5, size = 9),
+            plot.margin = margin(10, 10, 10, 10),
+            panel.grid = element_blank()
+        ) +
+
+        # ENHANCED: Square tiles for proper matrix appearance
+        coord_fixed()
 
     return(p)
 }
@@ -1314,12 +1357,13 @@ generate_term_structure_3d_plot <- function(data, params) {
     data <- ensure_date_columns(data)
 
     # Create term structure evolution data
+    # FIXED: Extended upper bound to Inf to capture ultra-long bonds (R2048, R2053 with 20+ years)
     term_evolution <- data %>%
         mutate(
             date_group = floor_date(date, "week"),
             duration_bucket = cut(modified_duration,
-                                  breaks = c(0, 3, 5, 7, 10, 15, 20),
-                                  labels = c("0-3y", "3-5y", "5-7y", "7-10y", "10-15y", "15y+"),
+                                  breaks = c(0, 3, 5, 7, 10, 15, 20, Inf),
+                                  labels = c("0-3y", "3-5y", "5-7y", "7-10y", "10-15y", "15-20y", "20y+"),
                                   include.lowest = TRUE)
         ) %>%
         filter(!is.na(duration_bucket)) %>%
@@ -1333,14 +1377,36 @@ generate_term_structure_3d_plot <- function(data, params) {
         return(NULL)
     }
 
+    # CRITICAL FIX: Calculate adaptive date breaks to prevent label corruption
+    # When date range is large (e.g., 5+ years), too many monthly labels causes
+    # garbled overlapping text like "JgPMMAtAtyiuA.SeONDebrPM..."
+    date_range_days <- as.numeric(difftime(
+        max(term_evolution$date_group, na.rm = TRUE),
+        min(term_evolution$date_group, na.rm = TRUE),
+        units = "days"
+    ))
+
+    # Adaptive breaks based on date range
+    date_breaks <- if(date_range_days > 1825) {
+        "6 months"   # > 5 years: semi-annual labels
+    } else if(date_range_days > 730) {
+        "3 months"   # > 2 years: quarterly labels
+    } else if(date_range_days > 365) {
+        "2 months"   # > 1 year: bi-monthly labels
+    } else if(date_range_days > 180) {
+        "1 month"    # > 6 months: monthly labels
+    } else {
+        "2 weeks"    # < 6 months: bi-weekly labels
+    }
+
     # Create the heatmap
     p <- ggplot(term_evolution, aes(x = date_group, y = duration_bucket, fill = avg_yield)) +
 
         # Heatmap tiles
-        geom_tile(color = "white", size = 0.2) +
+        geom_tile(color = "white", linewidth = 0.2) +
 
         # Add contour lines for better visualization
-        geom_contour(aes(z = avg_yield), color = "white", alpha = 0.3, size = 0.5) +
+        geom_contour(aes(z = avg_yield), color = "white", alpha = 0.3, linewidth = 0.5) +
 
         # Color scale
         scale_fill_viridis_c(
@@ -1354,11 +1420,11 @@ generate_term_structure_3d_plot <- function(data, params) {
             )
         ) +
 
-        # Date formatting
+        # CRITICAL FIX: Adaptive date breaks to prevent label corruption
         scale_x_date(
-            date_breaks = "1 month",
+            date_breaks = date_breaks,
             date_labels = "%b\n%Y",
-            expand = c(0, 0)
+            expand = expansion(mult = c(0.01, 0.01))
         ) +
 
         scale_y_discrete(expand = c(0, 0)) +
@@ -1373,7 +1439,7 @@ generate_term_structure_3d_plot <- function(data, params) {
 
         create_insele_theme() +
         theme(
-            axis.text.x = element_text(angle = 0, hjust = 0.5),
+            axis.text.x = element_text(angle = 0, hjust = 0.5, size = 8),
             panel.border = element_rect(fill = NA, color = insele_palette$dark_gray, size = 1),
             legend.position = "bottom",
             plot.title = element_text(hjust = 0.5),
