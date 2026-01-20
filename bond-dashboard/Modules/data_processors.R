@@ -2002,42 +2002,33 @@ detect_market_regime <- function(data) {
             )
 
         # ══════════════════════════════════════════════════════════════════════════
-        # PHASE 5B: SMOOTH STRESS COMPONENTS (reduces jagged line)
+        # PHASE 5B: SMOOTH STRESS COMPONENTS (AGGRESSIVE SMOOTHING)
         # ══════════════════════════════════════════════════════════════════════════
 
-        # Apply 5-day EMA smoothing to reduce noise in stress components
-        smooth_window <- 5
+        # Use 7-day EMA for component smoothing (was 5, increase for smoother output)
+        smooth_window <- 7
 
         market_metrics <- market_metrics %>%
             arrange(date) %>%
             mutate(
-                # Smooth each component with exponential moving average
+                # Smooth each stress component with EMA
                 stress_volatility_smooth = TTR::EMA(stress_volatility, n = smooth_window),
                 stress_dispersion_smooth = TTR::EMA(stress_dispersion_raw, n = smooth_window),
                 stress_momentum_smooth = TTR::EMA(stress_momentum_raw, n = smooth_window),
                 stress_bid_cover_smooth = TTR::EMA(stress_bid_cover_raw, n = smooth_window),
                 stress_curve_smooth = TTR::EMA(stress_curve_raw, n = smooth_window),
 
-                # Handle NAs from EMA initialization (first few rows)
-                stress_volatility_smooth = ifelse(is.na(stress_volatility_smooth),
-                                                  stress_volatility, stress_volatility_smooth),
-                stress_dispersion_smooth = ifelse(is.na(stress_dispersion_smooth),
-                                                  stress_dispersion_raw, stress_dispersion_smooth),
-                stress_momentum_smooth = ifelse(is.na(stress_momentum_smooth),
-                                                stress_momentum_raw, stress_momentum_smooth),
-                stress_bid_cover_smooth = ifelse(is.na(stress_bid_cover_smooth),
-                                                 stress_bid_cover_raw, stress_bid_cover_smooth),
-                stress_curve_smooth = ifelse(is.na(stress_curve_smooth),
-                                             stress_curve_raw, stress_curve_smooth)
+                # Handle NAs from EMA initialization
+                across(ends_with("_smooth"), ~ifelse(is.na(.), 0, .))
             )
 
         # ══════════════════════════════════════════════════════════════════════════
-        # PHASE 5C: CALCULATE SMOOTHED COMPOSITE STRESS SCORE
+        # PHASE 5C: CALCULATE COMPOSITE STRESS SCORE WITH DOUBLE SMOOTHING
         # ══════════════════════════════════════════════════════════════════════════
 
         market_metrics <- market_metrics %>%
             mutate(
-                # Composite stress score from SMOOTHED components
+                # Composite from smoothed components
                 stress_score_raw = (
                     stress_volatility_smooth * 0.50 +
                     stress_dispersion_smooth * 0.20 +
@@ -2046,15 +2037,17 @@ detect_market_regime <- function(data) {
                     stress_curve_smooth * 0.05
                 ),
 
-                # Apply final smoothing pass to composite (3-day EMA for extra smoothness)
-                stress_score = TTR::EMA(stress_score_raw, n = 3),
+                # DOUBLE SMOOTHING: Apply 5-day EMA to the composite (was 3)
+                stress_score = TTR::EMA(stress_score_raw, n = 5),
                 stress_score = ifelse(is.na(stress_score), stress_score_raw, stress_score)
             )
 
-        # Diagnostic message for stress score range
-        message(sprintf("Stress score range: %.2f to %.2f",
+        # Diagnostic: Check stress score characteristics
+        message(sprintf("Stress score - Range: [%.2f, %.2f] | SD: %.3f | NA count: %d",
                         min(market_metrics$stress_score, na.rm = TRUE),
-                        max(market_metrics$stress_score, na.rm = TRUE)))
+                        max(market_metrics$stress_score, na.rm = TRUE),
+                        sd(market_metrics$stress_score, na.rm = TRUE),
+                        sum(is.na(market_metrics$stress_score))))
 
         # ══════════════════════════════════════════════════════════════════════════
         # PHASE 6: REGIME CLASSIFICATION (with balanced thresholds)

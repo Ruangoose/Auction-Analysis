@@ -9531,7 +9531,7 @@ server <- function(input, output, session) {
         req(regime_data())
         p <- generate_regime_probability_gauge(regime_data(), list())
         if(!is.null(p)) print(p)
-    }, height = 150)
+    }, height = 160)  # Match UI height for proper rendering
 
 
 

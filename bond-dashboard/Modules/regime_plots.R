@@ -6,28 +6,25 @@ generate_regime_analysis_plot <- function(data, params) {
 
     regime_df <- data
 
-    # Calculate dynamic y-axis range based on volatility data
-    # vol_20d is in decimal form (e.g., 0.015 = 1.5%), multiply by 100 for display
-    vol_range <- range(regime_df$vol_20d * 100, na.rm = TRUE)
-    y_min <- max(0, floor(vol_range[1] * 0.9))  # Slightly below min
-    y_max <- ceiling(vol_range[2] * 1.2)        # Give some headroom
-
     # ══════════════════════════════════════════════════════════════════════════
-    # FIX: Proper scaling for stress score to fit within volatility range
-    # Stress score typically ranges from -2 to +2
-    # We map this to the volatility y-axis range properly
+    # FIXED: Proper dual-axis scaling
     # ══════════════════════════════════════════════════════════════════════════
 
-    # Get the actual stress score range
-    stress_range <- range(regime_df$stress_score, na.rm = TRUE)
-    stress_min <- min(-2, stress_range[1])
-    stress_max <- max(2, stress_range[2])
-    stress_span <- stress_max - stress_min  # Total span of stress values
+    # Get volatility range (multiply by 100 since stored as decimal)
+    vol_values <- regime_df$vol_20d * 100
+    vol_min <- 0
+    vol_max <- max(vol_values, na.rm = TRUE) * 1.15  # 15% headroom
 
-    # Scaling factors: map stress_score range to middle portion of volatility range
-    # We want stress=0 at the middle of the volatility range
-    stress_scale <- (y_max - y_min) / stress_span  # Scale factor
-    stress_offset <- (y_min + y_max) / 2           # Center point (where stress=0 maps)
+    # Fixed stress score display range: always -2.5 to +2.5
+    stress_display_min <- -2.5
+    stress_display_max <- 2.5
+    stress_display_span <- stress_display_max - stress_display_min  # = 5
+
+    # Scaling: map stress range [-2.5, 2.5] to volatility range [0, vol_max]
+    # Formula: y_vol = (stress - stress_min) * (vol_range / stress_range)
+    # Simplified: y_vol = (stress + 2.5) * (vol_max / 5)
+    stress_to_vol_scale <- vol_max / stress_display_span
+    stress_to_vol_offset <- stress_display_min  # = -2.5
 
     # Create regime visualization with fixed date handling
     p <- ggplot(regime_df, aes(x = date)) +
@@ -44,15 +41,14 @@ generate_regime_analysis_plot <- function(data, params) {
                   color = insele_palette$primary,
                   linewidth = 1.2, na.rm = TRUE) +
 
-        # Stress score line (transformed to fit volatility scale)
-        # Transform: y = (stress_score * stress_scale) + stress_offset
-        geom_line(aes(y = (stress_score * stress_scale) + stress_offset),
+        # Stress score line: transform from stress space to volatility y-axis space
+        geom_line(aes(y = (stress_score - stress_to_vol_offset) * stress_to_vol_scale),
                   color = insele_palette$danger,
                   linewidth = 0.9,
                   linetype = "dashed", na.rm = TRUE) +
 
-        # Add zero-line reference for stress score
-        geom_hline(yintercept = stress_offset,
+        # Zero-line for stress score (stress=0 maps to specific y value)
+        geom_hline(yintercept = (0 - stress_to_vol_offset) * stress_to_vol_scale,
                    linetype = "dotted",
                    color = insele_palette$danger,
                    alpha = 0.5) +
@@ -74,11 +70,12 @@ generate_regime_analysis_plot <- function(data, params) {
         scale_y_continuous(
             name = "Yield Volatility (% p.a.)",
             labels = function(x) paste0(sprintf("%.1f", x), "%"),
-            limits = c(y_min, y_max),
-            expand = expansion(mult = c(0.02, 0.02)),
+            limits = c(0, vol_max),
+            expand = expansion(mult = c(0, 0.02)),
             sec.axis = sec_axis(
-                # Inverse transform: stress = (y - offset) / scale
-                trans = ~ (. - stress_offset) / stress_scale,
+                # Inverse transform: y_vol -> stress
+                # stress = y_vol / scale + offset = y_vol / (vol_max/5) + (-2.5)
+                trans = ~ . / stress_to_vol_scale + stress_to_vol_offset,
                 name = "Stress Score",
                 breaks = c(-2, -1, 0, 1, 2),
                 labels = c("-2", "-1", "0", "+1", "+2")
