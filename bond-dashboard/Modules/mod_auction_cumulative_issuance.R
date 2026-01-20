@@ -205,11 +205,14 @@ generate_ytd_bond_issuance_chart <- function(data, params = list()) {
 }
 
 #' @title Generate Cumulative Issuance Data Table
-#' @description Creates a formatted data table with cumulative issuance statistics for the selected date range
+#' @description Creates a formatted data table with cumulative issuance statistics for the selected date range.
+#'              First/Last Auction columns show HISTORICAL dates (from full_data), independent of the date filter.
 #' @param data Filtered bond auction data (respects date range from analysis parameters)
+#' @param full_data Optional: Full unfiltered bond auction data for calculating historical first/last auction dates.
+#'                  If NULL, falls back to using 'data' for these dates.
 #' @return Data frame for display
 #' @export
-generate_ytd_issuance_table <- function(data) {
+generate_ytd_issuance_table <- function(data, full_data = NULL) {
     # Ensure date columns are Date objects
     data <- ensure_date_columns(data)
 
@@ -228,7 +231,6 @@ generate_ytd_issuance_table <- function(data) {
     }
 
     # Define numeric columns that need conversion
-    # Using available columns: offer_amount, allocation, bids/bids_received, bid_to_cover, yield_to_maturity
     numeric_cols <- c("offer_amount", "allocation", "bids", "bids_received",
                       "bid_to_cover", "yield_to_maturity")
 
@@ -242,8 +244,52 @@ generate_ytd_issuance_table <- function(data) {
         data <- data %>% mutate(bids = bids_received)
     }
 
+    # ============================================================
+    # STEP 1: Calculate HISTORICAL first/last auction from FULL data
+    # These are independent of the date filter
+    # ============================================================
+    if (!is.null(full_data) && nrow(full_data) > 0) {
+        full_data <- ensure_date_columns(full_data)
+        full_data <- full_data %>%
+            mutate(across(any_of(numeric_cols),
+                          ~ suppressWarnings(as.numeric(as.character(.x)))))
+
+        historical_auction_dates <- full_data %>%
+            filter(
+                !is.na(date),
+                !is.na(offer_amount),
+                offer_amount > 0
+            ) %>%
+            group_by(bond) %>%
+            summarise(
+                first_auction_historical = min(date, na.rm = TRUE),
+                last_auction_historical = max(date, na.rm = TRUE),
+                total_historical_auctions = n(),
+                .groups = "drop"
+            )
+    } else {
+        # Fallback: use filtered data if full_data not provided (backward compatibility)
+        historical_auction_dates <- data %>%
+            filter(
+                !is.na(date),
+                !is.na(offer_amount),
+                offer_amount > 0
+            ) %>%
+            group_by(bond) %>%
+            summarise(
+                first_auction_historical = min(date, na.rm = TRUE),
+                last_auction_historical = max(date, na.rm = TRUE),
+                total_historical_auctions = n(),
+                .groups = "drop"
+            )
+    }
+
+    # ============================================================
+    # STEP 2: Calculate PERFORMANCE METRICS from FILTERED data
+    # These respect the date range selection
+    # ============================================================
+
     # Calculate yield trend WITHIN THE SELECTED PERIOD ONLY
-    # Compare first vs last auction yield for each bond within the filtered date range
     yield_trends <- data %>%
         filter(!is.na(offer_amount), offer_amount > 0, !is.na(yield_to_maturity)) %>%
         group_by(bond) %>%
@@ -257,8 +303,7 @@ generate_ytd_issuance_table <- function(data) {
             .groups = "drop"
         )
 
-    # Calculate issuance statistics with meaningful metrics from available data
-    # CRITICAL FIX: Filter out invalid bid_to_cover values (NA, 0, negative) before min/max
+    # Calculate issuance statistics from FILTERED data
     issuance_table <- data %>%
         filter(!is.na(offer_amount), offer_amount > 0) %>%
         group_by(bond) %>%
@@ -267,7 +312,6 @@ generate_ytd_issuance_table <- function(data) {
             total_offered = sum(offer_amount, na.rm = TRUE) / 1e6,  # Convert to millions
             total_bids = sum(bids, na.rm = TRUE) / 1e6,
             avg_b2c = mean(bid_to_cover[!is.na(bid_to_cover) & bid_to_cover > 0], na.rm = TRUE),
-            # FIX: Only use valid B2C values (> 0) to avoid 0.00x in range
             min_b2c = {
                 valid_b2c <- bid_to_cover[!is.na(bid_to_cover) & bid_to_cover > 0]
                 if (length(valid_b2c) > 0) min(valid_b2c) else NA_real_
@@ -276,19 +320,19 @@ generate_ytd_issuance_table <- function(data) {
                 valid_b2c <- bid_to_cover[!is.na(bid_to_cover) & bid_to_cover > 0]
                 if (length(valid_b2c) > 0) max(valid_b2c) else NA_real_
             },
-            # Oversubscription: average demand vs supply
             avg_oversubscription = mean((bids - offer_amount) / offer_amount * 100, na.rm = TRUE),
-            first_auction = min(date, na.rm = TRUE),
-            last_auction = max(date, na.rm = TRUE),
             .groups = "drop"
         ) %>%
         left_join(yield_trends, by = "bond") %>%
+        # JOIN THE HISTORICAL DATES (from full data, not filtered)
+        left_join(historical_auction_dates, by = "bond") %>%
         arrange(desc(total_offered))
 
-    # Create TOTAL row with proper aggregations
+    # ============================================================
+    # STEP 3: Create TOTAL row with proper aggregations
+    # ============================================================
     if (nrow(issuance_table) > 0) {
         # Calculate overall market yield trend for total row
-        # Weighted average of individual bond trends
         overall_yield_trend <- if (any(!is.na(issuance_table$yield_change_bps))) {
             weighted.mean(
                 issuance_table$yield_change_bps,
@@ -313,12 +357,14 @@ generate_ytd_issuance_table <- function(data) {
             max_b2c = if (length(valid_max_b2c) > 0) max(valid_max_b2c) else NA_real_,
             avg_oversubscription = weighted.mean(issuance_table$avg_oversubscription,
                                                   issuance_table$n_auctions, na.rm = TRUE),
-            first_auction = as.Date(NA),
-            last_auction = as.Date(NA),
             first_yield = NA_real_,
             last_yield = NA_real_,
             yield_change_bps = overall_yield_trend,
             n_auctions_for_trend = NA_integer_,
+            # TOTAL row: show overall earliest and latest auction across ALL bonds (historical)
+            first_auction_historical = min(issuance_table$first_auction_historical, na.rm = TRUE),
+            last_auction_historical = max(issuance_table$last_auction_historical, na.rm = TRUE),
+            total_historical_auctions = sum(historical_auction_dates$total_historical_auctions, na.rm = TRUE),
             stringsAsFactors = FALSE
         )
 
@@ -334,42 +380,37 @@ generate_ytd_issuance_table <- function(data) {
                                        yield_change_bps)
         )
 
-    # Format for display with proper column names
-    # REMOVED: Alloc Rate % column (always ~100%, provides no analytical value)
+    # ============================================================
+    # STEP 4: Format for display
+    # ============================================================
     display_table <- issuance_table %>%
         transmute(
             Bond = bond,
             `# Auctions` = n_auctions,
-            # Keep Total (R mil) as numeric for DT formatting (will add thousand separators in DT)
             `Total (R mil)` = round(total_offered, 0),
-            # Keep Avg B2C as numeric for conditional formatting
             `Avg B2C` = round(avg_b2c, 2),
-            # B2C Range: shows min-max spread - FIXED: now properly handles NA/0 values
             `B2C Range` = case_when(
                 is.na(min_b2c) | is.na(max_b2c) ~ "—",
                 is.infinite(min_b2c) | is.infinite(max_b2c) ~ "—",
                 TRUE ~ paste0(sprintf("%.2f", min_b2c), "x - ", sprintf("%.2f", max_b2c), "x")
             ),
-            # Oversubscription %
             `Oversub %` = round(avg_oversubscription, 1),
-            # Yield Trend in bps - keep numeric for conditional formatting
-            # The numeric value will be formatted in the DT rendering
             `Yield Trend` = round(yield_change_bps, 1),
-            # Also store a formatted version for display with +/- prefix
             `Yield Trend Display` = case_when(
                 is.na(yield_change_bps) | is.nan(yield_change_bps) ~ "—",
                 yield_change_bps >= 0 ~ paste0("+", sprintf("%.1f", yield_change_bps), " bps"),
                 TRUE ~ paste0(sprintf("%.1f", yield_change_bps), " bps")
             ),
+            # USE HISTORICAL DATES - not affected by date filter
             `First Auction` = ifelse(
-                is.na(first_auction),
+                is.na(first_auction_historical),
                 "—",
-                format(first_auction, "%Y-%m-%d")
+                format(first_auction_historical, "%Y-%m-%d")
             ),
             `Last Auction` = ifelse(
-                is.na(last_auction),
+                is.na(last_auction_historical),
                 "—",
-                format(last_auction, "%Y-%m-%d")
+                format(last_auction_historical, "%Y-%m-%d")
             )
         )
 
