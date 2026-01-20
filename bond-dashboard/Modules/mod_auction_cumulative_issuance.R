@@ -242,32 +242,40 @@ generate_ytd_issuance_table <- function(data) {
         data <- data %>% mutate(bids = bids_received)
     }
 
-    # Calculate yield trend: compare first vs last auction yield for each bond
+    # Calculate yield trend WITHIN THE SELECTED PERIOD ONLY
+    # Compare first vs last auction yield for each bond within the filtered date range
     yield_trends <- data %>%
         filter(!is.na(offer_amount), offer_amount > 0, !is.na(yield_to_maturity)) %>%
         group_by(bond) %>%
         arrange(date) %>%
+        filter(n() >= 2) %>%  # Need at least 2 auctions to calculate meaningful trend
         summarise(
             first_yield = first(yield_to_maturity),
             last_yield = last(yield_to_maturity),
             yield_change_bps = (last_yield - first_yield) * 100,  # Convert to bps
+            n_auctions_for_trend = n(),
             .groups = "drop"
         )
 
     # Calculate issuance statistics with meaningful metrics from available data
+    # CRITICAL FIX: Filter out invalid bid_to_cover values (NA, 0, negative) before min/max
     issuance_table <- data %>%
         filter(!is.na(offer_amount), offer_amount > 0) %>%
         group_by(bond) %>%
         summarise(
             n_auctions = n(),
             total_offered = sum(offer_amount, na.rm = TRUE) / 1e6,  # Convert to millions
-            total_allocated = sum(allocation, na.rm = TRUE) / 1e6,
             total_bids = sum(bids, na.rm = TRUE) / 1e6,
-            avg_b2c = mean(bid_to_cover, na.rm = TRUE),
-            min_b2c = min(bid_to_cover, na.rm = TRUE),
-            max_b2c = max(bid_to_cover, na.rm = TRUE),
-            # Allocation rate: what percentage of offered amount was allocated
-            allocation_rate = sum(allocation, na.rm = TRUE) / sum(offer_amount, na.rm = TRUE) * 100,
+            avg_b2c = mean(bid_to_cover[!is.na(bid_to_cover) & bid_to_cover > 0], na.rm = TRUE),
+            # FIX: Only use valid B2C values (> 0) to avoid 0.00x in range
+            min_b2c = {
+                valid_b2c <- bid_to_cover[!is.na(bid_to_cover) & bid_to_cover > 0]
+                if (length(valid_b2c) > 0) min(valid_b2c) else NA_real_
+            },
+            max_b2c = {
+                valid_b2c <- bid_to_cover[!is.na(bid_to_cover) & bid_to_cover > 0]
+                if (length(valid_b2c) > 0) max(valid_b2c) else NA_real_
+            },
             # Oversubscription: average demand vs supply
             avg_oversubscription = mean((bids - offer_amount) / offer_amount * 100, na.rm = TRUE),
             first_auction = min(date, na.rm = TRUE),
@@ -280,35 +288,37 @@ generate_ytd_issuance_table <- function(data) {
     # Create TOTAL row with proper aggregations
     if (nrow(issuance_table) > 0) {
         # Calculate overall market yield trend for total row
-        overall_yield_trend <- data %>%
-            filter(!is.na(offer_amount), offer_amount > 0, !is.na(yield_to_maturity)) %>%
-            {
-                first_date_yields <- filter(., date == min(date)) %>%
-                    pull(yield_to_maturity) %>%
-                    mean(na.rm = TRUE)
-                last_date_yields <- filter(., date == max(date)) %>%
-                    pull(yield_to_maturity) %>%
-                    mean(na.rm = TRUE)
-                (last_date_yields - first_date_yields) * 100
-            }
+        # Weighted average of individual bond trends
+        overall_yield_trend <- if (any(!is.na(issuance_table$yield_change_bps))) {
+            weighted.mean(
+                issuance_table$yield_change_bps,
+                issuance_table$n_auctions,
+                na.rm = TRUE
+            )
+        } else {
+            NA_real_
+        }
+
+        # Get valid B2C values across all bonds for total row
+        valid_min_b2c <- issuance_table$min_b2c[!is.na(issuance_table$min_b2c) & !is.infinite(issuance_table$min_b2c)]
+        valid_max_b2c <- issuance_table$max_b2c[!is.na(issuance_table$max_b2c) & !is.infinite(issuance_table$max_b2c)]
 
         totals_row <- data.frame(
             bond = "TOTAL",
             n_auctions = sum(issuance_table$n_auctions, na.rm = TRUE),
             total_offered = sum(issuance_table$total_offered, na.rm = TRUE),
-            total_allocated = sum(issuance_table$total_allocated, na.rm = TRUE),
             total_bids = sum(issuance_table$total_bids, na.rm = TRUE),
-            avg_b2c = mean(issuance_table$avg_b2c, na.rm = TRUE),
-            min_b2c = min(issuance_table$min_b2c, na.rm = TRUE),
-            max_b2c = max(issuance_table$max_b2c, na.rm = TRUE),
-            allocation_rate = sum(issuance_table$total_allocated, na.rm = TRUE) /
-                sum(issuance_table$total_offered, na.rm = TRUE) * 100,
-            avg_oversubscription = mean(issuance_table$avg_oversubscription, na.rm = TRUE),
+            avg_b2c = weighted.mean(issuance_table$avg_b2c, issuance_table$n_auctions, na.rm = TRUE),
+            min_b2c = if (length(valid_min_b2c) > 0) min(valid_min_b2c) else NA_real_,
+            max_b2c = if (length(valid_max_b2c) > 0) max(valid_max_b2c) else NA_real_,
+            avg_oversubscription = weighted.mean(issuance_table$avg_oversubscription,
+                                                  issuance_table$n_auctions, na.rm = TRUE),
             first_auction = as.Date(NA),
             last_auction = as.Date(NA),
             first_yield = NA_real_,
             last_yield = NA_real_,
             yield_change_bps = overall_yield_trend,
+            n_auctions_for_trend = NA_integer_,
             stringsAsFactors = FALSE
         )
 
@@ -316,7 +326,16 @@ generate_ytd_issuance_table <- function(data) {
         issuance_table <- bind_rows(totals_row, issuance_table)
     }
 
+    # Handle bonds with only 1 auction (can't calculate meaningful trend)
+    issuance_table <- issuance_table %>%
+        mutate(
+            yield_change_bps = ifelse(is.na(yield_change_bps) | is.infinite(yield_change_bps),
+                                       NA_real_,
+                                       yield_change_bps)
+        )
+
     # Format for display with proper column names
+    # REMOVED: Alloc Rate % column (always ~100%, provides no analytical value)
     display_table <- issuance_table %>%
         transmute(
             Bond = bond,
@@ -325,14 +344,12 @@ generate_ytd_issuance_table <- function(data) {
             `Total (R mil)` = round(total_offered, 0),
             # Keep Avg B2C as numeric for conditional formatting
             `Avg B2C` = round(avg_b2c, 2),
-            # B2C Range: shows min-max spread
-            `B2C Range` = ifelse(
-                is.na(min_b2c) | is.na(max_b2c) | is.infinite(min_b2c) | is.infinite(max_b2c),
-                "—",
-                paste0(sprintf("%.2f", min_b2c), "x - ", sprintf("%.2f", max_b2c), "x")
+            # B2C Range: shows min-max spread - FIXED: now properly handles NA/0 values
+            `B2C Range` = case_when(
+                is.na(min_b2c) | is.na(max_b2c) ~ "—",
+                is.infinite(min_b2c) | is.infinite(max_b2c) ~ "—",
+                TRUE ~ paste0(sprintf("%.2f", min_b2c), "x - ", sprintf("%.2f", max_b2c), "x")
             ),
-            # Allocation Rate %
-            `Alloc Rate %` = round(allocation_rate, 1),
             # Oversubscription %
             `Oversub %` = round(avg_oversubscription, 1),
             # Yield Trend in bps - keep numeric for conditional formatting
