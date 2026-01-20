@@ -2188,7 +2188,7 @@ generate_rate_of_change_monitor <- function(data, params) {
         theme(
             legend.position = "top",
             legend.direction = "horizontal",
-            legend.margin = margin(0, 0, 5, 0),
+            legend.margin = ggplot2::margin(0, 0, 5, 0),
             panel.grid.major.x = element_blank(),
             axis.text.x = element_text(size = 10, face = "bold"),
             plot.caption = element_text(size = 8, color = "gray50", hjust = 0)
@@ -2362,7 +2362,7 @@ generate_curve_comparison_plot <- function(data, params) {
             legend.background = element_rect(fill = alpha("white", 0.8), color = NA),
             legend.key.width = unit(1.5, "cm"),
             legend.text = element_text(size = 9),
-            legend.margin = margin(5, 10, 5, 10),
+            legend.margin = ggplot2::margin(5, 10, 5, 10),
             plot.caption = element_text(size = 8, color = "gray50", hjust = 0)
         )
 
