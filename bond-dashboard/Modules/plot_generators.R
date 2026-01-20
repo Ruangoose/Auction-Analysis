@@ -1926,8 +1926,8 @@ generate_yield_percentile_heatmap <- function(data, params) {
 
     if (nrow(data) < 10) return(NULL)
 
-    # Define maturity buckets based on modified duration
-    data <- data %>%
+    # Define tenor buckets
+    tenor_data <- data %>%
         mutate(
             tenor = case_when(
                 modified_duration <= 2 ~ "1-2y",
@@ -1935,41 +1935,36 @@ generate_yield_percentile_heatmap <- function(data, params) {
                 modified_duration <= 6 ~ "4-6y",
                 modified_duration <= 8 ~ "6-8y",
                 modified_duration <= 10 ~ "8-10y",
-                modified_duration <= 13 ~ "10-13y",
-                TRUE ~ "13y+"
+                TRUE ~ "10y+"
             ),
-            tenor = factor(tenor, levels = c("1-2y", "2-4y", "4-6y", "6-8y", "8-10y", "10-13y", "13y+"))
-        )
+            tenor = factor(tenor, levels = c("1-2y", "2-4y", "4-6y", "6-8y", "8-10y", "10y+"))
+        ) %>%
+        filter(!is.na(tenor))
 
-    max_date <- max(data$date, na.rm = TRUE)
+    # Calculate percentile for each tenor
+    # Group by tenor and date to get daily average yield per bucket
+    daily_tenor <- tenor_data %>%
+        group_by(date, tenor) %>%
+        summarise(avg_yield = mean(yield_to_maturity, na.rm = TRUE), .groups = "drop")
 
-    # Calculate current yield and percentile for each tenor
-    percentile_data <- data %>%
+    # For each tenor, calculate where current yield sits vs history
+    max_date <- max(daily_tenor$date)
+
+    percentile_data <- daily_tenor %>%
         group_by(tenor) %>%
         filter(n() >= 5) %>%  # Need sufficient history
         summarise(
-            current_yield = {
-                latest <- yield_to_maturity[date == max(date)]
-                if (length(latest) == 0) NA_real_ else mean(latest, na.rm = TRUE)
-            },
-            min_yield = min(yield_to_maturity, na.rm = TRUE),
-            max_yield = max(yield_to_maturity, na.rm = TRUE),
-            median_yield = median(yield_to_maturity, na.rm = TRUE),
-            # Percentile: where does current sit in historical range?
-            percentile = {
-                current_val <- mean(yield_to_maturity[date == max(date)], na.rm = TRUE)
-                if (is.na(current_val)) {
-                    NA_real_
-                } else {
-                    sum(yield_to_maturity <= current_val, na.rm = TRUE) / sum(!is.na(yield_to_maturity)) * 100
-                }
-            },
-            n_obs = n(),
+            current_yield = avg_yield[date == max_date][1],
+            # Calculate percentile: % of historical observations <= current
+            percentile = mean(avg_yield <= current_yield, na.rm = TRUE) * 100,
+            min_yield = min(avg_yield, na.rm = TRUE),
+            max_yield = max(avg_yield, na.rm = TRUE),
+            median_yield = median(avg_yield, na.rm = TRUE),
             .groups = "drop"
         ) %>%
         filter(!is.na(percentile), !is.na(current_yield)) %>%
         mutate(
-            # Classify the level
+            # Classify based on percentile
             level_class = case_when(
                 percentile >= 90 ~ "Very High (90%+)",
                 percentile >= 75 ~ "High (75-90%)",
@@ -1984,56 +1979,57 @@ generate_yield_percentile_heatmap <- function(data, params) {
 
     if (nrow(percentile_data) < 2) return(NULL)
 
-    # Create horizontal bar chart showing percentile position
-    p <- ggplot(percentile_data, aes(x = tenor, y = percentile, fill = level_class)) +
+    # Create the visualization with horizontal bars
+    p <- ggplot(percentile_data, aes(x = percentile, y = tenor)) +
 
-        # Background showing full range
-        geom_col(aes(y = 100), fill = "gray90", width = 0.7) +
+        # Background track (full range)
+        geom_segment(aes(x = 0, xend = 100, yend = tenor),
+                     color = "gray85", linewidth = 12, lineend = "round") +
 
-        # Actual percentile bar
-        geom_col(width = 0.7) +
+        # Percentile bar with color based on classification
+        geom_segment(aes(x = 0, xend = percentile, yend = tenor, color = level_class),
+                     linewidth = 12, lineend = "round") +
 
-        # Add current yield as text
-        geom_text(aes(y = pmin(percentile + 8, 100),
+        # Current yield label (at end of bar)
+        geom_text(aes(x = percentile + 3,
                       label = sprintf("%.2f%%", current_yield)),
-                  size = 3.2, fontface = "bold", hjust = 0, color = "gray20") +
+                  hjust = 0, size = 3.5, fontface = "bold") +
 
-        # Percentile value
-        geom_text(aes(y = percentile / 2,
+        # Percentile value (inside bar if room, otherwise outside)
+        geom_text(aes(x = pmax(percentile - 5, 8),
                       label = sprintf("%.0f%%ile", percentile)),
-                  size = 2.8, color = "white", fontface = "bold") +
+                  hjust = 1, size = 3, color = "white", fontface = "bold") +
 
-        # Reference lines
-        geom_hline(yintercept = c(25, 50, 75), linetype = "dashed",
-                   color = "gray50", alpha = 0.5) +
+        # Reference lines at quartiles
+        geom_vline(xintercept = c(25, 50, 75), linetype = "dashed",
+                   color = "gray50", alpha = 0.4, linewidth = 0.5) +
 
-        scale_fill_manual(
+        scale_color_manual(
             values = c(
-                "Very Low (<10%)" = "#27AE60",      # Green - yields very low
-                "Low (10-25%)" = "#82E0AA",         # Light green
-                "Normal (25-75%)" = "#5B8FA3",     # Blue-gray (secondary)
-                "High (75-90%)" = "#F5B041",        # Orange
-                "Very High (90%+)" = "#dc3545"     # Red - yields very high
+                "Very Low (<10%)" = "#27AE60",
+                "Low (10-25%)" = "#82E0AA",
+                "Normal (25-75%)" = "#5DADE2",
+                "High (75-90%)" = "#F5B041",
+                "Very High (90%+)" = "#E74C3C"
             ),
-            name = "Historical\nPercentile",
+            name = NULL,
             drop = FALSE
         ) +
 
-        scale_y_continuous(
+        scale_x_continuous(
             limits = c(0, 115),
             breaks = c(0, 25, 50, 75, 100),
-            labels = c("0%", "25%", "50%", "75%", "100%")
+            labels = c("0%", "25%", "50%", "75%", "100%"),
+            expand = c(0, 0)
         ) +
-
-        coord_flip() +
 
         labs(
             title = "Yield Levels vs History",
-            subtitle = sprintf("Where current yields sit in historical distribution | Since %s",
+            subtitle = sprintf("Current yields vs historical distribution | Since %s",
                                format(min(data$date), "%b %Y")),
-            x = NULL,
-            y = "Historical Percentile",
-            caption = "Higher percentile = yields are HIGH vs history"
+            x = "Historical Percentile",
+            y = NULL,
+            caption = "Higher percentile = yields HIGH vs history"
         ) +
 
         create_insele_theme() +
@@ -2042,9 +2038,9 @@ generate_yield_percentile_heatmap <- function(data, params) {
             legend.direction = "vertical",
             legend.key.size = unit(0.8, "lines"),
             legend.text = element_text(size = 8),
-            legend.title = element_text(size = 9, face = "bold"),
             panel.grid.major.y = element_blank(),
             panel.grid.minor = element_blank(),
+            axis.text.y = element_text(size = 10, face = "bold"),
             plot.caption = element_text(size = 8, color = "gray50", hjust = 0)
         )
 
@@ -2104,67 +2100,80 @@ generate_rate_of_change_monitor <- function(data, params) {
 
     if (nrow(roc_data) < 2) return(NULL)
 
-    # Reshape for plotting
-    roc_long <- roc_data %>%
-        select(bond, modified_duration, change_1w, change_1m, change_3m) %>%
-        pivot_longer(cols = starts_with("change_"),
-                     names_to = "horizon",
-                     values_to = "change_bps") %>%
-        mutate(
-            change_bps = change_bps * 100,  # Convert to bps
-            horizon = case_when(
-                horizon == "change_1w" ~ "1 Week",
-                horizon == "change_1m" ~ "1 Month",
-                horizon == "change_3m" ~ "3 Month"
-            ),
-            horizon = factor(horizon, levels = c("1 Week", "1 Month", "3 Month"))
-        ) %>%
-        filter(!is.na(change_bps))
-
-    # Calculate average change by tenor bucket
-    avg_changes <- roc_long %>%
+    # Classify by tenor - ensure all 3 buckets
+    roc_data <- roc_data %>%
         mutate(
             tenor = case_when(
                 modified_duration <= 5 ~ "Short (0-5y)",
                 modified_duration <= 10 ~ "Medium (5-10y)",
                 TRUE ~ "Long (10y+)"
-            )
-        ) %>%
+            ),
+            tenor = factor(tenor, levels = c("Short (0-5y)", "Medium (5-10y)", "Long (10y+)"))
+        )
+
+    # Calculate average change by tenor and horizon
+    avg_changes <- roc_data %>%
+        select(tenor, change_1w, change_1m, change_3m) %>%
+        pivot_longer(cols = starts_with("change_"),
+                     names_to = "horizon", values_to = "change") %>%
+        mutate(change_bps = change * 100) %>%
         group_by(tenor, horizon) %>%
         summarise(avg_change = mean(change_bps, na.rm = TRUE), .groups = "drop") %>%
-        mutate(tenor = factor(tenor, levels = c("Short (0-5y)", "Medium (5-10y)", "Long (10y+)"))) %>%
+        mutate(
+            horizon = case_when(
+                horizon == "change_1w" ~ "1 Week",
+                horizon == "change_1m" ~ "1 Month",
+                horizon == "change_3m" ~ "3 Month"
+            ),
+            horizon = factor(horizon, levels = c("1 Week", "1 Month", "3 Month")),
+            # Color based on direction
+            direction = ifelse(avg_change >= 0, "Rising", "Falling")
+        ) %>%
         filter(!is.na(avg_change))
 
     if (nrow(avg_changes) < 2) return(NULL)
 
     # Determine y-axis limits
     y_max <- max(abs(avg_changes$avg_change), na.rm = TRUE) * 1.3
-    y_max <- max(y_max, 10)  # At least 10 bps
+    y_max <- max(y_max, 15)  # At least 15 bps for readability
 
-    p <- ggplot(avg_changes, aes(x = horizon, y = avg_change, fill = tenor)) +
-        geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+    p <- ggplot(avg_changes, aes(x = horizon, y = avg_change, fill = tenor, alpha = direction)) +
+
+        geom_col(position = position_dodge(width = 0.75), width = 0.65) +
 
         # Zero reference line
         geom_hline(yintercept = 0, linewidth = 0.8, color = "gray30") +
 
-        # Value labels
+        # Value labels with direction-based coloring
         geom_text(aes(label = sprintf("%+.0f", avg_change),
-                      y = avg_change + sign(avg_change) * (y_max * 0.08)),
-                  position = position_dodge(width = 0.8),
-                  size = 3, fontface = "bold") +
+                      y = avg_change + sign(avg_change) * 6,
+                      color = direction),
+                  position = position_dodge(width = 0.75),
+                  size = 3.2, fontface = "bold", show.legend = FALSE) +
 
         scale_fill_manual(
             values = c(
-                "Short (0-5y)" = "#1B3A6B",    # Primary (navy)
+                "Short (0-5y)" = "#1B3A6B",     # Primary (navy)
                 "Medium (5-10y)" = "#5B8FA3",  # Secondary (teal)
-                "Long (10y+)" = "#28a745"      # Success (green)
+                "Long (10y+)" = "#5D6D7E"      # Gray-blue for long
             ),
             name = NULL
         ) +
 
+        scale_alpha_manual(
+            values = c("Rising" = 1, "Falling" = 0.7),
+            guide = "none"
+        ) +
+
+        scale_color_manual(
+            values = c("Rising" = "#E74C3C", "Falling" = "#27AE60"),
+            guide = "none"
+        ) +
+
         scale_y_continuous(
             limits = c(-y_max, y_max),
-            labels = function(x) paste0(ifelse(x > 0, "+", ""), round(x), " bps")
+            labels = function(x) paste0(ifelse(x > 0, "+", ""), round(x), " bps"),
+            expand = expansion(mult = c(0.15, 0.15))
         ) +
 
         labs(
@@ -2172,14 +2181,16 @@ generate_rate_of_change_monitor <- function(data, params) {
             subtitle = "Average yield change by tenor bucket",
             x = NULL,
             y = "Change (bps)",
-            caption = "Positive = yields rising | Negative = yields falling"
+            caption = "Green labels = yields falling (bullish) | Red labels = yields rising (bearish)"
         ) +
 
         create_insele_theme() +
         theme(
             legend.position = "top",
             legend.direction = "horizontal",
+            legend.margin = margin(0, 0, 5, 0),
             panel.grid.major.x = element_blank(),
+            axis.text.x = element_text(size = 10, face = "bold"),
             plot.caption = element_text(size = 8, color = "gray50", hjust = 0)
         )
 
@@ -2230,7 +2241,7 @@ generate_curve_comparison_plot <- function(data, params) {
     # Get curves at different points in time
     max_date <- max(data$date, na.rm = TRUE)
 
-    # Current curve
+    # Current curve - this is the focus
     current_curve <- data %>%
         filter(date == max_date) %>%
         select(bond, modified_duration, yield_to_maturity) %>%
@@ -2243,106 +2254,115 @@ generate_curve_comparison_plot <- function(data, params) {
     curve_1m <- data %>%
         filter(date == max(date[date <= date_1m])) %>%
         select(bond, modified_duration, yield_to_maturity) %>%
-        mutate(curve_type = "1 Month Ago")
+        mutate(curve_type = "1M Ago")
 
     # 3 months ago
     date_3m <- max_date - 90
     curve_3m <- data %>%
         filter(date == max(date[date <= date_3m])) %>%
         select(bond, modified_duration, yield_to_maturity) %>%
-        mutate(curve_type = "3 Months Ago")
+        mutate(curve_type = "3M Ago")
 
-    # 1 year ago
-    date_1y <- max_date - 365
-    curve_1y <- data %>%
-        filter(date <= date_1y) %>%
-        filter(date == max(date)) %>%
-        select(bond, modified_duration, yield_to_maturity) %>%
-        mutate(curve_type = "1 Year Ago")
-
-    # Historical average
+    # Historical average - calculate within actual data range only
     avg_curve <- data %>%
         group_by(bond) %>%
         summarise(
-            modified_duration = mean(modified_duration, na.rm = TRUE),
+            modified_duration = first(modified_duration),  # Use consistent duration
             yield_to_maturity = mean(yield_to_maturity, na.rm = TRUE),
             .groups = "drop"
         ) %>%
-        mutate(curve_type = "Historical Average")
+        mutate(curve_type = "Hist. Avg")
 
-    # Combine - only include curves with data
+    # Combine - FEWER curves for cleaner visual
     curves_list <- list(current_curve)
     if (nrow(curve_1m) >= 3) curves_list <- c(curves_list, list(curve_1m))
     if (nrow(curve_3m) >= 3) curves_list <- c(curves_list, list(curve_3m))
-    if (nrow(curve_1y) >= 3) curves_list <- c(curves_list, list(curve_1y))
     if (nrow(avg_curve) >= 3) curves_list <- c(curves_list, list(avg_curve))
 
     all_curves <- bind_rows(curves_list) %>%
         mutate(
             curve_type = factor(curve_type,
-                                levels = c("Current", "1 Month Ago", "3 Months Ago",
-                                           "1 Year Ago", "Historical Average"))
+                                levels = c("Current", "1M Ago", "3M Ago", "Hist. Avg"))
         )
 
-    # Define colors and line widths
-    curve_colors <- c(
-        "Current" = "#1B3A6B",           # Primary navy
-        "1 Month Ago" = "#ffc107",       # Warning yellow
-        "3 Months Ago" = "#5B8FA3",      # Secondary teal
-        "1 Year Ago" = "gray60",
-        "Historical Average" = "#dc3545" # Danger red
-    )
-
-    curve_linewidths <- c(
-        "Current" = 1.5,
-        "1 Month Ago" = 0.9,
-        "3 Months Ago" = 0.9,
-        "1 Year Ago" = 0.7,
-        "Historical Average" = 1.1
-    )
+    # Determine x-axis range to prevent extrapolation
+    x_max <- max(current_curve$modified_duration, na.rm = TRUE) + 0.5
 
     p <- ggplot(all_curves, aes(x = modified_duration, y = yield_to_maturity,
-                                 color = curve_type, linewidth = curve_type)) +
+                                 color = curve_type, linewidth = curve_type,
+                                 linetype = curve_type)) +
 
-        # Fitted curves
-        geom_smooth(method = "loess", se = FALSE, span = 0.75) +
+        # Fitted curves - limit to data range
+        geom_smooth(method = "loess", se = FALSE, span = 0.9,
+                    data = all_curves %>% filter(modified_duration <= x_max)) +
 
-        # Points only for current
-        geom_point(data = all_curves %>% filter(curve_type == "Current"),
-                   size = 2.5, show.legend = FALSE) +
+        # Points ONLY for current curve
+        geom_point(data = current_curve, size = 3.5, show.legend = FALSE) +
 
-        # Bond labels for current
-        geom_text(data = all_curves %>% filter(curve_type == "Current"),
-                  aes(label = bond), vjust = -1, hjust = 0.5,
-                  size = 2.2, show.legend = FALSE, color = "gray30") +
+        # Bond labels - use ggrepel for non-overlapping labels
+        ggrepel::geom_text_repel(
+            data = current_curve,
+            aes(label = bond),
+            size = 2.8,
+            color = "gray30",
+            fontface = "bold",
+            box.padding = 0.3,
+            point.padding = 0.2,
+            segment.color = "gray70",
+            segment.size = 0.3,
+            max.overlaps = 15,
+            show.legend = FALSE
+        ) +
 
         scale_color_manual(
-            values = curve_colors,
+            values = c(
+                "Current" = "#1B3A6B",      # Primary navy
+                "1M Ago" = "#F39C12",       # Warning orange
+                "3M Ago" = "#85929E",       # Muted gray
+                "Hist. Avg" = "#E74C3C"     # Red for historical
+            ),
             name = NULL
         ) +
 
         scale_linewidth_manual(
-            values = curve_linewidths,
+            values = c("Current" = 2, "1M Ago" = 1.2, "3M Ago" = 1, "Hist. Avg" = 1.3),
             guide = "none"
         ) +
 
-        scale_y_continuous(labels = function(x) paste0(format(x, nsmall = 1), "%")) +
-        scale_x_continuous(breaks = seq(0, 20, by = 2)) +
+        scale_linetype_manual(
+            values = c("Current" = "solid", "1M Ago" = "solid",
+                       "3M Ago" = "dashed", "Hist. Avg" = "dotted"),
+            guide = "none"
+        ) +
+
+        scale_x_continuous(
+            limits = c(0, x_max),
+            breaks = seq(0, ceiling(x_max), by = 2),
+            expand = c(0.02, 0)
+        ) +
+
+        scale_y_continuous(
+            labels = function(x) paste0(x, "%"),
+            expand = expansion(mult = c(0.02, 0.05))
+        ) +
 
         labs(
             title = "Yield Curve Evolution",
-            subtitle = sprintf("Current curve vs historical snapshots | As of %s",
+            subtitle = sprintf("Current vs historical snapshots | As of %s",
                                format(max_date, "%d %b %Y")),
             x = "Modified Duration (years)",
             y = "Yield to Maturity",
-            caption = "Compare current positioning to recent history and long-term average"
+            caption = "Solid = recent | Dashed = 3M ago | Dotted = historical average"
         ) +
 
         create_insele_theme() +
         theme(
-            legend.position = "top",
-            legend.direction = "horizontal",
+            legend.position = c(0.02, 0.98),
+            legend.justification = c(0, 1),
+            legend.background = element_rect(fill = alpha("white", 0.8), color = NA),
+            legend.key.width = unit(1.5, "cm"),
             legend.text = element_text(size = 9),
+            legend.margin = margin(5, 10, 5, 10),
             plot.caption = element_text(size = 8, color = "gray50", hjust = 0)
         )
 
@@ -2456,16 +2476,10 @@ generate_curve_steepness_gauge <- function(data, params) {
         geom_segment(aes(x = current_spread, xend = current_spread, y = 0.82, yend = 1.18),
                      color = "#1B3A6B", linewidth = 5) +
 
-        # Current value label
-        annotate("text", x = current_spread, y = 0.45,
+        # Current value label - moved below the gauge for cleaner look
+        annotate("text", x = current_spread, y = -0.1,
                  label = sprintf("%.0f bps (%s)", current_spread, steepness_class),
-                 size = 3.5, fontface = "bold", color = "#1B3A6B") +
-
-        # Percentile annotation
-        annotate("text", x = (spread_min + spread_max) / 2, y = 1.7,
-                 label = sprintf("Current spread is at %.0f%% percentile of historical range",
-                                 spread_percentile),
-                 size = 3) +
+                 size = 4.5, fontface = "bold", color = "#1B3A6B") +
 
         # Scale markers
         scale_x_continuous(
@@ -2477,11 +2491,12 @@ generate_curve_steepness_gauge <- function(data, params) {
                        sprintf("%.0f\n(Max)", spread_max))
         ) +
 
-        coord_cartesian(ylim = c(0.2, 1.9), xlim = c(x_min, x_max)) +
+        coord_cartesian(ylim = c(-0.3, 1.7), xlim = c(x_min, x_max)) +
 
         labs(
             title = "Curve Steepness: 2s10s Spread",
-            subtitle = "Position within historical range",
+            subtitle = sprintf("Position within historical range | Currently at %.0f%% percentile",
+                               spread_percentile),
             x = "Spread (basis points)",
             y = NULL
         ) +

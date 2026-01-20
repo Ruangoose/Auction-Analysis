@@ -4593,54 +4593,65 @@ server <- function(input, output, session) {
             )
         }
 
-        # Determine colors based on values
+        # Determine colors based on values (contextual coloring)
         change_color <- if (is.na(metrics$yield_change_1m)) {
             "yellow"
         } else if (metrics$yield_change_1m > 10) {
-            "red"
+            "red"      # Yields rising significantly (bearish)
         } else if (metrics$yield_change_1m < -10) {
-            "green"
+            "green"    # Yields falling significantly (bullish)
         } else {
-            "yellow"
+            "yellow"   # Modest change
         }
 
         slope_color <- if (is.na(metrics$curve_slope)) {
-            "yellow"
-        } else if (metrics$curve_slope > 200) {
-            "green"
+            "blue"
+        } else if (metrics$curve_slope > 250) {
+            "green"    # Very steep (normal/healthy)
         } else if (metrics$curve_slope < 100) {
-            "red"
+            "red"      # Flat/inverted (warning)
         } else {
-            "yellow"
+            "blue"     # Normal
+        }
+
+        # Determine icon for yield change
+        change_icon <- if (!is.na(metrics$yield_change_1m) && metrics$yield_change_1m > 0) {
+            "arrow-trend-up"
+        } else {
+            "arrow-trend-down"
         }
 
         fluidRow(
+            # Average Yield - always primary blue
             valueBox(
                 value = if (!is.na(metrics$avg_yield)) sprintf("%.2f%%", metrics$avg_yield) else "N/A",
                 subtitle = "Average Yield",
-                icon = icon("chart-line"),
+                icon = icon("percent"),
                 color = "blue",
                 width = 3
             ),
+            # 1M Change - contextual color
             valueBox(
                 value = if (!is.na(metrics$yield_change_1m)) sprintf("%+.0f bps", metrics$yield_change_1m) else "N/A",
                 subtitle = "1M Change",
-                icon = icon(if (!is.na(metrics$yield_change_1m) && metrics$yield_change_1m > 0) "arrow-up" else "arrow-down"),
+                icon = icon(change_icon),
                 color = change_color,
                 width = 3
             ),
+            # Curve Slope - contextual color
             valueBox(
                 value = if (!is.na(metrics$curve_slope)) sprintf("%.0f bps", metrics$curve_slope) else "N/A",
                 subtitle = "Curve Slope (2s10s)",
-                icon = icon("arrows-alt-v"),
+                icon = icon("chart-line"),
                 color = slope_color,
                 width = 3
             ),
+            # Yield Dispersion - always primary blue
             valueBox(
                 value = if (!is.na(metrics$yield_range)) sprintf("%.0f bps", metrics$yield_range) else "N/A",
                 subtitle = "Yield Dispersion",
-                icon = icon("compress-arrows-alt"),
-                color = "purple",
+                icon = icon("arrows-left-right-to-line"),
+                color = "blue",
                 width = 3
             )
         )
