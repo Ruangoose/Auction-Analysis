@@ -4576,7 +4576,169 @@ server <- function(input, output, session) {
     })
 
     # ================================================================================
-    # CURVE DYNAMICS PANEL (replaces Cross-Asset Correlations)
+    # YIELD ENVIRONMENT MONITOR (replaces Curve Dynamics)
+    # ================================================================================
+
+    # Summary Metrics Row - Key market indicators
+    output$market_metrics_row <- renderUI({
+        req(filtered_data())
+        metrics <- generate_market_summary_metrics(filtered_data(), list())
+
+        if (!metrics$valid) {
+            return(
+                tags$div(
+                    style = "padding: 20px; text-align: center; color: #666;",
+                    "Insufficient data for market metrics calculation"
+                )
+            )
+        }
+
+        # Determine colors based on values
+        change_color <- if (is.na(metrics$yield_change_1m)) {
+            "yellow"
+        } else if (metrics$yield_change_1m > 10) {
+            "red"
+        } else if (metrics$yield_change_1m < -10) {
+            "green"
+        } else {
+            "yellow"
+        }
+
+        slope_color <- if (is.na(metrics$curve_slope)) {
+            "yellow"
+        } else if (metrics$curve_slope > 200) {
+            "green"
+        } else if (metrics$curve_slope < 100) {
+            "red"
+        } else {
+            "yellow"
+        }
+
+        fluidRow(
+            valueBox(
+                value = if (!is.na(metrics$avg_yield)) sprintf("%.2f%%", metrics$avg_yield) else "N/A",
+                subtitle = "Average Yield",
+                icon = icon("chart-line"),
+                color = "blue",
+                width = 3
+            ),
+            valueBox(
+                value = if (!is.na(metrics$yield_change_1m)) sprintf("%+.0f bps", metrics$yield_change_1m) else "N/A",
+                subtitle = "1M Change",
+                icon = icon(if (!is.na(metrics$yield_change_1m) && metrics$yield_change_1m > 0) "arrow-up" else "arrow-down"),
+                color = change_color,
+                width = 3
+            ),
+            valueBox(
+                value = if (!is.na(metrics$curve_slope)) sprintf("%.0f bps", metrics$curve_slope) else "N/A",
+                subtitle = "Curve Slope (2s10s)",
+                icon = icon("arrows-alt-v"),
+                color = slope_color,
+                width = 3
+            ),
+            valueBox(
+                value = if (!is.na(metrics$yield_range)) sprintf("%.0f bps", metrics$yield_range) else "N/A",
+                subtitle = "Yield Dispersion",
+                icon = icon("compress-arrows-alt"),
+                color = "purple",
+                width = 3
+            )
+        )
+    })
+
+    # Yield Percentile Heatmap
+    output$yield_percentile_heatmap <- renderPlot({
+        req(filtered_data())
+        p <- generate_yield_percentile_heatmap(filtered_data(), list())
+        if (!is.null(p)) {
+            print(p)
+        } else {
+            plot.new()
+            text(0.5, 0.5, "Insufficient data for yield percentile analysis", cex = 1.2)
+        }
+    })
+
+    # Rate of Change Monitor (Momentum)
+    output$rate_of_change_monitor <- renderPlot({
+        req(filtered_data())
+        p <- generate_rate_of_change_monitor(filtered_data(), list())
+        if (!is.null(p)) {
+            print(p)
+        } else {
+            plot.new()
+            text(0.5, 0.5, "Insufficient data for rate momentum analysis", cex = 1.0)
+        }
+    })
+
+    # ================================================================================
+    # CURVE SHAPE & MOMENTUM (replaces Relative Value Scanner)
+    # ================================================================================
+
+    # Curve Comparison Plot (Current vs History)
+    output$curve_comparison_plot <- renderPlot({
+        req(filtered_data())
+        p <- generate_curve_comparison_plot(filtered_data(), list())
+        if (!is.null(p)) {
+            print(p)
+        } else {
+            plot.new()
+            text(0.5, 0.5, "Insufficient data for curve comparison analysis", cex = 1.2)
+        }
+    })
+
+    # Curve Steepness Gauge
+    output$curve_steepness_gauge <- renderPlot({
+        req(filtered_data())
+        p <- generate_curve_steepness_gauge(filtered_data(), list())
+        if (!is.null(p)) {
+            print(p)
+        } else {
+            plot.new()
+            text(0.5, 0.5, "Insufficient data for steepness gauge", cex = 1.0)
+        }
+    })
+
+    # Download handler for Yield Environment panel
+    output$download_yield_environment <- downloadHandler(
+        filename = function() {
+            paste0("yield_environment_", format(Sys.Date(), "%Y%m%d"), ".png")
+        },
+        content = function(file) {
+            # Create combined plot
+            p1 <- generate_yield_percentile_heatmap(filtered_data(), list())
+            p2 <- generate_rate_of_change_monitor(filtered_data(), list())
+
+            if (!is.null(p1) && !is.null(p2)) {
+                combined <- cowplot::plot_grid(p1, p2, ncol = 1, rel_heights = c(1.4, 1))
+                ggsave(file, combined, width = 10, height = 12, dpi = 150, bg = "white")
+            } else if (!is.null(p1)) {
+                ggsave(file, p1, width = 10, height = 6, dpi = 150, bg = "white")
+            }
+        }
+    )
+
+    # Download handler for Curve Analysis panel
+    output$download_curve_analysis <- downloadHandler(
+        filename = function() {
+            paste0("curve_analysis_", format(Sys.Date(), "%Y%m%d"), ".png")
+        },
+        content = function(file) {
+            # Create combined plot
+            p1 <- generate_curve_comparison_plot(filtered_data(), list())
+            p2 <- generate_curve_steepness_gauge(filtered_data(), list())
+
+            if (!is.null(p1) && !is.null(p2)) {
+                combined <- cowplot::plot_grid(p1, p2, ncol = 1, rel_heights = c(2, 1))
+                ggsave(file, combined, width = 10, height = 12, dpi = 150, bg = "white")
+            } else if (!is.null(p1)) {
+                ggsave(file, p1, width = 10, height = 7, dpi = 150, bg = "white")
+            }
+        }
+    )
+
+    # ================================================================================
+    # LEGACY OUTPUTS (kept for backward compatibility)
+    # These may be used by other tabs or report generation
     # ================================================================================
 
     output$curve_spreads_plot <- renderPlot({
@@ -4600,10 +4762,6 @@ server <- function(input, output, session) {
             text(0.5, 0.5, "Insufficient data for curve shape analysis", cex = 1.0)
         }
     })
-
-    # ================================================================================
-    # RELATIVE VALUE SCANNER PANEL (replaces Term Structure Dynamics)
-    # ================================================================================
 
     output$rv_scanner_plot <- renderPlot({
         req(filtered_data())

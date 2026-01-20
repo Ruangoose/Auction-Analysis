@@ -2635,48 +2635,52 @@ ui <- dashboardPage(
                                )
                            ),
 
+                           # Summary Metrics Row - Key market indicators at a glance
                            fluidRow(
-                               # LEFT PANEL: Curve Dynamics (was Cross-Asset Correlations)
+                               uiOutput("market_metrics_row")
+                           ),
+
+                           fluidRow(
+                               # LEFT PANEL: Yield Environment Monitor (replaces Curve Dynamics)
                                box(
-                                   title = "Curve Dynamics",
+                                   title = "Yield Environment",
                                    status = "primary",
                                    solidHeader = TRUE,
                                    width = 6,
 
-                                   # Spread time series (main chart)
-                                   plotOutput("curve_spreads_plot", height = "280px"),
+                                   # Yield percentile heatmap (main chart)
+                                   plotOutput("yield_percentile_heatmap", height = "280px"),
 
                                    hr(),
 
-                                   # Curve shape timeline (compact)
-                                   plotOutput("curve_shape_indicator", height = "80px"),
+                                   # Rate of change monitor (momentum)
+                                   plotOutput("rate_of_change_monitor", height = "200px"),
 
                                    tags$div(
                                        style = "margin-top: 15px;",
-                                       downloadButton("download_curve_dynamics", "Download Chart",
+                                       downloadButton("download_yield_environment", "Download Chart",
                                                       class = "btn-sm btn-primary")
                                    )
                                ),
 
-                               # RIGHT PANEL: Relative Value Scanner (was Term Structure Dynamics)
+                               # RIGHT PANEL: Curve Shape & Momentum (replaces Relative Value Scanner)
                                box(
-                                   title = "Relative Value Scanner",
+                                   title = "Curve Analysis",
                                    status = "primary",
                                    solidHeader = TRUE,
                                    width = 6,
 
-                                   # Rich/Cheap scatter
-                                   plotOutput("rv_scanner_plot", height = "300px"),
+                                   # Curve comparison plot (current vs history)
+                                   plotOutput("curve_comparison_plot", height = "300px"),
 
                                    hr(),
 
-                                   # Top opportunities summary
-                                   tags$h6("Top Opportunities", style = "margin: 10px 0; font-weight: bold; color: #1B3A6B;"),
-                                   tableOutput("rv_summary_mini"),
+                                   # Curve steepness gauge
+                                   plotOutput("curve_steepness_gauge", height = "150px"),
 
                                    tags$div(
                                        style = "margin-top: 15px;",
-                                       downloadButton("download_rv_scanner", "Download Chart",
+                                       downloadButton("download_curve_analysis", "Download Chart",
                                                       class = "btn-sm btn-primary")
                                    )
                                )
