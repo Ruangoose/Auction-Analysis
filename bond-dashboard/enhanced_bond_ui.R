@@ -2600,34 +2600,35 @@ ui <- dashboardPage(
                                    solidHeader = TRUE,
                                    width = 12,
                                    fluidRow(
-                                       # LEFT COLUMN: Main Chart (8 units width)
+                                       # LEFT COLUMN: Main Chart - FILL available space
                                        column(8,
                                               style = "padding-right: 10px;",
                                               div(
                                                   class = "chart-container",
-                                                  style = "background: white; border-radius: 8px; padding: 10px;",
-                                                  plotOutput("regime_analysis_plot", height = "420px"),
-                                                  # Download button directly below chart
+                                                  style = "background: white; border-radius: 8px; padding: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);",
+                                                  # Chart with explicit height - INCREASED to fill space
+                                                  plotOutput("regime_analysis_plot", height = "480px"),
+                                                  # Download button with minimal margin
                                                   tags$div(
-                                                      style = "margin-top: 10px;",
+                                                      style = "margin-top: 5px;",
                                                       downloadButton("download_regime_analysis", "Download Chart",
                                                                      class = "btn-sm btn-primary")
                                                   )
                                               )
                                        ),
-                                       # RIGHT COLUMN: Metrics Panel (4 units width)
+                                       # RIGHT COLUMN: Metrics Panel - SCROLLABLE
                                        column(4,
                                               style = "padding-left: 10px;",
-                                              # Scrollable container for right panel
+                                              # SCROLLABLE container with max height
                                               tags$div(
                                                   class = "regime-panel-scroll",
-                                                  style = "background: #f8f9fa; border-radius: 8px; padding: 15px; max-height: 500px; overflow-y: auto;",
-                                                  h6("Current Regime", style = "color: #1B3A6B; margin-bottom: 10px; font-weight: 600;"),
+                                                  style = "background: #f8f9fa; border-radius: 8px; padding: 15px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); max-height: 540px; overflow-y: auto;",
+                                                  h6("Current Regime", style = "color: #1B3A6B; margin: 0 0 10px 0; font-weight: 600;"),
                                                   uiOutput("regime_summary"),
-                                                  hr(style = "margin: 15px 0;"),
-                                                  h6("Regime Probabilities", style = "color: #1B3A6B; margin-bottom: 10px; font-weight: 600;"),
-                                                  # Use smaller fixed height for probability plot
-                                                  plotOutput("regime_probability_gauge", height = "150px")
+                                                  hr(style = "margin: 12px 0; border-color: #eee;"),
+                                                  h6("Regime Probabilities", style = "color: #1B3A6B; margin: 0 0 8px 0; font-weight: 600;"),
+                                                  # REDUCED height from 250px to 160px to fit
+                                                  plotOutput("regime_probability_gauge", height = "160px")
                                               )
                                        )
                                    )
