@@ -752,15 +752,43 @@ ui <- dashboardPage(
           color: #1B3A6B;
         }
 
+        /* ════════════════════════════════════════════════════════════════════════
+           Insele-branded Value Box Colors & Styling
+           ════════════════════════════════════════════════════════════════════════ */
+
+        /* Override shinydashboard value box colors with Insele palette */
+        .small-box.bg-blue {
+            background-color: #1B3A6B !important;
+        }
+        .small-box.bg-green {
+            background-color: #27AE60 !important;
+        }
+        .small-box.bg-red {
+            background-color: #E74C3C !important;
+        }
+        .small-box.bg-yellow {
+            background-color: #F39C12 !important;
+            color: #333 !important;
+        }
+        .small-box.bg-yellow .inner h3,
+        .small-box.bg-yellow .inner p {
+            color: #333 !important;
+        }
+
         /* Value boxes enhancement */
+        .small-box {
+          border-radius: 8px;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
         .small-box .inner h3 {
-          font-size: 32px;
+          font-size: 26px;
           font-weight: 700;
           margin: 0 0 5px 0;
         }
 
         .small-box .inner p {
-          font-size: 14px;
+          font-size: 13px;
           font-weight: 500;
           opacity: 0.9;
         }
@@ -768,6 +796,46 @@ ui <- dashboardPage(
         .small-box .icon {
           opacity: 0.3;
           font-size: 70px;
+        }
+
+        .small-box .icon-large {
+          font-size: 70px;
+          opacity: 0.3;
+        }
+
+        /* ════════════════════════════════════════════════════════════════════════
+           Better Spacing for Market Intelligence Section
+           ════════════════════════════════════════════════════════════════════════ */
+
+        .box-body {
+            padding: 12px 15px;
+        }
+
+        /* Chart titles consistent styling */
+        .chart-title {
+            color: #1B3A6B;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        /* Reduce gap between charts in same box */
+        .box-body hr {
+            margin: 10px 0;
+            border-color: #eee;
+        }
+
+        /* Download button styling */
+        .btn-download {
+            background-color: #1B3A6B;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
+        .btn-download:hover {
+            background-color: #2C5282;
+            color: white;
         }
 
         /* Enhanced button styling */
@@ -2648,18 +2716,18 @@ ui <- dashboardPage(
                                    solidHeader = TRUE,
                                    width = 6,
 
-                                   # Yield percentile heatmap (main chart)
-                                   plotOutput("yield_percentile_heatmap", height = "280px"),
+                                   # Yield percentile heatmap - primary focus
+                                   plotOutput("yield_percentile_heatmap", height = "260px"),
 
                                    hr(),
 
-                                   # Rate of change monitor (momentum)
-                                   plotOutput("rate_of_change_monitor", height = "200px"),
+                                   # Rate of change monitor - secondary
+                                   plotOutput("rate_of_change_monitor", height = "220px"),
 
                                    tags$div(
-                                       style = "margin-top: 15px;",
+                                       style = "margin-top: 10px;",
                                        downloadButton("download_yield_environment", "Download Chart",
-                                                      class = "btn-sm btn-primary")
+                                                      class = "btn-sm btn-download")
                                    )
                                ),
 
@@ -2670,18 +2738,18 @@ ui <- dashboardPage(
                                    solidHeader = TRUE,
                                    width = 6,
 
-                                   # Curve comparison plot (current vs history)
+                                   # Curve comparison plot - primary focus
                                    plotOutput("curve_comparison_plot", height = "300px"),
 
                                    hr(),
 
-                                   # Curve steepness gauge
-                                   plotOutput("curve_steepness_gauge", height = "150px"),
+                                   # Curve steepness gauge - secondary
+                                   plotOutput("curve_steepness_gauge", height = "160px"),
 
                                    tags$div(
-                                       style = "margin-top: 15px;",
+                                       style = "margin-top: 10px;",
                                        downloadButton("download_curve_analysis", "Download Chart",
-                                                      class = "btn-sm btn-primary")
+                                                      class = "btn-sm btn-download")
                                    )
                                )
                            ),
