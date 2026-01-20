@@ -110,6 +110,7 @@ get_btc_threshold_colors <- function() {
 
 #' @export
 # 14. Enhanced Auction Analytics Plot Generation
+#' Improved version with bond selection, smart date breaks, and configurable layout
 generate_enhanced_auction_analytics <- function(data, params) {
     # CRITICAL FIX: Ensure date columns are Date objects
     data <- ensure_date_columns(data)
@@ -120,200 +121,233 @@ generate_enhanced_auction_analytics <- function(data, params) {
         return(create_no_auction_data_plot(data_check$message))
     }
 
+    # Extract parameters with defaults
+    selected_bonds <- params$selected_bonds
+    layout <- params$layout %||% "auto"
+    x_scales <- params$x_scales %||% "free_x"
+    show_trend <- params$show_trend %||% TRUE
+
+    # Filter to auction data with valid bid_to_cover
     auction_data <- data %>%
-        filter(!is.na(bid_to_cover)) %>%
+        filter(
+            !is.na(bid_to_cover),
+            bid_to_cover > 0,
+            !is.na(offer_date)
+        ) %>%
         mutate(
-            success = case_when(
-                bid_to_cover > 3 ~ "Strong",
-                bid_to_cover > 2.5 ~ "Good",
-                bid_to_cover > 2 ~ "Normal",
+            # Use offer_date as primary date for auctions
+            plot_date = as.Date(offer_date),
+            # Performance classification
+            performance = case_when(
+                bid_to_cover >= 3.0 ~ "Strong",
+                bid_to_cover >= 2.5 ~ "Good",
+                bid_to_cover >= 2.0 ~ "Normal",
                 TRUE ~ "Weak"
             ),
-            success = factor(success, levels = c("Strong", "Good", "Normal", "Weak"))
+            performance = factor(performance, levels = c("Strong", "Good", "Normal", "Weak")),
+            # Offer size in billions for point sizing
+            offer_bn = offer_amount / 1e9
         )
 
-    if(nrow(auction_data) == 0) {
-        return(NULL)
+    # If selected_bonds provided, filter to those bonds
+    if (!is.null(selected_bonds) && length(selected_bonds) > 0) {
+        auction_data <- auction_data %>%
+            filter(bond %in% selected_bonds)
     }
 
-    # Calculate per-bond statistics
+    if(nrow(auction_data) == 0) {
+        return(
+            ggplot() +
+                annotate("text", x = 0.5, y = 0.5,
+                         label = "No auction data for selected bonds/period",
+                         size = 6, color = "#666666") +
+                theme_void() +
+                theme(plot.background = element_rect(fill = "white", color = NA))
+        )
+    }
+
+    # Calculate summary stats for facet labels
     bond_stats <- auction_data %>%
         group_by(bond) %>%
         summarise(
-            avg_btc = mean(bid_to_cover, na.rm = TRUE),
-            n_auctions = n(),
-            min_date = min(date),
-            max_date = max(date),
+            n = n(),
+            avg_b2c = mean(bid_to_cover, na.rm = TRUE),
+            min_date = min(plot_date, na.rm = TRUE),
+            max_date = max(plot_date, na.rm = TRUE),
             .groups = "drop"
-        )
-
-    # Join stats back to main data
-    auction_data <- auction_data %>%
-        left_join(bond_stats, by = "bond") %>%
+        ) %>%
         mutate(
-            bond_label = paste0(bond, "\n(n=", n_auctions, ", Avg: ", sprintf("%.2fx", avg_btc), ")")
+            facet_label = paste0(bond, "\n(n=", n, ", Avg: ", sprintf("%.2f", avg_b2c), "x)")
         )
 
-    # Create base plot
-    p <- ggplot(auction_data, aes(x = date, y = bid_to_cover)) +
+    # Join facet labels back
+    auction_data <- auction_data %>%
+        left_join(bond_stats %>% select(bond, facet_label, n), by = "bond") %>%
+        mutate(facet_label = factor(facet_label, levels = bond_stats$facet_label))
 
-        # Reference lines
-        geom_hline(yintercept = 2,
-                   linetype = "dotted",
-                   color = "#666666",
-                   alpha = 0.5,
-                   linewidth = 0.5) +
+    # Determine facet layout
+    n_bonds <- length(unique(auction_data$bond))
 
-        geom_hline(yintercept = 2.5,
-                   linetype = "dashed",
-                   color = insele_palette$secondary,
-                   alpha = 0.5,
-                   linewidth = 0.6) +
+    if(layout == "auto") {
+        ncol_val <- case_when(
+            n_bonds <= 2 ~ 2,
+            n_bonds <= 4 ~ 2,
+            n_bonds <= 6 ~ 3,
+            TRUE ~ 4
+        )
+    } else {
+        ncol_val <- as.numeric(substr(layout, 3, 3))
+    }
 
-        geom_hline(yintercept = 3,
-                   linetype = "solid",
-                   color = insele_palette$success,
-                   alpha = 0.5,
-                   linewidth = 0.7) +
+    # Performance colors using Insele palette
+    perf_colors <- c(
+        "Strong" = "#1565C0",  # Blue
+        "Good" = "#43A047",    # Green
+        "Normal" = "#FB8C00",  # Orange
+        "Weak" = "#E53935"     # Red
+    )
 
-        # Lines connecting points (only if multiple points exist)
-        geom_line(data = auction_data %>%
-                      group_by(bond) %>%
-                      filter(n() > 1) %>%
-                      ungroup(),
-                  color = insele_palette$dark_gray,
-                  alpha = 0.3,
-                  linewidth = 0.5) +
+    # Calculate appropriate date breaks based on data range
+    date_range <- range(auction_data$plot_date, na.rm = TRUE)
+    date_span_years <- as.numeric(difftime(date_range[2], date_range[1], units = "days")) / 365
 
-        # Actual auction points
-        geom_point(aes(size = offer_amount/1e9,
-                       fill = success,
-                       color = success),
-                   shape = 21,
-                   stroke = 1.2,
-                   alpha = 0.9) +
+    if(date_span_years > 3) {
+        date_breaks <- "1 year"
+        date_labels <- "%Y"
+    } else if(date_span_years > 1) {
+        date_breaks <- "6 months"
+        date_labels <- "%b\n%Y"
+    } else {
+        date_breaks <- "3 months"
+        date_labels <- "%b\n%y"
+    }
 
-        # Faceting
-        facet_wrap(~bond_label,
-                   ncol = 4,
-                   scales = "free_x") +
-
-        # Color scales
-        scale_fill_manual(
-            values = c("Strong" = insele_palette$success,
-                       "Good" = insele_palette$secondary,
-                       "Normal" = insele_palette$warning,
-                       "Weak" = insele_palette$danger),
-            name = "Performance",
-            guide = guide_legend(
-                title.position = "top",
-                title.hjust = 0.5,
-                nrow = 1
-            )
+    # Base plot
+    p <- ggplot(auction_data, aes(x = plot_date, y = bid_to_cover)) +
+        # Reference lines for thresholds
+        geom_hline(yintercept = 2.0, linetype = "dotted", color = "#E53935", alpha = 0.5, linewidth = 0.5) +
+        geom_hline(yintercept = 2.5, linetype = "dotted", color = "#FB8C00", alpha = 0.5, linewidth = 0.5) +
+        geom_hline(yintercept = 3.0, linetype = "dotted", color = "#43A047", alpha = 0.5, linewidth = 0.5) +
+        # Points
+        geom_point(
+            aes(color = performance, size = offer_bn),
+            alpha = 0.8
         ) +
-
         scale_color_manual(
-            values = c("Strong" = insele_palette$success,
-                       "Good" = insele_palette$secondary,
-                       "Normal" = insele_palette$warning,
-                       "Weak" = insele_palette$danger),
-            guide = "none"
+            values = perf_colors,
+            name = "Performance",
+            drop = FALSE
         ) +
-
         scale_size_continuous(
+            name = "Offer Size\n(R bn)",
             range = c(2, 8),
-            name = "Offer Size (R bn)",
-            breaks = c(2, 5, 10, 15),
-            guide = guide_legend(
-                title.position = "top",
-                title.hjust = 0.5,
-                nrow = 1
-            )
-        ) +
-
-        scale_x_date(
-            date_breaks = "3 months",
-            date_labels = "%b\n%y",
-            expand = expansion(mult = c(0.05, 0.05))
-        ) +
-
-        scale_y_continuous(
-            breaks = c(1, 2, 2.5, 3, 4, 5),
-            labels = function(x) paste0(x, "x"),
-            expand = expansion(mult = c(0.05, 0.1))
-        ) +
-
-        labs(
-            title = "Comprehensive Auction Performance Analytics",
-            subtitle = paste("Bid-to-cover ratios | Total auctions:",
-                             nrow(auction_data),
-                             "| Period:",
-                             format(min(auction_data$date), "%b %Y"),
-                             "to",
-                             format(max(auction_data$date), "%b %Y")),
-            x = NULL,
-            y = "Bid-to-Cover Ratio",
-            caption = "Reference lines: 2.0x (minimum) | 2.5x (good) | 3.0x (excellent) | Trend shown for bonds with 5+ auctions"
-        ) +
-
-        create_insele_theme() +
-        theme(
-            panel.spacing.x = unit(1.0, "lines"),
-            panel.spacing.y = unit(2.5, "lines"),
-            strip.background = element_rect(
-                fill = insele_palette$primary,
-                color = NA
-            ),
-            strip.text = element_text(
-                color = "white",
-                face = "bold",
-                size = 10,
-                margin = ggplot2::margin(3, 5, 3, 5)
-            ),
-            legend.position = "bottom",
-            legend.box = "horizontal",
-            panel.background = element_rect(
-                fill = "#FAFBFC",
-                color = NA
-            ),
-            panel.grid.major.y = element_line(
-                color = "white",
-                linewidth = 0.8
-            ),
-            panel.grid.minor = element_blank(),
-            panel.border = element_rect(
-                color = insele_palette$light_gray,
-                fill = NA,
-                linewidth = 0.5
-            ),
-            plot.margin = ggplot2::margin(15, 15, 15, 15)
+            breaks = c(1, 2, 3, 4),
+            labels = c("1", "2", "3", "4+")
         )
 
-    # Conditionally add smooth trends only for bonds with sufficient data
-    bonds_with_trends <- bond_stats %>%
-        filter(n_auctions >= 5) %>%
-        pull(bond)
+    # Add trend lines if enabled and enough data
+    if(show_trend) {
+        # Only add trend for bonds with 5+ auctions
+        bonds_with_enough_data <- auction_data %>%
+            count(bond) %>%
+            filter(n >= 5) %>%
+            pull(bond)
 
-    if(length(bonds_with_trends) > 0) {
-        for(bond_name in bonds_with_trends) {
-            bond_subset <- auction_data %>% filter(bond == bond_name)
-
-            tryCatch({
-                p <- p +
-                    geom_smooth(
-                        data = bond_subset,
-                        method = "lm",
-                        se = FALSE,
-                        color = insele_palette$primary,
-                        linewidth = 0.8,
-                        linetype = "solid",
-                        alpha = 0.6
-                    )
-            }, error = function(e) {
-                NULL
-            })
+        if(length(bonds_with_enough_data) > 0) {
+            trend_data <- auction_data %>% filter(bond %in% bonds_with_enough_data)
+            p <- p + geom_smooth(
+                data = trend_data,
+                method = "lm",
+                se = FALSE,
+                color = "#37474F",
+                linewidth = 0.8,
+                linetype = "solid"
+            )
         }
     }
+
+    # Faceting with improved layout
+    p <- p + facet_wrap(
+        ~ facet_label,
+        ncol = ncol_val,
+        scales = x_scales
+    )
+
+    # Apply scales and labels
+    p <- p +
+        scale_x_date(
+            date_breaks = date_breaks,
+            date_labels = date_labels,
+            expand = expansion(mult = c(0.02, 0.02))
+        ) +
+        scale_y_continuous(
+            breaks = seq(1, 10, by = 1),
+            labels = function(x) paste0(x, "x"),
+            limits = c(
+                max(0, min(auction_data$bid_to_cover, na.rm = TRUE) - 0.5),
+                min(10, max(auction_data$bid_to_cover, na.rm = TRUE) + 0.5)
+            )
+        ) +
+        labs(
+            title = "Auction Performance Analytics",
+            subtitle = paste0(
+                "Bid-to-Cover ratios by bond | ",
+                format(min(auction_data$plot_date), "%b %Y"), " to ",
+                format(max(auction_data$plot_date), "%b %Y"),
+                " | Reference: 2x (minimum), 2.5x (good), 3x (excellent)"
+            ),
+            x = NULL,
+            y = "Bid-to-Cover Ratio",
+            caption = paste0(
+                "Point size indicates offer amount | ",
+                if(show_trend) "Trend lines shown for bonds with 5+ auctions | " else "",
+                "Source: Insele Capital Partners"
+            )
+        ) +
+        theme_minimal(base_size = 11) +
+        theme(
+            # Title styling
+            plot.title = element_text(color = "#1B3A6B", face = "bold", size = 16),
+            plot.subtitle = element_text(color = "#666666", size = 10, margin = margin(b = 15)),
+            plot.caption = element_text(color = "#999999", size = 8, hjust = 1),
+
+            # Facet strip styling
+            strip.background = element_rect(fill = "#1B3A6B", color = NA),
+            strip.text = element_text(color = "white", face = "bold", size = 10,
+                                       margin = margin(t = 5, b = 5)),
+
+            # Axis styling - CRITICAL FIX for readability
+            axis.text.x = element_text(
+                size = 8,
+                angle = 0,
+                hjust = 0.5,
+                vjust = 1,
+                color = "#333333"
+            ),
+            axis.text.y = element_text(size = 9, color = "#333333"),
+            axis.title.y = element_text(size = 10, color = "#1B3A6B", margin = margin(r = 10)),
+
+            # Panel styling
+            panel.grid.major.x = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.grid.major.y = element_line(color = "#E0E0E0", linewidth = 0.3),
+            panel.spacing = unit(0.8, "lines"),
+            panel.background = element_rect(fill = "#FAFAFA", color = NA),
+
+            # Legend styling
+            legend.position = "bottom",
+            legend.box = "horizontal",
+            legend.title = element_text(size = 9, face = "bold"),
+            legend.text = element_text(size = 8),
+            legend.margin = margin(t = 10),
+
+            # Overall margins
+            plot.margin = margin(t = 10, r = 15, b = 10, l = 10)
+        ) +
+        guides(
+            color = guide_legend(order = 1, nrow = 1),
+            size = guide_legend(order = 2, nrow = 1)
+        )
 
     return(p)
 }
