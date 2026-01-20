@@ -1340,7 +1340,7 @@ generate_enhanced_correlation_plot <- function(data, params) {
             legend.key.height = unit(0.3, "cm"),
             plot.title = element_text(hjust = 0.5),
             plot.subtitle = element_text(hjust = 0.5, size = 9),
-            plot.margin = margin(10, 10, 10, 10),
+            plot.margin = ggplot2::margin(10, 10, 10, 10),
             panel.grid = element_blank()
         ) +
 
