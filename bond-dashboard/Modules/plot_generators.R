@@ -1884,3 +1884,719 @@ generate_rv_summary_table <- function(data, params) {
 
     return(rv_table)
 }
+
+
+# ================================================================================
+# MARKET INTELLIGENCE - YIELD ENVIRONMENT MONITOR
+# ================================================================================
+
+#' Generate Yield Percentile Heatmap
+#'
+#' Shows where current yields sit vs their historical distribution by tenor bucket.
+#' Answers: "Are we at extremes? Is there room to move?"
+#'
+#' @param data Bond data with date, bond, yield_to_maturity, modified_duration
+#' @param params Additional parameters (unused)
+#' @return ggplot object
+#' @export
+generate_yield_percentile_heatmap <- function(data, params) {
+
+    # Validate data
+    if (is.null(data) || nrow(data) < 10) {
+        return(NULL)
+    }
+
+    # Ensure required columns exist
+    required_cols <- c("date", "yield_to_maturity", "modified_duration")
+    if (!all(required_cols %in% names(data))) {
+        return(NULL)
+    }
+
+    # Filter valid data
+    data <- data %>%
+        filter(
+            !is.na(yield_to_maturity),
+            !is.na(modified_duration),
+            is.finite(yield_to_maturity),
+            is.finite(modified_duration),
+            yield_to_maturity > 1.5,
+            yield_to_maturity < 25,
+            modified_duration > 0.5
+        )
+
+    if (nrow(data) < 10) return(NULL)
+
+    # Define maturity buckets based on modified duration
+    data <- data %>%
+        mutate(
+            tenor = case_when(
+                modified_duration <= 2 ~ "1-2y",
+                modified_duration <= 4 ~ "2-4y",
+                modified_duration <= 6 ~ "4-6y",
+                modified_duration <= 8 ~ "6-8y",
+                modified_duration <= 10 ~ "8-10y",
+                modified_duration <= 13 ~ "10-13y",
+                TRUE ~ "13y+"
+            ),
+            tenor = factor(tenor, levels = c("1-2y", "2-4y", "4-6y", "6-8y", "8-10y", "10-13y", "13y+"))
+        )
+
+    max_date <- max(data$date, na.rm = TRUE)
+
+    # Calculate current yield and percentile for each tenor
+    percentile_data <- data %>%
+        group_by(tenor) %>%
+        filter(n() >= 5) %>%  # Need sufficient history
+        summarise(
+            current_yield = {
+                latest <- yield_to_maturity[date == max(date)]
+                if (length(latest) == 0) NA_real_ else mean(latest, na.rm = TRUE)
+            },
+            min_yield = min(yield_to_maturity, na.rm = TRUE),
+            max_yield = max(yield_to_maturity, na.rm = TRUE),
+            median_yield = median(yield_to_maturity, na.rm = TRUE),
+            # Percentile: where does current sit in historical range?
+            percentile = {
+                current_val <- mean(yield_to_maturity[date == max(date)], na.rm = TRUE)
+                if (is.na(current_val)) {
+                    NA_real_
+                } else {
+                    sum(yield_to_maturity <= current_val, na.rm = TRUE) / sum(!is.na(yield_to_maturity)) * 100
+                }
+            },
+            n_obs = n(),
+            .groups = "drop"
+        ) %>%
+        filter(!is.na(percentile), !is.na(current_yield)) %>%
+        mutate(
+            # Classify the level
+            level_class = case_when(
+                percentile >= 90 ~ "Very High (90%+)",
+                percentile >= 75 ~ "High (75-90%)",
+                percentile >= 25 ~ "Normal (25-75%)",
+                percentile >= 10 ~ "Low (10-25%)",
+                TRUE ~ "Very Low (<10%)"
+            ),
+            level_class = factor(level_class,
+                                 levels = c("Very Low (<10%)", "Low (10-25%)", "Normal (25-75%)",
+                                            "High (75-90%)", "Very High (90%+)"))
+        )
+
+    if (nrow(percentile_data) < 2) return(NULL)
+
+    # Create horizontal bar chart showing percentile position
+    p <- ggplot(percentile_data, aes(x = tenor, y = percentile, fill = level_class)) +
+
+        # Background showing full range
+        geom_col(aes(y = 100), fill = "gray90", width = 0.7) +
+
+        # Actual percentile bar
+        geom_col(width = 0.7) +
+
+        # Add current yield as text
+        geom_text(aes(y = pmin(percentile + 8, 100),
+                      label = sprintf("%.2f%%", current_yield)),
+                  size = 3.2, fontface = "bold", hjust = 0, color = "gray20") +
+
+        # Percentile value
+        geom_text(aes(y = percentile / 2,
+                      label = sprintf("%.0f%%ile", percentile)),
+                  size = 2.8, color = "white", fontface = "bold") +
+
+        # Reference lines
+        geom_hline(yintercept = c(25, 50, 75), linetype = "dashed",
+                   color = "gray50", alpha = 0.5) +
+
+        scale_fill_manual(
+            values = c(
+                "Very Low (<10%)" = "#27AE60",      # Green - yields very low
+                "Low (10-25%)" = "#82E0AA",         # Light green
+                "Normal (25-75%)" = "#5B8FA3",     # Blue-gray (secondary)
+                "High (75-90%)" = "#F5B041",        # Orange
+                "Very High (90%+)" = "#dc3545"     # Red - yields very high
+            ),
+            name = "Historical\nPercentile",
+            drop = FALSE
+        ) +
+
+        scale_y_continuous(
+            limits = c(0, 115),
+            breaks = c(0, 25, 50, 75, 100),
+            labels = c("0%", "25%", "50%", "75%", "100%")
+        ) +
+
+        coord_flip() +
+
+        labs(
+            title = "Yield Levels vs History",
+            subtitle = sprintf("Where current yields sit in historical distribution | Since %s",
+                               format(min(data$date), "%b %Y")),
+            x = NULL,
+            y = "Historical Percentile",
+            caption = "Higher percentile = yields are HIGH vs history"
+        ) +
+
+        create_insele_theme() +
+        theme(
+            legend.position = "right",
+            legend.direction = "vertical",
+            legend.key.size = unit(0.8, "lines"),
+            legend.text = element_text(size = 8),
+            legend.title = element_text(size = 9, face = "bold"),
+            panel.grid.major.y = element_blank(),
+            panel.grid.minor = element_blank(),
+            plot.caption = element_text(size = 8, color = "gray50", hjust = 0)
+        )
+
+    return(p)
+}
+
+
+#' Generate Rate of Change Monitor
+#'
+#' Shows yield changes at different horizons by tenor bucket.
+#' Answers: "What's the momentum? Are rates rising or falling?"
+#'
+#' @param data Bond data with date, bond, yield_to_maturity, modified_duration
+#' @param params Additional parameters (unused)
+#' @return ggplot object
+#' @export
+generate_rate_of_change_monitor <- function(data, params) {
+
+    # Validate data
+    if (is.null(data) || nrow(data) < 30) {
+        return(NULL)
+    }
+
+    # Ensure required columns exist
+    required_cols <- c("date", "bond", "yield_to_maturity", "modified_duration")
+    if (!all(required_cols %in% names(data))) {
+        return(NULL)
+    }
+
+    # Filter valid data
+    data <- data %>%
+        filter(
+            !is.na(yield_to_maturity),
+            !is.na(modified_duration),
+            is.finite(yield_to_maturity),
+            is.finite(modified_duration),
+            yield_to_maturity > 1.5,
+            modified_duration > 0.5
+        )
+
+    if (nrow(data) < 30) return(NULL)
+
+    max_date <- max(data$date, na.rm = TRUE)
+
+    # Calculate changes at different horizons
+    roc_data <- data %>%
+        group_by(bond) %>%
+        arrange(date) %>%
+        mutate(
+            change_1w = yield_to_maturity - lag(yield_to_maturity, 5),
+            change_1m = yield_to_maturity - lag(yield_to_maturity, 21),
+            change_3m = yield_to_maturity - lag(yield_to_maturity, 63)
+        ) %>%
+        ungroup() %>%
+        filter(date == max_date) %>%
+        filter(!is.na(change_1m))
+
+    if (nrow(roc_data) < 2) return(NULL)
+
+    # Reshape for plotting
+    roc_long <- roc_data %>%
+        select(bond, modified_duration, change_1w, change_1m, change_3m) %>%
+        pivot_longer(cols = starts_with("change_"),
+                     names_to = "horizon",
+                     values_to = "change_bps") %>%
+        mutate(
+            change_bps = change_bps * 100,  # Convert to bps
+            horizon = case_when(
+                horizon == "change_1w" ~ "1 Week",
+                horizon == "change_1m" ~ "1 Month",
+                horizon == "change_3m" ~ "3 Month"
+            ),
+            horizon = factor(horizon, levels = c("1 Week", "1 Month", "3 Month"))
+        ) %>%
+        filter(!is.na(change_bps))
+
+    # Calculate average change by tenor bucket
+    avg_changes <- roc_long %>%
+        mutate(
+            tenor = case_when(
+                modified_duration <= 5 ~ "Short (0-5y)",
+                modified_duration <= 10 ~ "Medium (5-10y)",
+                TRUE ~ "Long (10y+)"
+            )
+        ) %>%
+        group_by(tenor, horizon) %>%
+        summarise(avg_change = mean(change_bps, na.rm = TRUE), .groups = "drop") %>%
+        mutate(tenor = factor(tenor, levels = c("Short (0-5y)", "Medium (5-10y)", "Long (10y+)"))) %>%
+        filter(!is.na(avg_change))
+
+    if (nrow(avg_changes) < 2) return(NULL)
+
+    # Determine y-axis limits
+    y_max <- max(abs(avg_changes$avg_change), na.rm = TRUE) * 1.3
+    y_max <- max(y_max, 10)  # At least 10 bps
+
+    p <- ggplot(avg_changes, aes(x = horizon, y = avg_change, fill = tenor)) +
+        geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+
+        # Zero reference line
+        geom_hline(yintercept = 0, linewidth = 0.8, color = "gray30") +
+
+        # Value labels
+        geom_text(aes(label = sprintf("%+.0f", avg_change),
+                      y = avg_change + sign(avg_change) * (y_max * 0.08)),
+                  position = position_dodge(width = 0.8),
+                  size = 3, fontface = "bold") +
+
+        scale_fill_manual(
+            values = c(
+                "Short (0-5y)" = "#1B3A6B",    # Primary (navy)
+                "Medium (5-10y)" = "#5B8FA3",  # Secondary (teal)
+                "Long (10y+)" = "#28a745"      # Success (green)
+            ),
+            name = NULL
+        ) +
+
+        scale_y_continuous(
+            limits = c(-y_max, y_max),
+            labels = function(x) paste0(ifelse(x > 0, "+", ""), round(x), " bps")
+        ) +
+
+        labs(
+            title = "Rate Momentum",
+            subtitle = "Average yield change by tenor bucket",
+            x = NULL,
+            y = "Change (bps)",
+            caption = "Positive = yields rising | Negative = yields falling"
+        ) +
+
+        create_insele_theme() +
+        theme(
+            legend.position = "top",
+            legend.direction = "horizontal",
+            panel.grid.major.x = element_blank(),
+            plot.caption = element_text(size = 8, color = "gray50", hjust = 0)
+        )
+
+    return(p)
+}
+
+
+# ================================================================================
+# MARKET INTELLIGENCE - CURVE SHAPE & MOMENTUM
+# ================================================================================
+
+#' Generate Curve Comparison Plot
+#'
+#' Visual comparison of current yield curve vs historical snapshots.
+#' Answers: "How has the curve evolved? Where are we vs history?"
+#'
+#' @param data Bond data with date, bond, yield_to_maturity, modified_duration
+#' @param params Additional parameters (unused)
+#' @return ggplot object
+#' @export
+generate_curve_comparison_plot <- function(data, params) {
+
+    # Validate data
+    if (is.null(data) || nrow(data) < 30) {
+        return(NULL)
+    }
+
+    # Ensure required columns exist
+    required_cols <- c("date", "bond", "yield_to_maturity", "modified_duration")
+    if (!all(required_cols %in% names(data))) {
+        return(NULL)
+    }
+
+    # Filter valid data
+    data <- data %>%
+        filter(
+            !is.na(yield_to_maturity),
+            !is.na(modified_duration),
+            is.finite(yield_to_maturity),
+            is.finite(modified_duration),
+            yield_to_maturity > 1.5,
+            yield_to_maturity < 25,
+            modified_duration > 0.5
+        )
+
+    if (nrow(data) < 30) return(NULL)
+
+    # Get curves at different points in time
+    max_date <- max(data$date, na.rm = TRUE)
+
+    # Current curve
+    current_curve <- data %>%
+        filter(date == max_date) %>%
+        select(bond, modified_duration, yield_to_maturity) %>%
+        mutate(curve_type = "Current")
+
+    if (nrow(current_curve) < 3) return(NULL)
+
+    # 1 month ago
+    date_1m <- max_date - 30
+    curve_1m <- data %>%
+        filter(date == max(date[date <= date_1m])) %>%
+        select(bond, modified_duration, yield_to_maturity) %>%
+        mutate(curve_type = "1 Month Ago")
+
+    # 3 months ago
+    date_3m <- max_date - 90
+    curve_3m <- data %>%
+        filter(date == max(date[date <= date_3m])) %>%
+        select(bond, modified_duration, yield_to_maturity) %>%
+        mutate(curve_type = "3 Months Ago")
+
+    # 1 year ago
+    date_1y <- max_date - 365
+    curve_1y <- data %>%
+        filter(date <= date_1y) %>%
+        filter(date == max(date)) %>%
+        select(bond, modified_duration, yield_to_maturity) %>%
+        mutate(curve_type = "1 Year Ago")
+
+    # Historical average
+    avg_curve <- data %>%
+        group_by(bond) %>%
+        summarise(
+            modified_duration = mean(modified_duration, na.rm = TRUE),
+            yield_to_maturity = mean(yield_to_maturity, na.rm = TRUE),
+            .groups = "drop"
+        ) %>%
+        mutate(curve_type = "Historical Average")
+
+    # Combine - only include curves with data
+    curves_list <- list(current_curve)
+    if (nrow(curve_1m) >= 3) curves_list <- c(curves_list, list(curve_1m))
+    if (nrow(curve_3m) >= 3) curves_list <- c(curves_list, list(curve_3m))
+    if (nrow(curve_1y) >= 3) curves_list <- c(curves_list, list(curve_1y))
+    if (nrow(avg_curve) >= 3) curves_list <- c(curves_list, list(avg_curve))
+
+    all_curves <- bind_rows(curves_list) %>%
+        mutate(
+            curve_type = factor(curve_type,
+                                levels = c("Current", "1 Month Ago", "3 Months Ago",
+                                           "1 Year Ago", "Historical Average"))
+        )
+
+    # Define colors and line widths
+    curve_colors <- c(
+        "Current" = "#1B3A6B",           # Primary navy
+        "1 Month Ago" = "#ffc107",       # Warning yellow
+        "3 Months Ago" = "#5B8FA3",      # Secondary teal
+        "1 Year Ago" = "gray60",
+        "Historical Average" = "#dc3545" # Danger red
+    )
+
+    curve_linewidths <- c(
+        "Current" = 1.5,
+        "1 Month Ago" = 0.9,
+        "3 Months Ago" = 0.9,
+        "1 Year Ago" = 0.7,
+        "Historical Average" = 1.1
+    )
+
+    p <- ggplot(all_curves, aes(x = modified_duration, y = yield_to_maturity,
+                                 color = curve_type, linewidth = curve_type)) +
+
+        # Fitted curves
+        geom_smooth(method = "loess", se = FALSE, span = 0.75) +
+
+        # Points only for current
+        geom_point(data = all_curves %>% filter(curve_type == "Current"),
+                   size = 2.5, show.legend = FALSE) +
+
+        # Bond labels for current
+        geom_text(data = all_curves %>% filter(curve_type == "Current"),
+                  aes(label = bond), vjust = -1, hjust = 0.5,
+                  size = 2.2, show.legend = FALSE, color = "gray30") +
+
+        scale_color_manual(
+            values = curve_colors,
+            name = NULL
+        ) +
+
+        scale_linewidth_manual(
+            values = curve_linewidths,
+            guide = "none"
+        ) +
+
+        scale_y_continuous(labels = function(x) paste0(format(x, nsmall = 1), "%")) +
+        scale_x_continuous(breaks = seq(0, 20, by = 2)) +
+
+        labs(
+            title = "Yield Curve Evolution",
+            subtitle = sprintf("Current curve vs historical snapshots | As of %s",
+                               format(max_date, "%d %b %Y")),
+            x = "Modified Duration (years)",
+            y = "Yield to Maturity",
+            caption = "Compare current positioning to recent history and long-term average"
+        ) +
+
+        create_insele_theme() +
+        theme(
+            legend.position = "top",
+            legend.direction = "horizontal",
+            legend.text = element_text(size = 9),
+            plot.caption = element_text(size = 8, color = "gray50", hjust = 0)
+        )
+
+    return(p)
+}
+
+
+#' Generate Curve Steepness Gauge
+#'
+#' Bullet gauge showing 2s10s spread position within historical range.
+#' Answers: "How steep is the curve? Is this extreme or normal?"
+#'
+#' @param data Bond data with date, yield_to_maturity, modified_duration
+#' @param params Additional parameters (unused)
+#' @return ggplot object
+#' @export
+generate_curve_steepness_gauge <- function(data, params) {
+
+    # Validate data
+    if (is.null(data) || nrow(data) < 30) {
+        return(NULL)
+    }
+
+    # Ensure required columns exist
+    required_cols <- c("date", "yield_to_maturity", "modified_duration")
+    if (!all(required_cols %in% names(data))) {
+        return(NULL)
+    }
+
+    # Filter valid data
+    data <- data %>%
+        filter(
+            !is.na(yield_to_maturity),
+            !is.na(modified_duration),
+            is.finite(yield_to_maturity),
+            is.finite(modified_duration),
+            yield_to_maturity > 1.5,
+            modified_duration > 0.5
+        )
+
+    if (nrow(data) < 30) return(NULL)
+
+    # Calculate 2s10s spread over time
+    spread_history <- data %>%
+        group_by(date) %>%
+        summarise(
+            yield_2y = mean(yield_to_maturity[modified_duration >= 1.5 & modified_duration <= 3], na.rm = TRUE),
+            yield_10y = mean(yield_to_maturity[modified_duration >= 8 & modified_duration <= 12], na.rm = TRUE),
+            .groups = "drop"
+        ) %>%
+        mutate(spread_2s10s = (yield_10y - yield_2y) * 100) %>%
+        filter(!is.na(spread_2s10s), is.finite(spread_2s10s))
+
+    if (nrow(spread_history) < 10) return(NULL)
+
+    # Current value and statistics
+    current_spread <- spread_history %>%
+        filter(date == max(date)) %>%
+        pull(spread_2s10s)
+
+    if (length(current_spread) == 0 || is.na(current_spread)) return(NULL)
+
+    spread_min <- min(spread_history$spread_2s10s, na.rm = TRUE)
+    spread_max <- max(spread_history$spread_2s10s, na.rm = TRUE)
+    spread_avg <- mean(spread_history$spread_2s10s, na.rm = TRUE)
+    spread_q25 <- quantile(spread_history$spread_2s10s, 0.25, na.rm = TRUE)
+    spread_q75 <- quantile(spread_history$spread_2s10s, 0.75, na.rm = TRUE)
+    spread_percentile <- sum(spread_history$spread_2s10s <= current_spread) / nrow(spread_history) * 100
+
+    # Determine classification
+    steepness_class <- case_when(
+        current_spread < 0 ~ "Inverted",
+        current_spread < 50 ~ "Flat",
+        current_spread < 100 ~ "Moderately Flat",
+        current_spread < 200 ~ "Normal",
+        current_spread < 300 ~ "Steep",
+        TRUE ~ "Very Steep"
+    )
+
+    # Create gauge visualization
+    # Add padding to range
+    range_padding <- (spread_max - spread_min) * 0.1
+    x_min <- spread_min - range_padding
+    x_max <- spread_max + range_padding
+
+    p <- ggplot() +
+
+        # Background range bar
+        geom_rect(aes(xmin = x_min, xmax = x_max, ymin = 0.7, ymax = 1.3),
+                  fill = "gray95") +
+
+        # Quartile zones
+        geom_rect(aes(xmin = spread_min, xmax = spread_q25,
+                      ymin = 0.72, ymax = 1.28),
+                  fill = "#E8F8F5", alpha = 0.9) +
+        geom_rect(aes(xmin = spread_q25, xmax = spread_q75,
+                      ymin = 0.72, ymax = 1.28),
+                  fill = "#D5F4E6", alpha = 0.9) +
+        geom_rect(aes(xmin = spread_q75, xmax = spread_max,
+                      ymin = 0.72, ymax = 1.28),
+                  fill = "#FCF3CF", alpha = 0.9) +
+
+        # Historical average marker
+        geom_segment(aes(x = spread_avg, xend = spread_avg, y = 0.6, yend = 1.4),
+                     linetype = "dashed", color = "gray40", linewidth = 0.8) +
+        annotate("text", x = spread_avg, y = 1.5,
+                 label = sprintf("Avg: %.0f bps", spread_avg),
+                 size = 2.8, color = "gray40") +
+
+        # Current value marker (thick bar)
+        geom_segment(aes(x = current_spread, xend = current_spread, y = 0.82, yend = 1.18),
+                     color = "#1B3A6B", linewidth = 5) +
+
+        # Current value label
+        annotate("text", x = current_spread, y = 0.45,
+                 label = sprintf("%.0f bps (%s)", current_spread, steepness_class),
+                 size = 3.5, fontface = "bold", color = "#1B3A6B") +
+
+        # Percentile annotation
+        annotate("text", x = (spread_min + spread_max) / 2, y = 1.7,
+                 label = sprintf("Current spread is at %.0f%% percentile of historical range",
+                                 spread_percentile),
+                 size = 3) +
+
+        # Scale markers
+        scale_x_continuous(
+            breaks = c(spread_min, spread_q25, spread_avg, spread_q75, spread_max),
+            labels = c(sprintf("%.0f\n(Min)", spread_min),
+                       sprintf("%.0f\n(25%%)", spread_q25),
+                       sprintf("%.0f\n(Avg)", spread_avg),
+                       sprintf("%.0f\n(75%%)", spread_q75),
+                       sprintf("%.0f\n(Max)", spread_max))
+        ) +
+
+        coord_cartesian(ylim = c(0.2, 1.9), xlim = c(x_min, x_max)) +
+
+        labs(
+            title = "Curve Steepness: 2s10s Spread",
+            subtitle = "Position within historical range",
+            x = "Spread (basis points)",
+            y = NULL
+        ) +
+
+        theme_minimal() +
+        theme(
+            axis.text.y = element_blank(),
+            axis.ticks.y = element_blank(),
+            axis.text.x = element_text(size = 8),
+            panel.grid = element_blank(),
+            plot.title = element_text(face = "bold", size = 11, color = "#1B3A6B"),
+            plot.subtitle = element_text(size = 9, color = "gray50"),
+            plot.margin = margin(10, 15, 5, 15)
+        )
+
+    return(p)
+}
+
+
+#' Generate Market Summary Metrics
+#'
+#' Calculate key summary metrics for the market intelligence panel.
+#' Returns a list of metrics for use in value boxes.
+#'
+#' @param data Bond data with date, yield_to_maturity, modified_duration
+#' @param params Additional parameters (unused)
+#' @return List of metrics
+#' @export
+generate_market_summary_metrics <- function(data, params) {
+
+    # Default metrics in case of insufficient data
+    default_metrics <- list(
+        avg_yield = NA_real_,
+        yield_change_1m = NA_real_,
+        curve_slope = NA_real_,
+        yield_range = NA_real_,
+        valid = FALSE
+    )
+
+    # Validate data
+    if (is.null(data) || nrow(data) < 30) {
+        return(default_metrics)
+    }
+
+    # Ensure required columns exist
+    required_cols <- c("date", "yield_to_maturity", "modified_duration")
+    if (!all(required_cols %in% names(data))) {
+        return(default_metrics)
+    }
+
+    # Filter valid data
+    data <- data %>%
+        filter(
+            !is.na(yield_to_maturity),
+            !is.na(modified_duration),
+            is.finite(yield_to_maturity),
+            is.finite(modified_duration),
+            yield_to_maturity > 1.5,
+            modified_duration > 0.5
+        )
+
+    if (nrow(data) < 30) return(default_metrics)
+
+    max_date <- max(data$date, na.rm = TRUE)
+
+    # Current curve metrics
+    current <- data %>% filter(date == max_date)
+
+    if (nrow(current) < 3) return(default_metrics)
+
+    # Calculate key metrics
+    tryCatch({
+        # Average yield level
+        avg_yield <- mean(current$yield_to_maturity, na.rm = TRUE)
+
+        # Yield range (dispersion)
+        yield_range <- max(current$yield_to_maturity, na.rm = TRUE) -
+                       min(current$yield_to_maturity, na.rm = TRUE)
+
+        # 1-month change in average yield
+        date_1m_ago <- max_date - 30
+        data_1m_ago <- data %>%
+            filter(date <= date_1m_ago) %>%
+            filter(date == max(date))
+
+        avg_yield_1m_ago <- if (nrow(data_1m_ago) >= 3) {
+            mean(data_1m_ago$yield_to_maturity, na.rm = TRUE)
+        } else {
+            NA_real_
+        }
+
+        yield_change_1m <- if (!is.na(avg_yield_1m_ago)) {
+            (avg_yield - avg_yield_1m_ago) * 100  # Convert to bps
+        } else {
+            NA_real_
+        }
+
+        # Curve slope (10y - 2y approximation using modified duration)
+        short_yield <- mean(current$yield_to_maturity[current$modified_duration <= 3], na.rm = TRUE)
+        long_yield <- mean(current$yield_to_maturity[current$modified_duration >= 8], na.rm = TRUE)
+
+        curve_slope <- if (!is.na(short_yield) && !is.na(long_yield)) {
+            (long_yield - short_yield) * 100  # Convert to bps
+        } else {
+            NA_real_
+        }
+
+        list(
+            avg_yield = avg_yield,
+            yield_change_1m = yield_change_1m,
+            curve_slope = curve_slope,
+            yield_range = yield_range * 100,  # Convert to bps for display
+            valid = TRUE
+        )
+    }, error = function(e) {
+        default_metrics
+    })
+}
