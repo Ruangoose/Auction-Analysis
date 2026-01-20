@@ -2352,26 +2352,61 @@ generate_curve_comparison_plot <- function(data, params) {
     }
 
     # ════════════════════════════════════════════════════════════════════════
-    # HISTORICAL AVERAGE - Only for bonds in current curve
-    # (to make comparison meaningful for currently tradeable portfolio)
+    # HISTORICAL AVERAGE - Smooth fitted curve across all historical data
+    # Uses loess regression to create a smooth reference curve instead of
+    # per-bond averages (which create scattered points)
     # ════════════════════════════════════════════════════════════════════════
-    avg_curve <- data %>%
+
+    # Step 1: Collect all historical data points for current bonds
+    hist_data <- data %>%
         filter(bond %in% current_curve$bond,
                !is.na(yield_to_maturity),
                yield_to_maturity > 1.5,
                yield_to_maturity < 25,
                modified_duration > 0.5) %>%
-        group_by(bond) %>%
-        summarise(
-            modified_duration = mean(modified_duration, na.rm = TRUE),
-            yield_to_maturity = mean(yield_to_maturity, na.rm = TRUE),
-            n_obs = n(),
-            .groups = "drop"
-        ) %>%
-        filter(!is.na(modified_duration), !is.na(yield_to_maturity)) %>%
-        arrange(modified_duration) %>%
-        mutate(curve_type = "Hist. Avg",
-               curve_date = as.Date(NA))
+        select(date, bond, modified_duration, yield_to_maturity)
+
+    # Step 2: Fit loess curve to all historical points
+    avg_curve <- data.frame()  # Default empty
+
+    if (nrow(hist_data) >= 10) {
+        tryCatch({
+            # Fit loess model to historical data
+            hist_loess <- loess(
+                yield_to_maturity ~ modified_duration,
+                data = hist_data,
+                span = 0.6,  # Smoothness parameter
+                degree = 2   # Quadratic local regression
+            )
+
+            # Generate prediction grid spanning current curve's duration range
+            duration_range <- range(current_curve$modified_duration, na.rm = TRUE)
+            duration_grid <- seq(
+                duration_range[1],
+                duration_range[2],
+                length.out = 100
+            )
+
+            # Predict smooth curve values
+            predicted_ytm <- predict(hist_loess, newdata = data.frame(modified_duration = duration_grid))
+
+            # Create smooth curve data frame
+            avg_curve <- data.frame(
+                modified_duration = duration_grid,
+                yield_to_maturity = predicted_ytm,
+                bond = NA_character_  # Placeholder for bind_rows compatibility
+            ) %>%
+                filter(!is.na(yield_to_maturity)) %>%
+                mutate(curve_type = "Hist. Avg",
+                       curve_date = as.Date(NA))
+
+            message(sprintf("Hist. Avg: Fitted loess curve from %d historical points, generating %d smooth points",
+                            nrow(hist_data), nrow(avg_curve)))
+        }, error = function(e) {
+            message("Warning: Could not fit loess for historical average: ", e$message)
+            avg_curve <<- data.frame()
+        })
+    }
 
     # Combine all curves
     curves_list <- list(current_curve)
