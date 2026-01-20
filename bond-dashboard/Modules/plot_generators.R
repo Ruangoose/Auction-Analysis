@@ -2028,10 +2028,10 @@ generate_yield_percentile_heatmap <- function(data, params) {
                    hjust = 0, size = 3.2, fontface = "bold",
                    fill = "white", label.size = 0, label.padding = unit(0.15, "lines")) +
 
-        # Percentile value - INSIDE the bar, left-aligned
+        # Percentile value - INSIDE the bar, left-aligned (P = percentile)
         geom_text(aes(x = 5,
-                      label = sprintf("%.0f%%ile", percentile)),
-                  hjust = 0, size = 2.8, color = "white", fontface = "bold") +
+                      label = sprintf("P%.0f", percentile)),
+                  hjust = 0, size = 3, color = "white", fontface = "bold") +
 
         # Reference lines at quartiles
         geom_vline(xintercept = c(25, 50, 75), linetype = "dashed",
@@ -2134,14 +2134,15 @@ generate_rate_of_change_monitor <- function(data, params) {
     if (nrow(roc_data) < 2) return(NULL)
 
     # CRITICAL: Ensure all 3 tenor buckets are created
+    # Buckets adjusted to match actual SA bond universe (max duration ~9.5y)
     roc_data <- roc_data %>%
         mutate(
             tenor = case_when(
-                modified_duration < 5 ~ "Short (0-5y)",
-                modified_duration < 10 ~ "Medium (5-10y)",
-                modified_duration >= 10 ~ "Long (10y+)"
+                modified_duration < 4 ~ "Short (0-4y)",
+                modified_duration < 7 ~ "Medium (4-7y)",
+                modified_duration >= 7 ~ "Long (7y+)"
             ),
-            tenor = factor(tenor, levels = c("Short (0-5y)", "Medium (5-10y)", "Long (10y+)"))
+            tenor = factor(tenor, levels = c("Short (0-4y)", "Medium (4-7y)", "Long (7y+)"))
         ) %>%
         filter(!is.na(tenor))
 
@@ -2187,7 +2188,7 @@ generate_rate_of_change_monitor <- function(data, params) {
         mutate(
             avg_change = ifelse(is.na(avg_change), 0, avg_change),
             label_color = ifelse(is.na(label_color), "gray50", label_color),
-            tenor = factor(tenor, levels = c("Short (0-5y)", "Medium (5-10y)", "Long (10y+)")),
+            tenor = factor(tenor, levels = c("Short (0-4y)", "Medium (4-7y)", "Long (7y+)")),
             horizon = factor(horizon, levels = c("1 Week", "1 Month", "3 Month"))
         )
 
@@ -2211,9 +2212,9 @@ generate_rate_of_change_monitor <- function(data, params) {
 
         scale_fill_manual(
             values = c(
-                "Short (0-5y)" = insele_palette$primary,
-                "Medium (5-10y)" = "#5DADE2",
-                "Long (10y+)" = "#85929E"
+                "Short (0-4y)" = insele_palette$primary,
+                "Medium (4-7y)" = "#5DADE2",
+                "Long (7y+)" = "#85929E"
             ),
             name = NULL,
             drop = FALSE  # Show all legend items even if missing data
@@ -2229,7 +2230,7 @@ generate_rate_of_change_monitor <- function(data, params) {
             title = "Rate Momentum",
             subtitle = "Average yield change by tenor bucket",
             x = NULL,
-            y = "Change (bps)",
+            y = "Δ (bps)",
             caption = "Green = yields falling (bullish) | Red = yields rising (bearish)"
         ) +
 
@@ -2395,13 +2396,10 @@ generate_curve_comparison_plot <- function(data, params) {
 
     p <- ggplot(mapping = aes(x = modified_duration, y = yield_to_maturity)) +
 
-        # Historical average as simple line through points (no smoothing/extrapolation)
+        # Historical average as simple dotted line (no points to avoid visual clutter)
         geom_line(data = avg_curve,
                   aes(color = "Hist. Avg"),
                   linewidth = 1.2, linetype = "dotted") +
-        geom_point(data = avg_curve,
-                   aes(color = "Hist. Avg"),
-                   size = 1.5, shape = 1, show.legend = FALSE) +
 
         # 3M Ago curve - smoothed but only through its own points
         {if(nrow(curve_3m) >= 3) geom_smooth(data = curve_3m,
@@ -2429,21 +2427,23 @@ generate_curve_comparison_plot <- function(data, params) {
                    size = 3, show.legend = FALSE) +
 
         # Bond labels for current curve using ggrepel
+        # Optimized for crowded duration clusters (especially 7-8y area)
         ggrepel::geom_text_repel(
             data = current_curve,
             aes(label = bond),
             size = 2.5,
             color = "gray25",
             fontface = "bold",
-            box.padding = 0.4,
-            point.padding = 0.3,
-            segment.color = "gray60",
-            segment.size = 0.25,
-            min.segment.length = 0.3,
-            max.overlaps = 20,
-            force = 2,
-            force_pull = 0.5,
+            box.padding = 0.5,
+            point.padding = 0.4,
+            segment.color = "gray50",
+            segment.size = 0.3,
+            min.segment.length = 0.2,
+            max.overlaps = 25,
+            force = 4,
+            force_pull = 0.3,
             direction = "both",
+            nudge_y = 0.1,
             seed = 42,
             show.legend = FALSE
         ) +
@@ -2475,7 +2475,7 @@ generate_curve_comparison_plot <- function(data, params) {
             subtitle = sprintf("Current vs historical snapshots | As of %s",
                                format(max_date, "%d %b %Y")),
             x = "Modified Duration (years)",
-            y = "Yield to Maturity",
+            y = "YTM (%)",
             caption = "Solid = recent | Dashed = 3M ago | Dotted = historical average (current bonds only)"
         ) +
 
