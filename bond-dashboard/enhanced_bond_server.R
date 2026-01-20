@@ -4044,11 +4044,134 @@ server <- function(input, output, session) {
     })
 
 
+    # =====================================================
+    # Auction Performance Analytics - Enhanced Bond Selector
+    # =====================================================
+
+    # Get available bonds with auction data, sorted by auction count
+    available_auction_bonds <- reactive({
+        req(filtered_data())
+
+        filtered_data() %>%
+            filter(!is.na(offer_date), !is.na(bid_to_cover), bid_to_cover > 0) %>%
+            group_by(bond) %>%
+            summarise(
+                n_auctions = n(),
+                avg_b2c = mean(bid_to_cover, na.rm = TRUE),
+                last_auction = max(offer_date, na.rm = TRUE),
+                .groups = "drop"
+            ) %>%
+            arrange(desc(n_auctions))
+    })
+
+    # Initialize picker with top 6 bonds by default
+    observe({
+        bonds_data <- available_auction_bonds()
+        req(nrow(bonds_data) > 0)
+
+        # Create choices with auction count labels
+        choices <- setNames(
+            bonds_data$bond,
+            paste0(bonds_data$bond, " (n=", bonds_data$n_auctions, ")")
+        )
+
+        # Default to top 6
+        default_selected <- head(bonds_data$bond, 6)
+
+        shinyWidgets::updatePickerInput(
+            session = session,
+            inputId = "auction_perf_bonds",
+            choices = choices,
+            selected = default_selected
+        )
+    })
+
+    # Quick select button handlers
+    observeEvent(input$auction_perf_top6, {
+        bonds_data <- available_auction_bonds()
+        req(bonds_data)
+        top6 <- head(bonds_data$bond, 6)
+        shinyWidgets::updatePickerInput(session, "auction_perf_bonds", selected = top6)
+    })
+
+    observeEvent(input$auction_perf_recent, {
+        bonds_data <- available_auction_bonds()
+        req(bonds_data)
+        # Most active YTD
+        ytd_active <- filtered_data() %>%
+            filter(
+                !is.na(offer_date),
+                !is.na(bid_to_cover),
+                lubridate::year(offer_date) == lubridate::year(Sys.Date())
+            ) %>%
+            count(bond, sort = TRUE) %>%
+            head(6) %>%
+            pull(bond)
+
+        if(length(ytd_active) > 0) {
+            shinyWidgets::updatePickerInput(session, "auction_perf_bonds", selected = ytd_active)
+        }
+    })
+
+    observeEvent(input$auction_perf_all, {
+        bonds_data <- available_auction_bonds()
+        req(bonds_data)
+        # Select all (up to 8)
+        all_bonds <- head(bonds_data$bond, 8)
+        shinyWidgets::updatePickerInput(session, "auction_perf_bonds", selected = all_bonds)
+    })
+
+    # Dynamic UI for plot with variable height
+    output$enhanced_auction_analytics_ui <- renderUI({
+        n_bonds <- length(input$auction_perf_bonds)
+        if(is.null(n_bonds) || n_bonds == 0) n_bonds <- 6
+
+        layout <- input$auction_perf_layout
+        if(is.null(layout)) layout <- "auto"
+
+        # Calculate rows based on layout
+        ncol_val <- switch(layout,
+            "2x3" = 3,
+            "2x4" = 4,
+            "3x3" = 3,
+            "auto" = if(n_bonds <= 4) 2 else if(n_bonds <= 6) 3 else 4
+        )
+        n_rows <- ceiling(n_bonds / ncol_val)
+        base_height <- 200
+        plot_height <- max(400, n_rows * base_height + 100)
+
+        plotOutput("enhanced_auction_analytics", height = paste0(plot_height, "px"))
+    })
+
+    # Main plot output
     output$enhanced_auction_analytics <- renderPlot({
         req(filtered_data())
-        p <- generate_enhanced_auction_analytics(filtered_data(), list())
+
+        # Get selected bonds (default to top 6 if none selected)
+        selected_bonds <- input$auction_perf_bonds
+        if(is.null(selected_bonds) || length(selected_bonds) == 0) {
+            bonds_data <- available_auction_bonds()
+            if(!is.null(bonds_data) && nrow(bonds_data) > 0) {
+                selected_bonds <- head(bonds_data$bond, 6)
+            }
+        }
+
+        # Get layout settings
+        layout <- input$auction_perf_layout %||% "auto"
+        x_scales <- input$auction_perf_xaxis %||% "free_x"
+        show_trend <- input$auction_perf_show_trend %||% TRUE
+
+        # Build params list for plot function
+        params <- list(
+            selected_bonds = selected_bonds,
+            layout = layout,
+            x_scales = x_scales,
+            show_trend = show_trend
+        )
+
+        p <- generate_enhanced_auction_analytics(filtered_data(), params)
         if(!is.null(p)) print(p)
-    }, height = 600)
+    })
 
 
     output$auction_forecast_plot <- renderPlot({
@@ -9240,18 +9363,7 @@ server <- function(input, output, session) {
 
     # Note: auction_success_factors render removed as part of Auction Intelligence tab overhaul
 
-    output$btc_decomposition <- renderPlot({
-        req(filtered_data())
-        p <- generate_btc_decomposition_plot(filtered_data(), list())
-        if(!is.null(p)) {
-            gridExtra::grid.arrange(p)
-        } else {
-            plot.new()
-            text(0.5, 0.5, "Insufficient data for decomposition analysis", cex = 1.2)
-        }
-    })
-
-
+    # Note: btc_decomposition render removed - section removed from UI
 
     # 22. Add after the regime_analysis_plot output
     output$regime_summary <- renderUI({
@@ -9831,7 +9943,6 @@ server <- function(input, output, session) {
             if(isTRUE(input$plot_ytd_issuance)) selected_plots <- c(selected_plots, "\U2728 YTD Issuance")
             if(isTRUE(input$plot_auction_sentiment)) selected_plots <- c(selected_plots, "\U2728 Auction Sentiment")
             if(isTRUE(input$plot_auction_success_factors)) selected_plots <- c(selected_plots, "\U2728 Success Factors")
-            if(isTRUE(input$plot_btc_decomposition)) selected_plots <- c(selected_plots, "\U2728 BTC Decomposition")
         }
 
         # Intelligence
@@ -10814,19 +10925,7 @@ server <- function(input, output, session) {
     )
 
 
-    output$download_btc_decomposition <- downloadHandler(
-        filename = function() {
-            paste0("btc_decomposition_", format(Sys.Date(), "%Y%m%d"), ".png")
-        },
-        content = function(file) {
-            req(filtered_data())
-            p <- generate_btc_decomposition_plot(filtered_data(), list())
-            if(!is.null(p)) {
-                ggsave(file, plot = p, width = 14, height = 10, dpi = 300, bg = "white")
-            }
-        }
-    )
-
+    # Note: download_btc_decomposition handler removed - section removed from UI
     # Note: download_auction_success handler removed as part of Auction Intelligence tab overhaul
 
     output$download_auction_sentiment <- downloadHandler(
@@ -10941,9 +11040,41 @@ server <- function(input, output, session) {
         },
         content = function(file) {
             req(filtered_data())
-            p <- generate_enhanced_auction_analytics(filtered_data(), list())
+
+            # Get selected bonds (default to top 6 if none selected)
+            selected_bonds <- input$auction_perf_bonds
+            if(is.null(selected_bonds) || length(selected_bonds) == 0) {
+                bonds_data <- available_auction_bonds()
+                if(!is.null(bonds_data) && nrow(bonds_data) > 0) {
+                    selected_bonds <- head(bonds_data$bond, 6)
+                }
+            }
+
+            # Get layout settings
+            layout <- input$auction_perf_layout %||% "auto"
+            x_scales <- input$auction_perf_xaxis %||% "free_x"
+            show_trend <- input$auction_perf_show_trend %||% TRUE
+
+            # Build params list for plot function
+            params <- list(
+                selected_bonds = selected_bonds,
+                layout = layout,
+                x_scales = x_scales,
+                show_trend = show_trend
+            )
+
+            p <- generate_enhanced_auction_analytics(filtered_data(), params)
             if(!is.null(p)) {
-                ggsave(file, plot = p, width = 16, height = 10, dpi = 300, bg = "white")
+                # Dynamic height based on number of bonds
+                n_bonds <- length(selected_bonds)
+                ncol_val <- switch(layout,
+                    "2x3" = 3, "2x4" = 4, "3x3" = 3,
+                    "auto" = if(n_bonds <= 4) 2 else if(n_bonds <= 6) 3 else 4
+                )
+                n_rows <- ceiling(n_bonds / ncol_val)
+                plot_height <- max(8, n_rows * 3 + 2)
+
+                ggsave(file, plot = p, width = 16, height = plot_height, dpi = 300, bg = "white")
             }
         }
     )
@@ -11112,7 +11243,6 @@ server <- function(input, output, session) {
                         ytd_issuance = isTRUE(input$plot_ytd_issuance),  # NEW
                         auction_sentiment = isTRUE(input$plot_auction_sentiment),  # NEW
                         auction_success_factors = isTRUE(input$plot_auction_success_factors),  # NEW
-                        btc_decomposition = isTRUE(input$plot_btc_decomposition),  # NEW
 
                         # Intelligence
                         correlation = isTRUE(input$plot_correlation),
@@ -11520,7 +11650,6 @@ server <- function(input, output, session) {
                         ytd_issuance = isTRUE(input$plot_ytd_issuance),  # NEW
                         auction_sentiment = isTRUE(input$plot_auction_sentiment),  # NEW
                         auction_success_factors = isTRUE(input$plot_auction_success_factors),  # NEW
-                        btc_decomposition = isTRUE(input$plot_btc_decomposition),  # NEW
 
                         # Intelligence
                         correlation = isTRUE(input$plot_correlation),

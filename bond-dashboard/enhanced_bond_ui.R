@@ -2269,9 +2269,81 @@ ui <- dashboardPage(
                                    status = "primary",
                                    solidHeader = TRUE,
                                    width = 12,
-                                   style = "overflow-y: auto; max-height: 650px;",  # Add this line
-                                   plotOutput("enhanced_auction_analytics", height = "650px"),
-                                   # Add this download button
+
+                                   # Bond selector and quick-select buttons
+                                   fluidRow(
+                                       column(6,
+                                           shinyWidgets::pickerInput(
+                                               inputId = "auction_perf_bonds",
+                                               label = "Select Bonds to Display:",
+                                               choices = NULL,
+                                               selected = NULL,
+                                               multiple = TRUE,
+                                               options = shinyWidgets::pickerOptions(
+                                                   actionsBox = TRUE,
+                                                   liveSearch = TRUE,
+                                                   selectedTextFormat = "count > 3",
+                                                   countSelectedText = "{0} bonds selected",
+                                                   noneSelectedText = "Select bonds...",
+                                                   maxOptions = 8,
+                                                   maxOptionsText = "Maximum 8 bonds for readability"
+                                               )
+                                           )
+                                       ),
+                                       column(6,
+                                           div(style = "margin-top: 25px;",
+                                               actionButton("auction_perf_top6", "Top 6 (by volume)",
+                                                           class = "btn-sm",
+                                                           style = "background-color: #1B3A6B; color: white; margin-right: 5px;"),
+                                               actionButton("auction_perf_recent", "Most Active (YTD)",
+                                                           class = "btn-sm",
+                                                           style = "background-color: #2E5090; color: white; margin-right: 5px;"),
+                                               actionButton("auction_perf_all", "All Bonds",
+                                                           class = "btn-sm",
+                                                           style = "background-color: #5882C0; color: white;")
+                                           )
+                                       )
+                                   ),
+
+                                   # Layout and display options
+                                   fluidRow(
+                                       column(4,
+                                           shinyWidgets::radioGroupButtons(
+                                               inputId = "auction_perf_layout",
+                                               label = "Layout:",
+                                               choices = c("2x3" = "2x3", "2x4" = "2x4", "3x3" = "3x3", "Auto" = "auto"),
+                                               selected = "auto",
+                                               size = "sm",
+                                               status = "primary"
+                                           )
+                                       ),
+                                       column(4,
+                                           shinyWidgets::radioGroupButtons(
+                                               inputId = "auction_perf_xaxis",
+                                               label = "X-Axis Scale:",
+                                               choices = c("Shared" = "fixed", "Free" = "free_x"),
+                                               selected = "free_x",
+                                               size = "sm",
+                                               status = "primary"
+                                           )
+                                       ),
+                                       column(4,
+                                           div(style = "margin-top: 25px;",
+                                               checkboxInput(
+                                                   inputId = "auction_perf_show_trend",
+                                                   label = "Show Trend Lines",
+                                                   value = TRUE
+                                               )
+                                           )
+                                       )
+                                   ),
+
+                                   tags$hr(style = "margin: 10px 0;"),
+
+                                   # Main chart with dynamic height
+                                   uiOutput("enhanced_auction_analytics_ui"),
+
+                                   # Download button
                                    tags$div(
                                        style = "margin-top: 15px;",
                                        downloadButton("download_auction_performance", "Download Chart",
@@ -2463,20 +2535,6 @@ ui <- dashboardPage(
 
                                        # The actual table output
                                        DT::dataTableOutput("ytd_issuance_data_table")
-                                   )
-                               )
-                           ),
-                           fluidRow(
-                               box(
-                                   title = "Bid-to-Cover Decomposition",
-                                   status = "primary",
-                                   solidHeader = TRUE,
-                                   width = 12,
-                                   plotOutput("btc_decomposition", height = "400px"),
-                                   tags$div(
-                                       style = "margin-top: 15px;",
-                                       downloadButton("download_btc_decomposition", "Download Chart",
-                                                      class = "btn-sm btn-primary")
                                    )
                                )
                            )
@@ -2726,8 +2784,7 @@ ui <- dashboardPage(
                                                               checkboxInput("plot_bid_distribution", HTML("&#10024; Bid Distribution"), value = FALSE),
                                                               checkboxInput("plot_ytd_issuance", HTML("&#10024; YTD Bond Issuance Chart"), value = FALSE),
                                                               checkboxInput("plot_auction_sentiment", HTML("&#10024; Auction Sentiment Gauge"), value = FALSE),
-                                                              checkboxInput("plot_auction_success_factors", HTML("&#10024; Auction Success Factors"), value = FALSE),
-                                                              checkboxInput("plot_btc_decomposition", HTML("&#10024; Bid-to-Cover Decomposition"), value = FALSE)
+                                                              checkboxInput("plot_auction_success_factors", HTML("&#10024; Auction Success Factors"), value = FALSE)
                                                           )
                                                       ),
 

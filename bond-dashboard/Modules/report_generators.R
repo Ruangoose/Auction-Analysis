@@ -231,12 +231,6 @@ collect_report_charts <- function(processed_data, filtered_data, filtered_data_w
                 if(!is.null(filtered_data) && nrow(filtered_data) > 0) {
                     generate_auction_success_factors_plot(filtered_data, list())
                 } else { NULL }
-            },
-            # ✨ NEW PLOT
-            btc_decomposition = function() {
-                if(!is.null(filtered_data) && nrow(filtered_data) > 0) {
-                    generate_btc_decomposition_plot(filtered_data, list())
-                } else { NULL }
             }
         ),
         intelligence = list(
