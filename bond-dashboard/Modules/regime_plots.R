@@ -7,6 +7,39 @@ generate_regime_analysis_plot <- function(data, params) {
     regime_df <- data
 
     # ══════════════════════════════════════════════════════════════════════════
+    # Dynamic date axis formatting based on time range
+    # ══════════════════════════════════════════════════════════════════════════
+    date_range <- range(regime_df$date, na.rm = TRUE)
+    date_span_days <- as.numeric(difftime(date_range[2], date_range[1], units = "days"))
+
+    # Choose date breaks and labels based on time span
+    if (date_span_days <= 90) {
+        # Up to 3 months: weekly breaks
+        date_breaks <- "1 week"
+        date_labels <- "%b %d"
+    } else if (date_span_days <= 365) {
+        # Up to 1 year: monthly breaks
+        date_breaks <- "1 month"
+        date_labels <- "%b\n%Y"
+    } else if (date_span_days <= 730) {
+        # 1-2 years: bi-monthly breaks
+        date_breaks <- "2 months"
+        date_labels <- "%b\n%Y"
+    } else if (date_span_days <= 1095) {
+        # 2-3 years: quarterly breaks
+        date_breaks <- "3 months"
+        date_labels <- "%b\n%Y"
+    } else if (date_span_days <= 1825) {
+        # 3-5 years: semi-annual breaks
+        date_breaks <- "6 months"
+        date_labels <- "%b\n%Y"
+    } else {
+        # 5+ years: yearly breaks
+        date_breaks <- "1 year"
+        date_labels <- "%Y"
+    }
+
+    # ══════════════════════════════════════════════════════════════════════════
     # FIXED: Proper dual-axis scaling
     # ══════════════════════════════════════════════════════════════════════════
 
@@ -62,8 +95,8 @@ generate_regime_analysis_plot <- function(data, params) {
         ) +
 
         scale_x_date(
-            date_breaks = "1 month",
-            date_labels = "%b\n%Y",
+            date_breaks = date_breaks,
+            date_labels = date_labels,
             expand = expansion(mult = c(0.01, 0.01))
         ) +
 
@@ -114,6 +147,9 @@ generate_regime_analysis_plot <- function(data, params) {
             axis.title.y.right = element_text(size = 10, color = insele_palette$danger,
                                               margin = ggplot2::margin(0, 0, 0, 10)),
             axis.text.y.right = element_text(color = insele_palette$danger),
+
+            # X-axis date label styling
+            axis.text.x = element_text(size = 8, hjust = 0.5, lineheight = 0.9),
 
             # Panel adjustments
             panel.grid.minor = element_blank()
