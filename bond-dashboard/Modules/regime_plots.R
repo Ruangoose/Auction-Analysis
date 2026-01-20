@@ -9,14 +9,25 @@ generate_regime_analysis_plot <- function(data, params) {
     # Calculate dynamic y-axis range based on volatility data
     # vol_20d is in decimal form (e.g., 0.015 = 1.5%), multiply by 100 for display
     vol_range <- range(regime_df$vol_20d * 100, na.rm = TRUE)
-    y_min <- max(0, floor(vol_range[1] - 1))
-    y_max <- ceiling(vol_range[2] + 2)
+    y_min <- max(0, floor(vol_range[1] * 0.9))  # Slightly below min
+    y_max <- ceiling(vol_range[2] * 1.2)        # Give some headroom
 
-    # Ensure we have reasonable range for stress score overlay
-    # Stress score typically ranges -2 to +2, mapped to y-axis via: y = stress * 10 + offset
-    # Choose offset to center stress score 0 at mid-volatility range
-    vol_mid <- (y_min + y_max) / 2
-    stress_offset <- vol_mid  # Stress score 0 maps to middle of volatility range
+    # ══════════════════════════════════════════════════════════════════════════
+    # FIX: Proper scaling for stress score to fit within volatility range
+    # Stress score typically ranges from -2 to +2
+    # We map this to the volatility y-axis range properly
+    # ══════════════════════════════════════════════════════════════════════════
+
+    # Get the actual stress score range
+    stress_range <- range(regime_df$stress_score, na.rm = TRUE)
+    stress_min <- min(-2, stress_range[1])
+    stress_max <- max(2, stress_range[2])
+    stress_span <- stress_max - stress_min  # Total span of stress values
+
+    # Scaling factors: map stress_score range to middle portion of volatility range
+    # We want stress=0 at the middle of the volatility range
+    stress_scale <- (y_max - y_min) / stress_span  # Scale factor
+    stress_offset <- (y_min + y_max) / 2           # Center point (where stress=0 maps)
 
     # Create regime visualization with fixed date handling
     p <- ggplot(regime_df, aes(x = date)) +
@@ -33,12 +44,18 @@ generate_regime_analysis_plot <- function(data, params) {
                   color = insele_palette$primary,
                   linewidth = 1.2, na.rm = TRUE) +
 
-        # Stress score (transformed to align with volatility scale)
-        # Maps stress_score [-2, 2] to [offset-20, offset+20] on y-axis
-        geom_line(aes(y = stress_score * 10 + stress_offset),
+        # Stress score line (transformed to fit volatility scale)
+        # Transform: y = (stress_score * stress_scale) + stress_offset
+        geom_line(aes(y = (stress_score * stress_scale) + stress_offset),
                   color = insele_palette$danger,
-                  linewidth = 1,
+                  linewidth = 0.9,
                   linetype = "dashed", na.rm = TRUE) +
+
+        # Add zero-line reference for stress score
+        geom_hline(yintercept = stress_offset,
+                   linetype = "dotted",
+                   color = insele_palette$danger,
+                   alpha = 0.5) +
 
         scale_fill_manual(
             values = c("Stressed" = insele_palette$danger,
@@ -55,15 +72,16 @@ generate_regime_analysis_plot <- function(data, params) {
         ) +
 
         scale_y_continuous(
-            name = "Volatility (%)",
-            labels = function(x) paste0(x, "%"),
+            name = "Yield Volatility (% p.a.)",
+            labels = function(x) paste0(sprintf("%.1f", x), "%"),
             limits = c(y_min, y_max),
-            expand = expansion(mult = c(0, 0.02)),
+            expand = expansion(mult = c(0.02, 0.02)),
             sec.axis = sec_axis(
-                ~ (. - stress_offset) / 10,  # Inverse transform to get stress score
+                # Inverse transform: stress = (y - offset) / scale
+                trans = ~ (. - stress_offset) / stress_scale,
                 name = "Stress Score",
                 breaks = c(-2, -1, 0, 1, 2),
-                labels = c("-2", "-1", "0", "1", "2")
+                labels = c("-2", "-1", "0", "+1", "+2")
             )
         ) +
 
@@ -71,7 +89,7 @@ generate_regime_analysis_plot <- function(data, params) {
             title = "Market Regime Evolution",
             subtitle = "Volatility dynamics and stress indicators",
             x = NULL,
-            caption = "Solid line: 20-day volatility | Dashed line: Composite stress score"
+            caption = "Solid: 20-day volatility | Dashed: Stress score | Dotted: Stress = 0"
         ) +
 
         create_insele_theme() +
@@ -88,13 +106,16 @@ generate_regime_analysis_plot <- function(data, params) {
             legend.box.margin = ggplot2::margin(0, 0, -5, 0),
 
             # Reduce white space
-            plot.margin = ggplot2::margin(5, 10, 5, 10),
+            plot.margin = ggplot2::margin(5, 15, 5, 10),
             plot.title = element_text(margin = ggplot2::margin(0, 0, 5, 0)),
             plot.subtitle = element_text(margin = ggplot2::margin(0, 0, 5, 0)),
-            plot.caption = element_text(margin = ggplot2::margin(5, 0, 0, 0)),
+            plot.caption = element_text(size = 8, color = "gray50", hjust = 0,
+                                        margin = ggplot2::margin(5, 0, 0, 0)),
 
             # Secondary axis styling
-            axis.title.y.right = element_text(margin = ggplot2::margin(0, 0, 0, 10), color = insele_palette$danger),
+            axis.title.y.left = element_text(size = 10, color = insele_palette$primary),
+            axis.title.y.right = element_text(size = 10, color = insele_palette$danger,
+                                              margin = ggplot2::margin(0, 0, 0, 10)),
             axis.text.y.right = element_text(color = insele_palette$danger),
 
             # Panel adjustments
@@ -106,7 +127,7 @@ generate_regime_analysis_plot <- function(data, params) {
 
 
 #' @export
-# 23. Regime Probability Gauge Generation
+# 23. Regime Probability Gauge Generation (Compact Version)
 generate_regime_probability_gauge <- function(data, params) {
     # Calculate transition probabilities
     transitions <- data %>%
@@ -119,7 +140,8 @@ generate_regime_probability_gauge <- function(data, params) {
 
     current_regime <- data %>%
         filter(date == max(date)) %>%
-        pull(regime)
+        pull(regime) %>%
+        first()
 
     # Calculate probabilities for next regime
     probs <- transitions %>%
@@ -131,41 +153,55 @@ generate_regime_probability_gauge <- function(data, params) {
     if(nrow(probs) == 0) {
         # Fallback if no transitions found
         probs <- data.frame(
-            next_regime = c("Stressed", "Elevated", "Normal", "Calm"),
-            probability = c(10, 25, 50, 15)
+            next_regime = c("Normal", "Calm", "Elevated", "Stressed"),
+            probability = c(50, 25, 20, 5)
         )
     }
 
-    # Create probability gauge
-    p <- ggplot(probs, aes(x = reorder(next_regime, probability), y = probability)) +
-        geom_col(aes(fill = next_regime), width = 0.7) +
+    # Ensure all regimes are present
+    all_regimes <- data.frame(next_regime = c("Stressed", "Elevated", "Normal", "Calm"))
+    probs <- all_regimes %>%
+        left_join(probs, by = "next_regime") %>%
+        mutate(probability = ifelse(is.na(probability), 0, probability))
+
+    # Order by probability descending for better visual
+    probs <- probs %>%
+        arrange(desc(probability)) %>%
+        mutate(next_regime = factor(next_regime, levels = rev(next_regime)))
+
+    # Compact horizontal bar chart
+    p <- ggplot(probs, aes(x = next_regime, y = probability, fill = next_regime)) +
+        geom_col(width = 0.6, show.legend = FALSE) +
         geom_text(aes(label = sprintf("%.0f%%", probability)),
-                  vjust = -0.5, size = 4, fontface = 2) +
+                  hjust = -0.2, size = 3, fontface = "bold") +
         scale_fill_manual(
             values = c(
                 "Stressed" = insele_palette$danger,
                 "Elevated" = insele_palette$warning,
                 "Normal" = insele_palette$secondary,
                 "Calm" = insele_palette$success
-            ),
-            guide = "none"
+            )
         ) +
         scale_y_continuous(
-            limits = c(0, max(probs$probability) * 1.2),
-            labels = function(x) paste0(x, "%")
+            limits = c(0, max(probs$probability, na.rm = TRUE) * 1.3),
+            expand = c(0, 0)
         ) +
         coord_flip() +
         labs(
-            title = "Next Regime Probability",
-            subtitle = paste("Based on historical transitions from", current_regime),
-            x = "",
-            y = "Probability"
+            title = NULL,
+            subtitle = paste("From", current_regime, "regime"),
+            x = NULL,
+            y = NULL
         ) +
-        create_insele_theme() +
+        theme_minimal() +
         theme(
-            plot.title = element_text(size = 12),
-            plot.subtitle = element_text(size = 10),
-            axis.text = element_text(size = 9)
+            plot.subtitle = element_text(size = 9, color = "gray50", hjust = 0,
+                                         margin = ggplot2::margin(0, 0, 8, 0)),
+            axis.text.y = element_text(size = 9, face = "bold"),
+            axis.text.x = element_blank(),
+            axis.ticks = element_blank(),
+            panel.grid = element_blank(),
+            plot.margin = ggplot2::margin(5, 10, 5, 5)
         )
 
     return(p)
