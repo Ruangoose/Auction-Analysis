@@ -2636,29 +2636,47 @@ ui <- dashboardPage(
                            ),
 
                            fluidRow(
+                               # LEFT PANEL: Curve Dynamics (was Cross-Asset Correlations)
                                box(
-                                   title = "Cross-Asset Correlations",
+                                   title = "Curve Dynamics",
                                    status = "primary",
                                    solidHeader = TRUE,
                                    width = 6,
-                                   plotOutput("enhanced_correlation_plot", height = "400px"),
-                                   # === ADDED: download_correlation ===
+
+                                   # Spread time series (main chart)
+                                   plotOutput("curve_spreads_plot", height = "280px"),
+
+                                   hr(),
+
+                                   # Curve shape timeline (compact)
+                                   plotOutput("curve_shape_indicator", height = "80px"),
+
                                    tags$div(
                                        style = "margin-top: 15px;",
-                                       downloadButton("download_correlation", "Download Chart",
+                                       downloadButton("download_curve_dynamics", "Download Chart",
                                                       class = "btn-sm btn-primary")
                                    )
                                ),
+
+                               # RIGHT PANEL: Relative Value Scanner (was Term Structure Dynamics)
                                box(
-                                   title = "Term Structure Dynamics",
+                                   title = "Relative Value Scanner",
                                    status = "primary",
                                    solidHeader = TRUE,
                                    width = 6,
-                                   plotOutput("term_structure_3d", height = "400px"),
-                                   # === ADDED: download_term_structure ===
+
+                                   # Rich/Cheap scatter
+                                   plotOutput("rv_scanner_plot", height = "300px"),
+
+                                   hr(),
+
+                                   # Top opportunities summary
+                                   tags$h6("Top Opportunities", style = "margin: 10px 0; font-weight: bold; color: #1B3A6B;"),
+                                   tableOutput("rv_summary_mini"),
+
                                    tags$div(
                                        style = "margin-top: 15px;",
-                                       downloadButton("download_term_structure", "Download Chart",
+                                       downloadButton("download_rv_scanner", "Download Chart",
                                                       class = "btn-sm btn-primary")
                                    )
                                )

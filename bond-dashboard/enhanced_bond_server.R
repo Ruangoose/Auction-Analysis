@@ -4575,6 +4575,62 @@ server <- function(input, output, session) {
         return(dt)
     })
 
+    # ================================================================================
+    # CURVE DYNAMICS PANEL (replaces Cross-Asset Correlations)
+    # ================================================================================
+
+    output$curve_spreads_plot <- renderPlot({
+        req(filtered_data())
+        p <- generate_curve_spreads_plot(filtered_data(), list())
+        if(!is.null(p)) {
+            print(p)
+        } else {
+            plot.new()
+            text(0.5, 0.5, "Insufficient data for curve spread analysis", cex = 1.2)
+        }
+    })
+
+    output$curve_shape_indicator <- renderPlot({
+        req(filtered_data())
+        p <- generate_curve_shape_indicator(filtered_data(), list())
+        if(!is.null(p)) {
+            print(p)
+        } else {
+            plot.new()
+            text(0.5, 0.5, "Insufficient data for curve shape analysis", cex = 1.0)
+        }
+    })
+
+    # ================================================================================
+    # RELATIVE VALUE SCANNER PANEL (replaces Term Structure Dynamics)
+    # ================================================================================
+
+    output$rv_scanner_plot <- renderPlot({
+        req(filtered_data())
+        p <- generate_relative_value_scanner(filtered_data(), list())
+        if(!is.null(p)) {
+            print(p)
+        } else {
+            plot.new()
+            text(0.5, 0.5, "Insufficient data for relative value analysis", cex = 1.2)
+        }
+    })
+
+    output$rv_summary_mini <- renderTable({
+        req(filtered_data())
+        rv_table <- generate_rv_summary_table(filtered_data(), list())
+        if(nrow(rv_table) > 0) {
+            # Return top 5 opportunities
+            head(rv_table, 5)
+        } else {
+            data.frame(Message = "Insufficient data for relative value analysis")
+        }
+    }, striped = TRUE, hover = TRUE, bordered = TRUE, spacing = "s", width = "100%")
+
+    # ================================================================================
+    # LEGACY OUTPUTS (kept for backward compatibility with other tabs)
+    # ================================================================================
+
     output$enhanced_correlation_plot <- renderPlot({
         req(filtered_data())
         p <- generate_enhanced_correlation_plot(filtered_data(), list())
@@ -10605,6 +10661,47 @@ server <- function(input, output, session) {
         }
     )
 
+    # Download handler for Curve Dynamics panel (new)
+    output$download_curve_dynamics <- downloadHandler(
+        filename = function() {
+            paste0("curve_dynamics_", format(Sys.Date(), "%Y%m%d"), ".png")
+        },
+        content = function(file) {
+            req(filtered_data())
+            # Create combined plot with spreads and shape indicator
+            p1 <- generate_curve_spreads_plot(filtered_data(), list())
+            p2 <- generate_curve_shape_indicator(filtered_data(), list())
+
+            if(!is.null(p1) && !is.null(p2)) {
+                # Combine plots vertically using patchwork
+                if(requireNamespace("patchwork", quietly = TRUE)) {
+                    combined <- p1 / p2 + patchwork::plot_layout(heights = c(3, 1))
+                    ggsave(file, plot = combined, width = 12, height = 10, dpi = 300, bg = "white")
+                } else {
+                    # Fallback: just save the main spread plot
+                    ggsave(file, plot = p1, width = 12, height = 8, dpi = 300, bg = "white")
+                }
+            } else if(!is.null(p1)) {
+                ggsave(file, plot = p1, width = 12, height = 8, dpi = 300, bg = "white")
+            }
+        }
+    )
+
+    # Download handler for Relative Value Scanner panel (new)
+    output$download_rv_scanner <- downloadHandler(
+        filename = function() {
+            paste0("relative_value_scanner_", format(Sys.Date(), "%Y%m%d"), ".png")
+        },
+        content = function(file) {
+            req(filtered_data())
+            p <- generate_relative_value_scanner(filtered_data(), list())
+            if(!is.null(p)) {
+                ggsave(file, plot = p, width = 12, height = 10, dpi = 300, bg = "white")
+            }
+        }
+    )
+
+    # Legacy download handlers (kept for backward compatibility)
     output$download_term_structure <- downloadHandler(
         filename = function() {
             paste0("term_structure_", format(Sys.Date(), "%Y%m%d"), ".png")
