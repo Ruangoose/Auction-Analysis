@@ -653,6 +653,92 @@ server <- function(input, output, session) {
     })
 
     # ════════════════════════════════════════════════════════════════════════
+    # MARKET INTELLIGENCE DATA - FULL HISTORICAL DATA (IGNORES DATE FILTER)
+    # This ensures Market Intelligence charts always use complete history
+    # ════════════════════════════════════════════════════════════════════════
+
+    market_intelligence_data <- reactive({
+        req(bond_data())
+
+        # Use the complete dataset, only filter for data quality
+        data <- bond_data() %>%
+            filter(!is.na(yield_to_maturity),
+                   !is.na(modified_duration),
+                   yield_to_maturity > 0,
+                   yield_to_maturity < 50,  # Sanity check
+                   modified_duration > 0)
+
+        if(nrow(data) < 30) {
+            showNotification(
+                "Insufficient historical data for Market Intelligence analysis",
+                type = "warning",
+                duration = 5
+            )
+            return(NULL)
+        }
+
+        return(data)
+    })
+
+    # ════════════════════════════════════════════════════════════════════════
+    # CURRENT ACTIVE BONDS - Bonds that have data on the most recent date
+    # Used to identify what's currently tradeable vs matured bonds
+    # ════════════════════════════════════════════════════════════════════════
+
+    current_active_bonds <- reactive({
+        req(bond_data())
+
+        max_date <- max(bond_data()$date, na.rm = TRUE)
+
+        # Bonds that have data on the most recent date are considered active
+        # Also check within last 5 trading days to handle weekends/holidays
+        active <- bond_data() %>%
+            filter(date >= max_date - 5,
+                   !is.na(yield_to_maturity)) %>%
+            pull(bond) %>%
+            unique()
+
+        return(active)
+    })
+
+    # ════════════════════════════════════════════════════════════════════════
+    # MARKET INTELLIGENCE DEBUG OUTPUT
+    # Logs information about data being used for Market Intelligence charts
+    # ════════════════════════════════════════════════════════════════════════
+
+    observe({
+        req(market_intelligence_data())
+
+        data <- market_intelligence_data()
+        max_date <- max(data$date, na.rm = TRUE)
+        min_date <- min(data$date, na.rm = TRUE)
+
+        message("=== MARKET INTELLIGENCE DATA CHECK ===")
+        message(sprintf("Full date range: %s to %s",
+                        format(min_date, "%Y-%m-%d"),
+                        format(max_date, "%Y-%m-%d")))
+        message(sprintf("Total observations: %d", nrow(data)))
+        message(sprintf("Unique bonds: %d", n_distinct(data$bond)))
+
+        # Bonds active on most recent date
+        current_bonds <- data %>%
+            filter(date == max_date) %>%
+            pull(bond) %>%
+            unique()
+        message(sprintf("Currently active bonds (%d): %s",
+                        length(current_bonds),
+                        paste(sort(current_bonds), collapse = ", ")))
+
+        # Bonds that appear in history but not current (matured)
+        all_bonds <- unique(data$bond)
+        historical_only <- setdiff(all_bonds, current_bonds)
+        if(length(historical_only) > 0) {
+            message(sprintf("Historical only (matured?): %s",
+                            paste(sort(historical_only), collapse = ", ")))
+        }
+    })
+
+    # ════════════════════════════════════════════════════════════════════════
     # FILTERED DATA WITH TECHNICAL INDICATORS - BULLETPROOF VERSION
     # ════════════════════════════════════════════════════════════════════════
 
@@ -4689,10 +4775,10 @@ server <- function(input, output, session) {
     # CURVE SHAPE & MOMENTUM (replaces Relative Value Scanner)
     # ================================================================================
 
-    # Curve Comparison Plot (Current vs History)
+    # Curve Comparison Plot (Current vs History) - Use FULL historical data
     output$curve_comparison_plot <- renderPlot({
-        req(filtered_data())
-        p <- generate_curve_comparison_plot(filtered_data(), list())
+        req(market_intelligence_data())
+        p <- generate_curve_comparison_plot(market_intelligence_data(), list())
         if (!is.null(p)) {
             print(p)
         } else {
@@ -4701,10 +4787,10 @@ server <- function(input, output, session) {
         }
     })
 
-    # Curve Steepness Gauge
+    # Curve Steepness Gauge - Use FULL historical data
     output$curve_steepness_gauge <- renderPlot({
-        req(filtered_data())
-        p <- generate_curve_steepness_gauge(filtered_data(), list())
+        req(market_intelligence_data())
+        p <- generate_curve_steepness_gauge(market_intelligence_data(), list())
         if (!is.null(p)) {
             print(p)
         } else {
@@ -4719,8 +4805,8 @@ server <- function(input, output, session) {
             paste0("yield_environment_", format(Sys.Date(), "%Y%m%d"), ".png")
         },
         content = function(file) {
-            # Create combined plot
-            p1 <- generate_yield_percentile_heatmap(filtered_data(), list())
+            # Create combined plot - use full data for percentile, filtered for momentum
+            p1 <- generate_yield_percentile_heatmap(bond_data(), list())
             p2 <- generate_rate_of_change_monitor(filtered_data(), list())
 
             if (!is.null(p1) && !is.null(p2)) {
@@ -4732,15 +4818,15 @@ server <- function(input, output, session) {
         }
     )
 
-    # Download handler for Curve Analysis panel
+    # Download handler for Curve Analysis panel - Use FULL historical data
     output$download_curve_analysis <- downloadHandler(
         filename = function() {
             paste0("curve_analysis_", format(Sys.Date(), "%Y%m%d"), ".png")
         },
         content = function(file) {
-            # Create combined plot
-            p1 <- generate_curve_comparison_plot(filtered_data(), list())
-            p2 <- generate_curve_steepness_gauge(filtered_data(), list())
+            # Create combined plot using full historical data
+            p1 <- generate_curve_comparison_plot(market_intelligence_data(), list())
+            p2 <- generate_curve_steepness_gauge(market_intelligence_data(), list())
 
             if (!is.null(p1) && !is.null(p2)) {
                 combined <- cowplot::plot_grid(p1, p2, ncol = 1, rel_heights = c(2, 1))
