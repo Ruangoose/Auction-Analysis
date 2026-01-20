@@ -1448,3 +1448,439 @@ generate_term_structure_3d_plot <- function(data, params) {
 
     return(p)
 }
+
+# ================================================================================
+# NEW FIXED INCOME ANALYTICS: CURVE DYNAMICS & RELATIVE VALUE
+# ================================================================================
+
+#' @title Generate Curve Spreads Plot
+#' @description Time series of key yield curve spreads (2s10s, 5s10s, 10s20s, butterfly)
+#' @param data Bond data with date, yield_to_maturity, modified_duration
+#' @param params List of optional parameters
+#' @return ggplot object
+#' @export
+generate_curve_spreads_plot <- function(data, params) {
+
+    # Ensure date columns are Date objects
+    data <- ensure_date_columns(data)
+
+    # Calculate key spreads daily using modified duration as maturity proxy
+    spread_data <- data %>%
+        filter(!is.na(yield_to_maturity), !is.na(modified_duration)) %>%
+        group_by(date) %>%
+        summarise(
+            # Get yields by approximate maturity buckets
+            yield_2y = {
+                short_bonds <- yield_to_maturity[modified_duration >= 1.5 & modified_duration <= 3]
+                if(length(short_bonds) > 0) mean(short_bonds, na.rm = TRUE) else NA_real_
+            },
+            yield_5y = {
+                mid_bonds <- yield_to_maturity[modified_duration >= 4 & modified_duration <= 6]
+                if(length(mid_bonds) > 0) mean(mid_bonds, na.rm = TRUE) else NA_real_
+            },
+            yield_10y = {
+                long_bonds <- yield_to_maturity[modified_duration >= 8 & modified_duration <= 12]
+                if(length(long_bonds) > 0) mean(long_bonds, na.rm = TRUE) else NA_real_
+            },
+            yield_20y = {
+                ultra_bonds <- yield_to_maturity[modified_duration >= 15]
+                if(length(ultra_bonds) > 0) mean(ultra_bonds, na.rm = TRUE) else NA_real_
+            },
+            .groups = "drop"
+        ) %>%
+        mutate(
+            # Key spreads in basis points
+            spread_2s10s = (yield_10y - yield_2y) * 100,
+            spread_5s10s = (yield_10y - yield_5y) * 100,
+            spread_10s20s = (yield_20y - yield_10y) * 100,
+            # Butterfly: 2 * 5y - 2y - 10y (measures curve curvature)
+            butterfly_2s5s10s = (2 * yield_5y - yield_2y - yield_10y) * 100
+        ) %>%
+        filter(!is.na(spread_2s10s) | !is.na(butterfly_2s5s10s))
+
+    if(nrow(spread_data) == 0) {
+        return(NULL)
+    }
+
+    # Reshape for plotting
+    spread_long <- spread_data %>%
+        select(date, spread_2s10s, spread_5s10s, spread_10s20s, butterfly_2s5s10s) %>%
+        pivot_longer(-date, names_to = "spread_type", values_to = "spread_bps") %>%
+        filter(!is.na(spread_bps)) %>%
+        mutate(
+            spread_label = case_when(
+                spread_type == "spread_2s10s" ~ "2s10s Spread",
+                spread_type == "spread_5s10s" ~ "5s10s Spread",
+                spread_type == "spread_10s20s" ~ "10s20s Spread",
+                spread_type == "butterfly_2s5s10s" ~ "2s5s10s Butterfly",
+                TRUE ~ spread_type
+            ),
+            spread_label = factor(spread_label, levels = c(
+                "2s10s Spread", "5s10s Spread", "10s20s Spread", "2s5s10s Butterfly"
+            ))
+        )
+
+    # Current values for annotation
+    latest <- spread_data %>% filter(date == max(date))
+
+    # Get values with fallback
+    latest_2s10s <- if(!is.na(latest$spread_2s10s)) latest$spread_2s10s else NA
+    latest_butterfly <- if(!is.na(latest$butterfly_2s5s10s)) latest$butterfly_2s5s10s else NA
+
+    # Build subtitle
+    subtitle_parts <- c()
+    if(!is.na(latest_2s10s)) subtitle_parts <- c(subtitle_parts, sprintf("2s10s: %.0f bps", latest_2s10s))
+    if(!is.na(latest_butterfly)) subtitle_parts <- c(subtitle_parts, sprintf("Butterfly: %.0f bps", latest_butterfly))
+    subtitle_text <- paste0(paste(subtitle_parts, collapse = " | "),
+                            " (as of ", format(latest$date, "%d %b %Y"), ")")
+
+    # Adaptive date breaks
+    date_range_days <- as.numeric(difftime(max(spread_data$date), min(spread_data$date), units = "days"))
+    date_breaks <- if(date_range_days > 1095) {
+        "6 months"
+    } else if(date_range_days > 365) {
+        "3 months"
+    } else if(date_range_days > 180) {
+        "2 months"
+    } else {
+        "1 month"
+    }
+
+    p <- ggplot(spread_long, aes(x = date, y = spread_bps, color = spread_label)) +
+        geom_line(linewidth = 1, na.rm = TRUE) +
+        geom_hline(yintercept = 0, linetype = "dashed", color = "gray50", alpha = 0.7) +
+
+        # Highlight current level
+        geom_point(data = spread_long %>% filter(date == max(date)),
+                   size = 3, show.legend = FALSE) +
+
+        scale_color_manual(
+            values = c(
+                "2s10s Spread" = insele_palette$primary,
+                "5s10s Spread" = insele_palette$secondary,
+                "10s20s Spread" = insele_palette$success,
+                "2s5s10s Butterfly" = insele_palette$warning
+            ),
+            name = NULL,
+            drop = FALSE
+        ) +
+
+        scale_x_date(date_breaks = date_breaks, date_labels = "%b\n%Y") +
+        scale_y_continuous(labels = function(x) paste0(x, " bps")) +
+
+        labs(
+            title = "Curve Spread Dynamics",
+            subtitle = subtitle_text,
+            x = NULL,
+            y = "Spread (basis points)",
+            caption = "Positive 2s10s = steep curve | Negative butterfly = humped curve"
+        ) +
+
+        create_insele_theme() +
+        theme(
+            legend.position = "top",
+            legend.direction = "horizontal",
+            legend.text = element_text(size = 9),
+            plot.title = element_text(hjust = 0.5, size = 14),
+            plot.subtitle = element_text(hjust = 0.5, size = 10),
+            plot.caption = element_text(hjust = 0.5, size = 8, color = "gray50")
+        )
+
+    return(p)
+}
+
+#' @title Generate Curve Shape Indicator
+#' @description Timeline showing yield curve shape classification over time
+#' @param data Bond data with date, yield_to_maturity, modified_duration
+#' @param params List of optional parameters
+#' @return ggplot object
+#' @export
+generate_curve_shape_indicator <- function(data, params) {
+
+    # Ensure date columns are Date objects
+    data <- ensure_date_columns(data)
+
+    # Calculate curve shape metrics
+    shape_data <- data %>%
+        filter(!is.na(yield_to_maturity), !is.na(modified_duration)) %>%
+        group_by(date) %>%
+        summarise(
+            yield_short = mean(yield_to_maturity[modified_duration <= 3], na.rm = TRUE),
+            yield_mid = mean(yield_to_maturity[modified_duration > 3 & modified_duration <= 7], na.rm = TRUE),
+            yield_long = mean(yield_to_maturity[modified_duration > 7], na.rm = TRUE),
+            n_bonds = n(),
+            .groups = "drop"
+        ) %>%
+        filter(!is.na(yield_short) & !is.na(yield_mid) & !is.na(yield_long)) %>%
+        mutate(
+            # Classify curve shape
+            curve_shape = case_when(
+                yield_long > yield_mid & yield_mid > yield_short &
+                    (yield_long - yield_short) > 1.5 ~ "Steep",
+                yield_long > yield_mid & yield_mid > yield_short ~ "Normal",
+                yield_short > yield_long ~ "Inverted",
+                yield_mid > yield_long & yield_mid > yield_short ~ "Humped",
+                abs(yield_long - yield_short) < 0.5 ~ "Flat",
+                TRUE ~ "Normal"
+            ),
+            curve_shape = factor(curve_shape,
+                                 levels = c("Steep", "Normal", "Flat", "Humped", "Inverted"))
+        )
+
+    if(nrow(shape_data) == 0) {
+        return(NULL)
+    }
+
+    # Adaptive date breaks
+    date_range_days <- as.numeric(difftime(max(shape_data$date), min(shape_data$date), units = "days"))
+    date_breaks <- if(date_range_days > 1095) {
+        "1 year"
+    } else if(date_range_days > 365) {
+        "6 months"
+    } else {
+        "3 months"
+    }
+
+    # Current shape for subtitle
+    current_shape <- shape_data %>% filter(date == max(date)) %>% pull(curve_shape) %>% as.character()
+
+    # Create timeline showing curve shape
+    p <- ggplot(shape_data, aes(x = date, y = 1, fill = curve_shape)) +
+        geom_tile(height = 1, color = NA) +
+
+        scale_fill_manual(
+            values = c(
+                "Steep" = insele_palette$success,
+                "Normal" = insele_palette$secondary,
+                "Flat" = insele_palette$warning,
+                "Humped" = "#9B59B6",
+                "Inverted" = insele_palette$danger
+            ),
+            name = "Curve Shape",
+            drop = FALSE
+        ) +
+
+        scale_x_date(date_breaks = date_breaks, date_labels = "%b %Y") +
+
+        labs(
+            title = "Yield Curve Shape Evolution",
+            subtitle = paste0("Current: ", current_shape, " | Historical curve regime classification"),
+            x = NULL,
+            y = NULL
+        ) +
+
+        create_insele_theme() +
+        theme(
+            axis.text.y = element_blank(),
+            axis.ticks.y = element_blank(),
+            legend.position = "bottom",
+            legend.direction = "horizontal",
+            legend.key.size = unit(0.4, "cm"),
+            legend.text = element_text(size = 8),
+            panel.grid = element_blank(),
+            plot.title = element_text(hjust = 0.5, size = 11),
+            plot.subtitle = element_text(hjust = 0.5, size = 9),
+            axis.text.x = element_text(size = 8)
+        )
+
+    return(p)
+}
+
+#' @title Generate Relative Value Scanner
+#' @description Scatter plot showing bonds' deviation from fitted curve (rich/cheap)
+#' @param data Bond data with date, yield_to_maturity, modified_duration, bond
+#' @param params List of optional parameters
+#' @return ggplot object
+#' @export
+generate_relative_value_scanner <- function(data, params) {
+
+    # Ensure date columns are Date objects
+    data <- ensure_date_columns(data)
+
+    # Get latest date data
+    latest_data <- data %>%
+        filter(date == max(date)) %>%
+        filter(!is.na(yield_to_maturity), !is.na(modified_duration)) %>%
+        # Get one row per bond (in case of duplicates)
+        group_by(bond) %>%
+        slice(1) %>%
+        ungroup()
+
+    if(nrow(latest_data) < 3) {
+        return(NULL)
+    }
+
+    # Fit a curve (quadratic polynomial)
+    fit <- tryCatch(
+        lm(yield_to_maturity ~ poly(modified_duration, 2), data = latest_data),
+        error = function(e) NULL
+    )
+
+    if(is.null(fit)) {
+        return(NULL)
+    }
+
+    latest_data <- latest_data %>%
+        mutate(
+            fitted_yield = predict(fit, newdata = .),
+            residual_bps = (yield_to_maturity - fitted_yield) * 100,
+            rich_cheap = case_when(
+                residual_bps < -10 ~ "Rich (Expensive)",
+                residual_bps > 10 ~ "Cheap (Value)",
+                TRUE ~ "Fair Value"
+            ),
+            rich_cheap = factor(rich_cheap, levels = c("Rich (Expensive)", "Fair Value", "Cheap (Value)"))
+        )
+
+    # Calculate R-squared for subtitle
+    r_squared <- summary(fit)$r.squared
+
+    # Create scatter with residuals
+    p <- ggplot(latest_data, aes(x = modified_duration, y = residual_bps)) +
+
+        # Zero line (fair value)
+        geom_hline(yintercept = 0, linetype = "solid", color = "gray30", linewidth = 1) +
+
+        # Threshold bands
+        geom_hline(yintercept = c(-10, 10), linetype = "dashed", color = "gray60") +
+        annotate("rect", xmin = -Inf, xmax = Inf, ymin = 10, ymax = Inf,
+                 fill = insele_palette$success, alpha = 0.1) +
+        annotate("rect", xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = -10,
+                 fill = insele_palette$danger, alpha = 0.1) +
+
+        # Points
+        geom_point(aes(color = rich_cheap), size = 4) +
+
+        # Labels for bonds
+        ggrepel::geom_text_repel(
+            aes(label = bond),
+            size = 3,
+            fontface = "bold",
+            max.overlaps = 20,
+            box.padding = 0.3,
+            point.padding = 0.2,
+            segment.color = "gray70",
+            segment.size = 0.3
+        ) +
+
+        scale_color_manual(
+            values = c(
+                "Rich (Expensive)" = insele_palette$danger,
+                "Fair Value" = insele_palette$secondary,
+                "Cheap (Value)" = insele_palette$success
+            ),
+            name = NULL,
+            drop = FALSE
+        ) +
+
+        scale_y_continuous(
+            labels = function(x) paste0(ifelse(x > 0, "+", ""), round(x), " bps")
+        ) +
+
+        scale_x_continuous(
+            labels = function(x) paste0(round(x, 1), "y")
+        ) +
+
+        labs(
+            title = "Relative Value Scanner",
+            subtitle = sprintf("Deviation from fitted curve (R² = %.2f) | %s",
+                               r_squared, format(max(data$date), "%d %b %Y")),
+            x = "Modified Duration (years)",
+            y = "Rich ← → Cheap (bps vs fitted curve)",
+            caption = "Above line = cheap (undervalued) | Below line = rich (overvalued)"
+        ) +
+
+        create_insele_theme() +
+        theme(
+            legend.position = "top",
+            plot.title = element_text(hjust = 0.5, size = 14),
+            plot.subtitle = element_text(hjust = 0.5, size = 10),
+            plot.caption = element_text(hjust = 0.5, size = 8, color = "gray50")
+        )
+
+    return(p)
+}
+
+#' @title Generate RV Summary Table
+#' @description Table showing top relative value opportunities with recommendations
+#' @param data Bond data with date, yield_to_maturity, modified_duration, bond
+#' @param params List of optional parameters
+#' @return Data frame with relative value analysis
+#' @export
+generate_rv_summary_table <- function(data, params) {
+
+    # Ensure date columns are Date objects
+    data <- ensure_date_columns(data)
+
+    # Get latest data
+    latest <- data %>%
+        filter(date == max(date)) %>%
+        filter(!is.na(yield_to_maturity), !is.na(modified_duration)) %>%
+        group_by(bond) %>%
+        slice(1) %>%
+        ungroup()
+
+    if(nrow(latest) < 3) {
+        return(data.frame(
+            Bond = character(),
+            `YTM (%)` = numeric(),
+            `Duration` = numeric(),
+            `vs Curve (bps)` = numeric(),
+            `RV Score` = numeric(),
+            Recommendation = character()
+        ))
+    }
+
+    # Fit curve
+    fit <- tryCatch(
+        lm(yield_to_maturity ~ poly(modified_duration, 2), data = latest),
+        error = function(e) NULL
+    )
+
+    if(is.null(fit)) {
+        return(data.frame(
+            Bond = character(),
+            `YTM (%)` = numeric(),
+            `Duration` = numeric(),
+            `vs Curve (bps)` = numeric(),
+            `RV Score` = numeric(),
+            Recommendation = character()
+        ))
+    }
+
+    rv_table <- latest %>%
+        mutate(
+            fitted = predict(fit, newdata = .),
+            residual_bps = (yield_to_maturity - fitted) * 100,
+            # Simple carry proxy: yield / duration (higher = better carry per unit risk)
+            carry_score = yield_to_maturity / modified_duration,
+            # Composite score: combine residual (value) with carry
+            rv_score = residual_bps + (carry_score * 10)
+        ) %>%
+        arrange(desc(rv_score)) %>%
+        mutate(
+            recommendation = case_when(
+                rv_score > 15 ~ "Strong Buy",
+                rv_score > 5 ~ "Buy",
+                rv_score < -15 ~ "Avoid",
+                rv_score < -5 ~ "Underweight",
+                TRUE ~ "Neutral"
+            )
+        ) %>%
+        select(
+            Bond = bond,
+            `YTM (%)` = yield_to_maturity,
+            Duration = modified_duration,
+            `vs Curve (bps)` = residual_bps,
+            `RV Score` = rv_score,
+            Recommendation = recommendation
+        ) %>%
+        mutate(
+            `YTM (%)` = round(`YTM (%)`, 2),
+            Duration = round(Duration, 1),
+            `vs Curve (bps)` = round(`vs Curve (bps)`, 0),
+            `RV Score` = round(`RV Score`, 1)
+        )
+
+    return(rv_table)
+}
