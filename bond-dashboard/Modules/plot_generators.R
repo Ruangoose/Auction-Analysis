@@ -1936,19 +1936,27 @@ generate_yield_percentile_heatmap <- function(data, params) {
     if (nrow(data) < 10) return(NULL)
 
     # Check data history length for subtitle note
-    date_range_years <- as.numeric(difftime(max(data$date), min(data$date), units = "days")) / 365
+    min_date <- min(data$date, na.rm = TRUE)
+    max_date <- max(data$date, na.rm = TRUE)
+    date_range_years <- as.numeric(difftime(max_date, min_date, units = "days")) / 365.25
 
-    # Warning if insufficient history
-    history_note <- if(date_range_years < 2) {
-        sprintf(" (Limited: %.1f years)", date_range_years)
+    # Create detailed history note
+    history_note <- if(date_range_years >= 3) {
+        sprintf("Since %s (%.1f years)", format(min_date, "%b %Y"), date_range_years)
+    } else if(date_range_years >= 1) {
+        sprintf("Since %s (%.1f years - building history)", format(min_date, "%b %Y"), date_range_years)
     } else {
-        ""
+        sprintf("Since %s (%.1f years - limited history)", format(min_date, "%b %Y"), date_range_years)
     }
 
-    # Debug output
+    # Debug output with more detail
     message("=== YIELD PERCENTILE DEBUG ===")
-    message(sprintf("Date range: %s to %s (%.1f years)",
-                    min(data$date), max(data$date), date_range_years))
+    message(sprintf("Using FULL historical data: %s to %s (%.1f years)",
+                    format(min_date, "%Y-%m-%d"),
+                    format(max_date, "%Y-%m-%d"),
+                    date_range_years))
+    message(sprintf("Total observations: %d | Unique bonds: %d",
+                    nrow(data), n_distinct(data$bond)))
 
     # Define tenor buckets
     tenor_data <- data %>%
@@ -2051,8 +2059,7 @@ generate_yield_percentile_heatmap <- function(data, params) {
 
         labs(
             title = "Yield Levels vs History",
-            subtitle = sprintf("Current yields vs historical distribution | Since %s%s",
-                               format(min(data$date), "%b %Y"), history_note),
+            subtitle = sprintf("Current yields vs historical distribution | %s", history_note),
             x = "Historical Percentile",
             y = NULL,
             caption = "Higher percentile = yields HIGH vs history"
@@ -2266,61 +2273,106 @@ generate_curve_comparison_plot <- function(data, params) {
         return(NULL)
     }
 
-    # Filter valid data
+    # Filter valid data (broader range to preserve historical bonds)
     data <- data %>%
         filter(
             !is.na(yield_to_maturity),
             !is.na(modified_duration),
             is.finite(yield_to_maturity),
             is.finite(modified_duration),
-            yield_to_maturity > 1.5,
-            yield_to_maturity < 25,
-            modified_duration > 0.5
+            yield_to_maturity > 0,
+            yield_to_maturity < 50,
+            modified_duration > 0
         )
 
     if (nrow(data) < 30) return(NULL)
 
-    # Get curves at different points in time
+    # Get key dates
     max_date <- max(data$date, na.rm = TRUE)
+    date_1m <- max_date - 30
+    date_3m <- max_date - 90
 
-    # Current curve - this is the focus
-    current_curve <- data %>%
-        filter(date == max_date) %>%
-        select(bond, modified_duration, yield_to_maturity) %>%
-        arrange(modified_duration) %>%
-        mutate(curve_type = "Current")
+    # ════════════════════════════════════════════════════════════════════════
+    # HELPER FUNCTION: Get curve at a specific date
+    # Returns ALL bonds that had data on that date (including now-matured bonds)
+    # ════════════════════════════════════════════════════════════════════════
+    get_curve_at_date <- function(data, target_date, curve_name) {
+        # Find the actual date closest to target (handles weekends/holidays)
+        available_dates <- unique(data$date)
+        actual_date <- available_dates[which.min(abs(available_dates - target_date))]
+
+        curve <- data %>%
+            filter(date == actual_date,
+                   !is.na(yield_to_maturity),
+                   !is.na(modified_duration),
+                   yield_to_maturity > 1.5,
+                   yield_to_maturity < 25,
+                   modified_duration > 0.5) %>%
+            select(bond, modified_duration, yield_to_maturity) %>%
+            arrange(modified_duration) %>%
+            mutate(curve_type = curve_name,
+                   curve_date = actual_date)
+
+        return(curve)
+    }
+
+    # ════════════════════════════════════════════════════════════════════════
+    # GET CURVES AT DIFFERENT POINTS IN TIME
+    # Each curve includes ALL bonds that were active at that specific date
+    # ════════════════════════════════════════════════════════════════════════
+    current_curve <- get_curve_at_date(data, max_date, "Current")
+    curve_1m <- get_curve_at_date(data, date_1m, "1M Ago")
+    curve_3m <- get_curve_at_date(data, date_3m, "3M Ago")
 
     if (nrow(current_curve) < 3) return(NULL)
 
-    # 1 month ago
-    date_1m <- max_date - 30
-    curve_1m <- data %>%
-        filter(date == max(date[date <= date_1m])) %>%
-        select(bond, modified_duration, yield_to_maturity) %>%
-        arrange(modified_duration) %>%
-        mutate(curve_type = "1M Ago")
+    # Debug output: Log what bonds are in each curve
+    message("=== CURVE COMPARISON DEBUG ===")
+    message(sprintf("Current curve (%s): %d bonds - %s",
+                    max_date, nrow(current_curve),
+                    paste(sort(current_curve$bond), collapse = ", ")))
+    if(nrow(curve_1m) > 0) {
+        message(sprintf("1M Ago curve (%s): %d bonds - %s",
+                        curve_1m$curve_date[1], nrow(curve_1m),
+                        paste(sort(curve_1m$bond), collapse = ", ")))
+    }
+    if(nrow(curve_3m) > 0) {
+        message(sprintf("3M Ago curve (%s): %d bonds - %s",
+                        curve_3m$curve_date[1], nrow(curve_3m),
+                        paste(sort(curve_3m$bond), collapse = ", ")))
+    }
 
-    # 3 months ago
-    date_3m <- max_date - 90
-    curve_3m <- data %>%
-        filter(date == max(date[date <= date_3m])) %>%
-        select(bond, modified_duration, yield_to_maturity) %>%
-        arrange(modified_duration) %>%
-        mutate(curve_type = "3M Ago")
+    # Identify bonds that have matured (were in historical curves but not current)
+    all_historical_bonds <- union(curve_1m$bond, curve_3m$bond)
+    matured_bonds <- setdiff(all_historical_bonds, current_curve$bond)
+    if(length(matured_bonds) > 0) {
+        message(sprintf("Bonds in historical curves but not current (matured?): %s",
+                        paste(sort(matured_bonds), collapse = ", ")))
+    }
 
-    # Historical average - ONLY for bonds in current curve, NO extrapolation
+    # ════════════════════════════════════════════════════════════════════════
+    # HISTORICAL AVERAGE - Only for bonds in current curve
+    # (to make comparison meaningful for currently tradeable portfolio)
+    # ════════════════════════════════════════════════════════════════════════
     avg_curve <- data %>%
-        filter(bond %in% current_curve$bond) %>%
+        filter(bond %in% current_curve$bond,
+               !is.na(yield_to_maturity),
+               yield_to_maturity > 1.5,
+               yield_to_maturity < 25,
+               modified_duration > 0.5) %>%
         group_by(bond) %>%
         summarise(
-            modified_duration = first(modified_duration),
+            modified_duration = mean(modified_duration, na.rm = TRUE),
             yield_to_maturity = mean(yield_to_maturity, na.rm = TRUE),
+            n_obs = n(),
             .groups = "drop"
         ) %>%
+        filter(!is.na(modified_duration), !is.na(yield_to_maturity)) %>%
         arrange(modified_duration) %>%
-        mutate(curve_type = "Hist. Avg")
+        mutate(curve_type = "Hist. Avg",
+               curve_date = as.Date(NA))
 
-    # Combine - FEWER curves for cleaner visual
+    # Combine all curves
     curves_list <- list(current_curve)
     if (nrow(curve_1m) >= 3) curves_list <- c(curves_list, list(curve_1m))
     if (nrow(curve_3m) >= 3) curves_list <- c(curves_list, list(curve_3m))
@@ -2329,11 +2381,13 @@ generate_curve_comparison_plot <- function(data, params) {
     all_curves <- bind_rows(curves_list) %>%
         mutate(
             curve_type = factor(curve_type,
-                                levels = c("Current", "1M Ago", "3M Ago", "Hist. Avg"))
+                                levels = c("Current", "1M Ago", "3M Ago", "Hist. Avg")),
+            # Flag if bond is currently active
+            is_active = bond %in% current_curve$bond
         )
 
-    # X-axis range based on actual data - prevent extrapolation
-    x_min <- min(current_curve$modified_duration) - 0.2
+    # X-axis range based on CURRENT curve only (focus area)
+    x_min <- max(0, min(current_curve$modified_duration) - 0.5)
     x_max <- max(current_curve$modified_duration) + 0.5
 
     # Separate smooth curves and historical average line
@@ -2341,25 +2395,40 @@ generate_curve_comparison_plot <- function(data, params) {
 
     p <- ggplot(mapping = aes(x = modified_duration, y = yield_to_maturity)) +
 
-        # Historical average as simple line through points (no extrapolation)
+        # Historical average as simple line through points (no smoothing/extrapolation)
         geom_line(data = avg_curve,
                   aes(color = "Hist. Avg"),
                   linewidth = 1.2, linetype = "dotted") +
+        geom_point(data = avg_curve,
+                   aes(color = "Hist. Avg"),
+                   size = 1.5, shape = 1, show.legend = FALSE) +
 
-        # Smooth curves for Current, 1M Ago, 3M Ago with fullrange = FALSE
-        geom_smooth(data = smooth_curves,
-                    aes(color = curve_type, linewidth = curve_type, linetype = curve_type),
-                    method = "loess",
-                    formula = y ~ x,
-                    se = FALSE,
-                    span = 1.0,  # Higher span = less wiggly, more conservative
-                    fullrange = FALSE,  # CRITICAL: Don't extrapolate
-                    na.rm = TRUE) +
+        # 3M Ago curve - smoothed but only through its own points
+        {if(nrow(curve_3m) >= 3) geom_smooth(data = curve_3m,
+                    aes(color = curve_type),
+                    method = "loess", formula = y ~ x, se = FALSE,
+                    span = 1.2, linewidth = 0.9, linetype = "longdash",
+                    fullrange = FALSE, na.rm = TRUE)} +
 
-        # Points ONLY for current curve
-        geom_point(data = current_curve, aes(color = curve_type), size = 3, show.legend = FALSE) +
+        # 1M Ago curve
+        {if(nrow(curve_1m) >= 3) geom_smooth(data = curve_1m,
+                    aes(color = curve_type),
+                    method = "loess", formula = y ~ x, se = FALSE,
+                    span = 1.2, linewidth = 1.1, linetype = "solid",
+                    fullrange = FALSE, na.rm = TRUE)} +
 
-        # Bond labels using ggrepel with better parameters
+        # Current curve - most prominent
+        geom_smooth(data = current_curve,
+                    aes(color = curve_type),
+                    method = "loess", formula = y ~ x, se = FALSE,
+                    span = 1.0, linewidth = 1.8, linetype = "solid",
+                    fullrange = FALSE, na.rm = TRUE) +
+
+        # Points for current curve only (emphasized)
+        geom_point(data = current_curve, aes(color = curve_type),
+                   size = 3, show.legend = FALSE) +
+
+        # Bond labels for current curve using ggrepel
         ggrepel::geom_text_repel(
             data = current_curve,
             aes(label = bond),
@@ -2375,7 +2444,7 @@ generate_curve_comparison_plot <- function(data, params) {
             force = 2,
             force_pull = 0.5,
             direction = "both",
-            seed = 42,  # Reproducible layout
+            seed = 42,
             show.legend = FALSE
         ) +
 
@@ -2386,23 +2455,13 @@ generate_curve_comparison_plot <- function(data, params) {
                 "3M Ago" = "#95A5A6",
                 "Hist. Avg" = "#E74C3C"
             ),
-            name = NULL
-        ) +
-
-        scale_linewidth_manual(
-            values = c("Current" = 1.8, "1M Ago" = 1.1, "3M Ago" = 0.9, "Hist. Avg" = 1.2),
-            guide = "none"
-        ) +
-
-        scale_linetype_manual(
-            values = c("Current" = "solid", "1M Ago" = "solid",
-                       "3M Ago" = "longdash", "Hist. Avg" = "dotted"),
-            guide = "none"
+            name = NULL,
+            breaks = c("Current", "1M Ago", "3M Ago", "Hist. Avg")
         ) +
 
         scale_x_continuous(
             limits = c(x_min, x_max),
-            breaks = seq(0, 12, by = 2),
+            breaks = seq(0, ceiling(x_max), by = 2),
             expand = c(0.01, 0.01)
         ) +
 
@@ -2417,7 +2476,7 @@ generate_curve_comparison_plot <- function(data, params) {
                                format(max_date, "%d %b %Y")),
             x = "Modified Duration (years)",
             y = "Yield to Maturity",
-            caption = "Solid = recent | Dashed = 3M ago | Dotted = historical average"
+            caption = "Solid = recent | Dashed = 3M ago | Dotted = historical average (current bonds only)"
         ) +
 
         create_insele_theme() +
@@ -2425,11 +2484,11 @@ generate_curve_comparison_plot <- function(data, params) {
             legend.position = c(0.02, 0.98),
             legend.justification = c(0, 1),
             legend.background = element_rect(fill = alpha("white", 0.9), color = NA),
-            legend.key.width = unit(1.2, "cm"),
+            legend.key.width = unit(1.5, "cm"),
             legend.key.height = unit(0.4, "cm"),
             legend.text = element_text(size = 9),
             legend.spacing.y = unit(0.2, "cm"),
-            plot.caption = element_text(size = 8, color = "gray50", hjust = 0)
+            plot.caption = element_text(size = 7, color = "gray50", hjust = 0)
         )
 
     return(p)
