@@ -1470,17 +1470,17 @@ winsorize_vector <- function(x, lower_pct = 0.01, upper_pct = 0.99) {
 #' @description Calculates rolling annualized volatility for each time point
 #' @param yields Numeric vector of yield values (in percentage form, e.g., 8.5)
 #' @param window Window size for rolling calculation (default 20)
-#' @param max_vol Maximum allowed volatility (default 50% for govt bonds)
+#' @param max_vol Maximum allowed volatility as decimal (default 0.50 = 50% for govt bonds)
 #' @param winsorize_pct Percentile for Winsorization (default 0.99)
-#' @return Numeric vector of volatility values (one per date), expressed as decimals (e.g., 0.12 = 12%)
-calculate_rolling_volatility <- function(yields, window = 20, max_vol = 50, winsorize_pct = 0.99) {
+#' @return Numeric vector of volatility values (one per date), expressed as decimals (e.g., 0.012 = 1.2%)
+calculate_rolling_volatility <- function(yields, window = 20, max_vol = 0.50, winsorize_pct = 0.99) {
 
     n_obs <- length(yields)
 
     # Validate input
     if(n_obs < 2) {
         warning("calculate_rolling_volatility: Insufficient data (n < 2)")
-        return(rep(0.10, n_obs))  # Return 10% default
+        return(rep(0.001, n_obs))  # Return 0.1% default (decimal form)
     }
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -1495,7 +1495,7 @@ calculate_rolling_volatility <- function(yields, window = 20, max_vol = 50, wins
 
     if(length(valid_changes) < 2) {
         warning("calculate_rolling_volatility: Insufficient valid yield changes")
-        return(rep(0.10, n_obs))
+        return(rep(0.001, n_obs))  # Return 0.1% default (decimal form)
     }
 
     # Calculate winsorization thresholds
@@ -1526,7 +1526,7 @@ calculate_rolling_volatility <- function(yields, window = 20, max_vol = 50, wins
         annualized_vol
     }, error = function(e) {
         warning(paste("calculate_rolling_volatility: Error in runSD:", e$message))
-        rep(0.10, n_obs)
+        rep(0.001, n_obs)  # Return 0.1% default (decimal form)
     })
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -1550,20 +1550,21 @@ calculate_rolling_volatility <- function(yields, window = 20, max_vol = 50, wins
         }
     }
 
-    # Cap volatility at maximum (default 50% for govt bonds)
+    # ══════════════════════════════════════════════════════════════════════════
+    # STEP 4: Convert to decimal form and apply cap
+    # ══════════════════════════════════════════════════════════════════════════
+
+    # Convert from percentage points to decimal form:
+    # - Raw volatility is in percentage points (e.g., 1.5 = 1.5%)
+    # - Divide by 100 to get decimal form (e.g., 0.015 = 1.5%)
+    # - This standardizes the output so vol * 100 gives percentage for display
+    rolling_vol <- rolling_vol / 100
+
+    # Cap volatility at maximum (default 0.50 = 50% for govt bonds)
     rolling_vol <- pmin(rolling_vol, max_vol, na.rm = TRUE)
 
-    # Handle any remaining NAs or infinite values
-    rolling_vol[is.na(rolling_vol) | is.infinite(rolling_vol)] <- 0.10
-
-    # IMPORTANT: Do NOT divide by 100 here!
-    # The volatility is already in the correct scale:
-    # - Yield changes are differences in percentage points (e.g., 0.1 for a 0.1% change)
-    # - Standard deviation of these changes is in percentage points per day
-    # - Annualized volatility (SD * sqrt(252)) is in percentage points per year
-    # - For display as percentage (e.g., "1.59%"), the value 1.59 is correct
-    # - For use as decimal in calculations (e.g., 0.0159), divide by 100 at point of use
-    # - Returning the raw annualized volatility allows flexible formatting downstream
+    # Handle any remaining NAs or infinite values (0.001 = 0.1% default)
+    rolling_vol[is.na(rolling_vol) | is.infinite(rolling_vol)] <- 0.001
 
     return(rolling_vol)
 }
@@ -1849,17 +1850,17 @@ detect_market_regime <- function(data) {
 
         # Calculate 20-day rolling volatility time series
         if(n_dates >= 5) {  # Minimum 5 observations
-            # NEW: This returns a VECTOR with one volatility per date
+            # Returns volatility in DECIMAL form (e.g., 0.015 = 1.5%)
             vol_20d_vector <- calculate_rolling_volatility(
                 yields = market_metrics$avg_yield,
                 window = 20,
-                max_vol = 50,  # Cap at 50% for govt bonds
+                max_vol = 0.50,  # Cap at 50% (decimal form)
                 winsorize_pct = 0.99  # Winsorize at 99th percentile
             )
 
             market_metrics$vol_20d <- vol_20d_vector
 
-            # Add diagnostic output
+            # Add diagnostic output (multiply by 100 for % display)
             vol_range <- range(vol_20d_vector, na.rm = TRUE)
             vol_unique <- length(unique(vol_20d_vector))
             message(sprintf(
@@ -1874,20 +1875,20 @@ detect_market_regime <- function(data) {
             market_metrics$vol_20d_quality <- 100
 
         } else {
-            # Very small dataset - use simple defaults
-            market_metrics$vol_20d <- 0.10  # 10% default in decimal form
-            market_metrics$vol_20d_uncapped <- 0.10
+            # Very small dataset - use simple defaults (decimal form)
+            market_metrics$vol_20d <- 0.01  # 1% default in decimal form
+            market_metrics$vol_20d_uncapped <- 0.01
             market_metrics$vol_20d_quality <- 20
             warning("Insufficient data for 20-day volatility calculation (n < 5)")
         }
 
         # Calculate 60-day rolling volatility time series
         if(n_dates >= 10) {  # Minimum 10 observations for 60-day
-            # NEW: This returns a VECTOR with one volatility per date
+            # Returns volatility in DECIMAL form (e.g., 0.015 = 1.5%)
             vol_60d_vector <- calculate_rolling_volatility(
                 yields = market_metrics$avg_yield,
                 window = 60,
-                max_vol = 50,
+                max_vol = 0.50,  # Cap at 50% (decimal form)
                 winsorize_pct = 0.99
             )
 
@@ -1994,16 +1995,26 @@ detect_market_regime <- function(data) {
             )
 
         # ══════════════════════════════════════════════════════════════════════════
-        # PHASE 6: REGIME CLASSIFICATION (with updated thresholds)
+        # PHASE 6: REGIME CLASSIFICATION (with balanced thresholds)
         # ══════════════════════════════════════════════════════════════════════════
+        # Target distribution: ~60-70% Normal, ~15-20% Elevated, ~5-10% Calm, ~5-10% Stressed
+        # All regimes use AND logic for stricter classification
 
         market_metrics <- market_metrics %>%
             mutate(
-                # Enhanced regime classification with adjusted thresholds
+                # Balanced regime classification using AND logic throughout
                 regime = case_when(
-                    stress_score > 2.0 & vol_percentile > 0.8 ~ "Stressed",      # ↑ Was 1.5
-                    stress_score > 0.75 | vol_percentile > 0.65 ~ "Elevated",    # ↑ Was 0.5
-                    stress_score < -0.75 & vol_percentile < 0.35 ~ "Calm",       # ↓ Was -0.5
+                    # Stressed: Both high stress score AND very high volatility
+                    stress_score > 1.5 & vol_percentile > 0.85 ~ "Stressed",
+
+                    # Elevated: Moderately high stress AND above-average volatility
+                    # Using AND logic to avoid over-classification
+                    stress_score > 0.5 & vol_percentile > 0.55 ~ "Elevated",
+
+                    # Calm: Low stress AND low volatility
+                    stress_score < -0.5 & vol_percentile < 0.30 ~ "Calm",
+
+                    # Normal: Everything else
                     TRUE ~ "Normal"
                 ),
 
@@ -2059,12 +2070,12 @@ detect_market_regime <- function(data) {
             paste(sprintf("%s: %.0f%%", regime_summary$regime, regime_summary$pct), collapse = " | ")
         ))
 
-        # Volatility summary
+        # Volatility summary (multiply by 100 for % display since values are decimal)
         message(sprintf(
             "  Volatility range: %.1f%% - %.1f%% (20-day) | Median: %.1f%%",
-            min(market_metrics$vol_20d, na.rm = TRUE),
-            max(market_metrics$vol_20d, na.rm = TRUE),
-            median(market_metrics$vol_20d, na.rm = TRUE)
+            min(market_metrics$vol_20d, na.rm = TRUE) * 100,
+            max(market_metrics$vol_20d, na.rm = TRUE) * 100,
+            median(market_metrics$vol_20d, na.rm = TRUE) * 100
         ))
 
         return(market_metrics)

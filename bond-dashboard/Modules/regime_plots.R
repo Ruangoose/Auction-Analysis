@@ -6,6 +6,18 @@ generate_regime_analysis_plot <- function(data, params) {
 
     regime_df <- data
 
+    # Calculate dynamic y-axis range based on volatility data
+    # vol_20d is in decimal form (e.g., 0.015 = 1.5%), multiply by 100 for display
+    vol_range <- range(regime_df$vol_20d * 100, na.rm = TRUE)
+    y_min <- max(0, floor(vol_range[1] - 1))
+    y_max <- ceiling(vol_range[2] + 2)
+
+    # Ensure we have reasonable range for stress score overlay
+    # Stress score typically ranges -2 to +2, mapped to y-axis via: y = stress * 10 + offset
+    # Choose offset to center stress score 0 at mid-volatility range
+    vol_mid <- (y_min + y_max) / 2
+    stress_offset <- vol_mid  # Stress score 0 maps to middle of volatility range
+
     # Create regime visualization with fixed date handling
     p <- ggplot(regime_df, aes(x = date)) +
 
@@ -16,15 +28,16 @@ generate_regime_analysis_plot <- function(data, params) {
                       fill = regime),
                   alpha = 0.2) +
 
-        # Volatility line
+        # Volatility line (vol_20d in decimal form, multiply by 100 for %)
         geom_line(aes(y = vol_20d * 100),
                   color = insele_palette$primary,
-                  size = 1.2, na.rm = TRUE) +
+                  linewidth = 1.2, na.rm = TRUE) +
 
-        # Stress score
-        geom_line(aes(y = stress_score * 10 + 50),
+        # Stress score (transformed to align with volatility scale)
+        # Maps stress_score [-2, 2] to [offset-20, offset+20] on y-axis
+        geom_line(aes(y = stress_score * 10 + stress_offset),
                   color = insele_palette$danger,
-                  size = 1,
+                  linewidth = 1,
                   linetype = "dashed", na.rm = TRUE) +
 
         scale_fill_manual(
@@ -37,30 +50,55 @@ generate_regime_analysis_plot <- function(data, params) {
 
         scale_x_date(
             date_breaks = "1 month",
-            date_labels = "%b\n%Y"
+            date_labels = "%b\n%Y",
+            expand = expansion(mult = c(0.01, 0.01))
         ) +
 
         scale_y_continuous(
+            name = "Volatility (%)",
             labels = function(x) paste0(x, "%"),
+            limits = c(y_min, y_max),
+            expand = expansion(mult = c(0, 0.02)),
             sec.axis = sec_axis(
-                ~(. - 50) / 10,
+                ~ (. - stress_offset) / 10,  # Inverse transform to get stress score
                 name = "Stress Score",
-                breaks = pretty_breaks(n = 5)
+                breaks = c(-2, -1, 0, 1, 2),
+                labels = c("-2", "-1", "0", "1", "2")
             )
         ) +
 
         labs(
             title = "Market Regime Evolution",
             subtitle = "Volatility dynamics and stress indicators",
-            x = "",
-            y = "Volatility (%)",
+            x = NULL,
             caption = "Solid line: 20-day volatility | Dashed line: Composite stress score"
         ) +
 
         create_insele_theme() +
         theme(
+            # Legend improvements
             legend.position = "top",
-            legend.direction = "horizontal"
+            legend.direction = "horizontal",
+            legend.justification = "left",
+            legend.key.size = unit(0.8, "lines"),
+            legend.text = element_text(size = 9),
+            legend.title = element_text(size = 10, face = "bold"),
+            legend.spacing.x = unit(0.3, "cm"),
+            legend.margin = ggplot2::margin(0, 0, 0, 0),
+            legend.box.margin = ggplot2::margin(0, 0, -5, 0),
+
+            # Reduce white space
+            plot.margin = ggplot2::margin(5, 10, 5, 10),
+            plot.title = element_text(margin = ggplot2::margin(0, 0, 5, 0)),
+            plot.subtitle = element_text(margin = ggplot2::margin(0, 0, 5, 0)),
+            plot.caption = element_text(margin = ggplot2::margin(5, 0, 0, 0)),
+
+            # Secondary axis styling
+            axis.title.y.right = element_text(margin = ggplot2::margin(0, 0, 0, 10), color = insele_palette$danger),
+            axis.text.y.right = element_text(color = insele_palette$danger),
+
+            # Panel adjustments
+            panel.grid.minor = element_blank()
         )
 
     return(p)

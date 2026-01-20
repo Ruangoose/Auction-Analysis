@@ -9377,17 +9377,40 @@ server <- function(input, output, session) {
             return(tags$p("No regime data available"))
         }
 
-        # Calculate regime statistics
-        regime_stats <- regime_data() %>%
-            filter(date >= today() - days(30)) %>%
+        # Calculate regime statistics for last 30 days
+        last_30_data <- regime_data() %>%
+            filter(date >= lubridate::today() - lubridate::days(30))
+
+        total_days <- nrow(last_30_data)
+
+        regime_stats <- last_30_data %>%
             group_by(regime) %>%
             summarise(
                 days = n(),
-                pct = n() / 30 * 100,
+                pct = n() / max(total_days, 1) * 100,
                 .groups = "drop"
-            )
+            ) %>%
+            # Ensure all regimes are represented
+            complete(regime = c("Stressed", "Elevated", "Normal", "Calm"),
+                     fill = list(days = 0, pct = 0))
 
-        # Determine regime color
+        # Calculate regime start date (when current regime began)
+        regime_changes <- regime_data() %>%
+            arrange(date) %>%
+            mutate(regime_changed = regime != lag(regime, default = first(regime))) %>%
+            filter(regime_changed | row_number() == 1)
+
+        regime_start_date <- regime_changes %>%
+            filter(regime == current_regime$regime) %>%
+            filter(date == max(date)) %>%
+            pull(date) %>%
+            first()
+
+        if(is.na(regime_start_date)) {
+            regime_start_date <- min(regime_data()$date, na.rm = TRUE)
+        }
+
+        # Determine regime color with gradient for styling
         regime_color <- case_when(
             current_regime$regime == "Stressed" ~ insele_palette$danger,
             current_regime$regime == "Elevated" ~ insele_palette$warning,
@@ -9395,66 +9418,107 @@ server <- function(input, output, session) {
             TRUE ~ insele_palette$secondary
         )
 
+        # Lighter version of regime color for gradient
+        regime_color_light <- adjustcolor(regime_color, alpha.f = 0.85)
+
         tagList(
+            # Current Regime box with gradient styling
             tags$div(
-                style = paste0("padding: 15px; background: ", regime_color,
-                               "; color: white; border-radius: 8px; text-align: center;"),
-                h3(current_regime$regime, style = "margin: 0; font-weight: bold;"),
-                p(sprintf("Since: %s", format(current_regime$date, "%B %d")),
-                  style = "margin: 5px 0;")
+                style = paste0(
+                    "background: linear-gradient(135deg, ", regime_color, " 0%, ",
+                    regime_color_light, " 100%);",
+                    "color: white;",
+                    "padding: 15px 20px;",
+                    "border-radius: 8px;",
+                    "text-align: center;",
+                    "margin-bottom: 15px;",
+                    "box-shadow: 0 2px 4px rgba(0,0,0,0.1);"
+                ),
+                h4(current_regime$regime, style = "margin: 0 0 5px 0; font-weight: 600;"),
+                tags$small(paste("Since:", format(regime_start_date, "%B %d, %Y")))
             ),
 
-            tags$div(style = "margin-top: 15px;",
-                     h5("Key Metrics", style = paste0("color: ", insele_palette$primary, ";")),
-                     tags$div(style = "display: flex; justify-content: space-between; margin: 10px 0;",
-                              span("Volatility:"),
-                              strong(sprintf("%.1f%%", current_regime$vol_20d * 100))
-                     ),
-                     tags$div(style = "display: flex; justify-content: space-between; margin: 10px 0;",
-                              span("Stress Score:"),
-                              strong(sprintf("%.2f", current_regime$stress_score))
-                     ),
-                     tags$div(style = "display: flex; justify-content: space-between; margin: 10px 0;",
-                              span("Trend:"),
-                              strong(current_regime$trend)
-                     ),
-                     tags$div(style = "display: flex; justify-content: space-between; margin: 10px 0;",
-                              span("Dispersion:"),
-                              strong(sprintf("%.2f%%", current_regime$yield_dispersion))
-                     )
-            ),
-
-            hr(),
-
+            # Key Metrics section with better visual hierarchy
             tags$div(
-                h5("30-Day Distribution", style = paste0("color: ", insele_palette$primary, ";")),
+                style = "padding: 10px 0;",
+                h5("Key Metrics",
+                   style = paste0("color: ", insele_palette$primary, "; margin: 0 0 12px 0; font-weight: 600;")),
+
+                # Volatility (vol_20d is now decimal, multiply by 100 for %)
                 tags$div(
-                    lapply(regime_stats$regime, function(r) {
-                        stats <- regime_stats[regime_stats$regime == r,]
-                        color <- case_when(
-                            r == "Stressed" ~ insele_palette$danger,
-                            r == "Elevated" ~ insele_palette$warning,
-                            r == "Calm" ~ insele_palette$success,
-                            TRUE ~ insele_palette$secondary
-                        )
+                    style = "display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee;",
+                    span("Volatility", style = "color: #666;"),
+                    strong(sprintf("%.1f%%", current_regime$vol_20d * 100),
+                           style = paste0("color: ", insele_palette$primary, ";"))
+                ),
+
+                # Stress Score
+                tags$div(
+                    style = "display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee;",
+                    span("Stress Score", style = "color: #666;"),
+                    strong(sprintf("%.2f", current_regime$stress_score),
+                           style = paste0("color: ",
+                                          ifelse(current_regime$stress_score > 1, insele_palette$danger,
+                                                 ifelse(current_regime$stress_score < -0.5, insele_palette$success,
+                                                        insele_palette$primary)), ";"))
+                ),
+
+                # Trend
+                tags$div(
+                    style = "display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee;",
+                    span("Trend", style = "color: #666;"),
+                    strong(current_regime$trend,
+                           style = paste0("color: ", insele_palette$primary, ";"))
+                ),
+
+                # Dispersion
+                tags$div(
+                    style = "display: flex; justify-content: space-between; padding: 8px 0;",
+                    span("Dispersion", style = "color: #666;"),
+                    strong(sprintf("%.2f%%", current_regime$yield_dispersion),
+                           style = paste0("color: ", insele_palette$primary, ";"))
+                )
+            ),
+
+            hr(style = "margin: 15px 0; border-color: #eee;"),
+
+            # 30-Day Distribution section with improved progress bars
+            tags$div(
+                h5("30-Day Distribution",
+                   style = paste0("color: ", insele_palette$primary, "; margin: 0 0 12px 0; font-weight: 600;")),
+
+                # Progress bars for each regime
+                lapply(c("Stressed", "Elevated", "Normal", "Calm"), function(r) {
+                    stats <- regime_stats[regime_stats$regime == r,]
+                    pct_val <- if(nrow(stats) > 0) stats$pct else 0
+                    days_val <- if(nrow(stats) > 0) stats$days else 0
+
+                    color <- switch(r,
+                        "Stressed" = insele_palette$danger,
+                        "Elevated" = insele_palette$warning,
+                        "Normal" = insele_palette$secondary,
+                        "Calm" = insele_palette$success
+                    )
+
+                    tags$div(
+                        style = "margin: 8px 0;",
                         tags$div(
-                            style = "margin: 5px 0;",
+                            style = "display: flex; justify-content: space-between; margin-bottom: 3px;",
+                            span(r, style = "font-size: 12px; color: #555;"),
+                            span(sprintf("%.0f%% (%d days)", pct_val, days_val),
+                                 style = "font-size: 12px; font-weight: 600; color: #333;")
+                        ),
+                        tags$div(
+                            style = "height: 8px; background: #eee; border-radius: 4px; overflow: hidden;",
                             tags$div(
-                                style = "display: flex; justify-content: space-between;",
-                                span(r),
-                                strong(sprintf("%.0f%%", stats$pct))
-                            ),
-                            tags$div(
-                                style = paste0("background: #e0e0e0; height: 8px; border-radius: 4px; ",
-                                               "margin-top: 3px; overflow: hidden;"),
-                                tags$div(
-                                    style = paste0("background: ", color, "; height: 100%; width: ",
-                                                   stats$pct, "%;")
+                                style = paste0(
+                                    "height: 100%; width: ", pct_val, "%; background: ", color,
+                                    "; border-radius: 4px; transition: width 0.3s ease;"
                                 )
                             )
                         )
-                    })
-                )
+                    )
+                })
             )
         )
     })
