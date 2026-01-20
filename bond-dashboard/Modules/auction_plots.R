@@ -308,13 +308,13 @@ generate_enhanced_auction_analytics <- function(data, params) {
         theme(
             # Title styling
             plot.title = element_text(color = "#1B3A6B", face = "bold", size = 16),
-            plot.subtitle = element_text(color = "#666666", size = 10, margin = margin(b = 15)),
+            plot.subtitle = element_text(color = "#666666", size = 10, margin = ggplot2::margin(b = 15)),
             plot.caption = element_text(color = "#999999", size = 8, hjust = 1),
 
             # Facet strip styling
             strip.background = element_rect(fill = "#1B3A6B", color = NA),
             strip.text = element_text(color = "white", face = "bold", size = 10,
-                                       margin = margin(t = 5, b = 5)),
+                                       margin = ggplot2::margin(t = 5, b = 5)),
 
             # Axis styling - CRITICAL FIX for readability
             axis.text.x = element_text(
@@ -325,7 +325,7 @@ generate_enhanced_auction_analytics <- function(data, params) {
                 color = "#333333"
             ),
             axis.text.y = element_text(size = 9, color = "#333333"),
-            axis.title.y = element_text(size = 10, color = "#1B3A6B", margin = margin(r = 10)),
+            axis.title.y = element_text(size = 10, color = "#1B3A6B", margin = ggplot2::margin(r = 10)),
 
             # Panel styling
             panel.grid.major.x = element_blank(),
@@ -339,10 +339,10 @@ generate_enhanced_auction_analytics <- function(data, params) {
             legend.box = "horizontal",
             legend.title = element_text(size = 9, face = "bold"),
             legend.text = element_text(size = 8),
-            legend.margin = margin(t = 10),
+            legend.margin = ggplot2::margin(t = 10),
 
             # Overall margins
-            plot.margin = margin(t = 10, r = 15, b = 10, l = 10)
+            plot.margin = ggplot2::margin(t = 10, r = 15, b = 10, l = 10)
         ) +
         guides(
             color = guide_legend(order = 1, nrow = 1),
