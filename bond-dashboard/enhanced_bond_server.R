@@ -4277,6 +4277,13 @@ server <- function(input, output, session) {
     })
 
     # ========================================================================
+    # Toggle for Issuance Details Column Descriptions Panel
+    # ========================================================================
+    observeEvent(input$toggle_column_descriptions, {
+        shinyjs::toggle(id = "column_descriptions_panel", anim = TRUE, animType = "slide")
+    })
+
+    # ========================================================================
     # YTD Bond Issuance Chart (now uses filtered_auction_data)
     # ========================================================================
 
@@ -4293,9 +4300,15 @@ server <- function(input, output, session) {
     })
 
     # YTD Bond Issuance Data Table (uses filtered_auction_data for date range filtering)
+    # First/Last Auction columns use full historical data (bond_data), independent of date filter
     output$ytd_issuance_data_table <- DT::renderDataTable({
-        req(filtered_auction_data())
-        table_data <- generate_ytd_issuance_table(filtered_auction_data())
+        req(filtered_auction_data(), bond_data())
+
+        # Pass BOTH filtered data (for metrics) and full data (for historical First/Last Auction dates)
+        table_data <- generate_ytd_issuance_table(
+            data = filtered_auction_data(),
+            full_data = bond_data()
+        )
 
         # Check if table_data has an error message column (no data case)
         if ("Message" %in% names(table_data)) {
@@ -4315,68 +4328,24 @@ server <- function(input, output, session) {
             table_data$`Yield Trend Display` <- NULL  # Remove the display column
         }
 
-        # Column indices after removing Yield Trend Display (and Alloc Rate % removed):
+        # Column indices after removing Yield Trend Display:
         # 0: Bond, 1: # Auctions, 2: Total (R mil), 3: Avg B2C, 4: B2C Range
         # 5: Oversub %, 6: Yield Trend, 7: First Auction, 8: Last Auction
 
-        # Column descriptions for tooltips
-        column_descriptions <- list(
-            "Bond" = "Bond instrument identifier (e.g., R2048, R2035). TOTAL row shows aggregate across all bonds.",
-            "# Auctions" = "Number of primary market auctions held for this bond during the selected period.",
-            "Total (R mil)" = "Total nominal amount offered by National Treasury across all auctions, in millions of Rand.",
-            "Avg B2C" = "Average Bid-to-Cover ratio. Measures auction demand: total bids received divided by amount offered. Higher values (>2.5x) indicate strong demand.",
-            "B2C Range" = "Range showing the minimum and maximum Bid-to-Cover ratios observed across all auctions for this bond.",
-            "Oversub %" = "Average Oversubscription percentage. Shows how much total bids exceeded the offer amount. 200% means bids were 2x the offer.",
-            "Yield Trend" = "Change in clearing yield from first to last auction WITHIN the selected date range. Negative (green) = yields decreased. Positive (red) = yields increased.",
-            "First Auction" = "Date of the earliest auction for this bond within the selected period.",
-            "Last Auction" = "Date of the most recent auction for this bond within the selected period."
-        )
-
-        # Helper function to create header with tooltip HTML
-        create_header_with_tooltip <- function(col_name, description) {
-            sprintf(
-                '<div class="column-header-tooltip">%s<span class="info-icon">i</span><span class="tooltip-text">%s</span></div>',
-                htmltools::htmlEscape(col_name),
-                htmltools::htmlEscape(description)
-            )
-        }
-
-        # Build custom column headers with tooltips
-        col_headers <- sapply(names(table_data), function(col) {
-            desc <- column_descriptions[[col]]
-            if (!is.null(desc)) {
-                create_header_with_tooltip(col, desc)
-            } else {
-                col
-            }
-        })
-
-        # Create a container with custom headers for DT
-        header_callback <- htmltools::withTags(table(
-            class = 'display',
-            thead(
-                tr(
-                    lapply(col_headers, function(h) th(HTML(h)))
-                )
-            )
-        ))
-
-        # Build the datatable with improved formatting and custom headers
+        # SIMPLIFIED HEADERS - no tooltip icons, just clean text
+        # Column descriptions are now in the collapsible panel above the table
         dt <- DT::datatable(
             table_data,
             rownames = FALSE,
             filter = "none",
-            container = header_callback,
-            escape = FALSE,  # Allow HTML in headers
             options = list(
-                pageLength = 15,
+                pageLength = 20,
                 scrollX = TRUE,
-                dom = 'Bfrtip',
-                buttons = c('copy', 'csv', 'excel'),
+                dom = 'frtip',
                 # Don't auto-sort since TOTAL is at top
                 order = list(),
                 columnDefs = list(
-                    # Right-align numeric columns (updated indices without Alloc Rate %)
+                    # Right-align numeric columns
                     list(className = 'dt-right', targets = c(1, 2, 3, 5)),
                     # Center the B2C Range and Yield Trend columns
                     list(className = 'dt-center', targets = c(4, 6, 7, 8))

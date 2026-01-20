@@ -675,12 +675,33 @@ ui <- dashboardPage(
         .issuance-table thead th {
           background-color: #1B3A6B !important;
           color: white !important;
+          font-weight: 600;
+          padding: 10px 8px;
         }
 
         .issuance-table tbody tr:first-child {
           background-color: #E3F2FD !important;
           font-weight: bold;
           border-bottom: 2px solid #1B3A6B;
+        }
+
+        /* Column descriptions panel styling */
+        .column-descriptions-section .action-link {
+          text-decoration: none;
+        }
+
+        .column-descriptions-section .action-link:hover {
+          text-decoration: underline;
+        }
+
+        .desc-item {
+          font-size: 13px;
+          line-height: 1.5;
+          color: #333;
+        }
+
+        .desc-item strong {
+          color: #1B3A6B;
         }
 
         /* Value boxes enhancement */
@@ -2327,7 +2348,122 @@ ui <- dashboardPage(
                                    collapsible = TRUE,
                                    collapsed = FALSE,
 
-                                   DT::dataTableOutput("ytd_issuance_data_table")
+                                   # Container for descriptions panel and table
+                                   div(
+                                       class = "issuance-table-container",
+
+                                       # Collapsible descriptions panel
+                                       div(
+                                           class = "column-descriptions-section",
+                                           style = "margin-bottom: 15px;",
+
+                                           # Toggle button
+                                           actionLink(
+                                               inputId = "toggle_column_descriptions",
+                                               label = tagList(icon("info-circle"), " Column Descriptions"),
+                                               style = "color: #1B3A6B; font-weight: 500; font-size: 14px;"
+                                           ),
+
+                                           # Collapsible content - hidden by default
+                                           div(
+                                               id = "column_descriptions_panel",
+                                               style = "display: none; margin-top: 10px;",
+
+                                               div(
+                                                   class = "descriptions-grid",
+                                                   style = "
+                                                       display: grid;
+                                                       grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+                                                       gap: 10px;
+                                                       padding: 15px;
+                                                       background-color: #F5F7FA;
+                                                       border-radius: 8px;
+                                                       border-left: 4px solid #1B3A6B;
+                                                   ",
+
+                                                   # Bond
+                                                   div(
+                                                       class = "desc-item",
+                                                       tags$strong("Bond: "),
+                                                       "Instrument identifier. TOTAL row shows aggregate across all bonds."
+                                                   ),
+
+                                                   # # Auctions
+                                                   div(
+                                                       class = "desc-item",
+                                                       tags$strong("# Auctions: "),
+                                                       "Number of auctions within the selected date range."
+                                                   ),
+
+                                                   # Total (R mil)
+                                                   div(
+                                                       class = "desc-item",
+                                                       tags$strong("Total (R mil): "),
+                                                       "Total amount offered by National Treasury within selected period, in millions of Rand."
+                                                   ),
+
+                                                   # Avg B2C
+                                                   div(
+                                                       class = "desc-item",
+                                                       tags$strong("Avg B2C: "),
+                                                       "Average Bid-to-Cover ratio within selected period. Values >2.5x indicate strong demand.",
+                                                       tags$span(style = "display: block; margin-top: 4px; font-size: 11px; color: #666;",
+                                                           "Color scale: ",
+                                                           tags$span(style = "color: #C62828;", "Red (<2x)"), " | ",
+                                                           tags$span(style = "color: #F9A825;", "Yellow (2-2.5x)"), " | ",
+                                                           tags$span(style = "color: #2E7D32;", "Green (>2.5x)")
+                                                       )
+                                                   ),
+
+                                                   # B2C Range
+                                                   div(
+                                                       class = "desc-item",
+                                                       tags$strong("B2C Range: "),
+                                                       "Min and max Bid-to-Cover observed within selected period."
+                                                   ),
+
+                                                   # Oversub %
+                                                   div(
+                                                       class = "desc-item",
+                                                       tags$strong("Oversub %: "),
+                                                       "Average oversubscription. 200% means total bids were 2x the amount offered."
+                                                   ),
+
+                                                   # Yield Trend
+                                                   div(
+                                                       class = "desc-item",
+                                                       tags$strong("Yield Trend: "),
+                                                       "Yield change from first to last auction within selected period.",
+                                                       tags$span(style = "display: block; margin-top: 4px; font-size: 11px;",
+                                                           tags$span(style = "color: #2E7D32;", "Green (negative)"), " = yields decreased | ",
+                                                           tags$span(style = "color: #C62828;", "Red (positive)"), " = yields increased"
+                                                       )
+                                                   ),
+
+                                                   # First Auction
+                                                   div(
+                                                       class = "desc-item",
+                                                       tags$strong("First Auction: "),
+                                                       tags$span(style = "color: #1B3A6B; font-weight: 500;",
+                                                           "Historical first auction date for this bond (ignores date filter)."
+                                                       )
+                                                   ),
+
+                                                   # Last Auction
+                                                   div(
+                                                       class = "desc-item",
+                                                       tags$strong("Last Auction: "),
+                                                       tags$span(style = "color: #1B3A6B; font-weight: 500;",
+                                                           "Most recent auction date for this bond (ignores date filter)."
+                                                       )
+                                                   )
+                                               )
+                                           )
+                                       ),
+
+                                       # The actual table output
+                                       DT::dataTableOutput("ytd_issuance_data_table")
+                                   )
                                )
                            ),
                            fluidRow(
