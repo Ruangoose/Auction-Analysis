@@ -4315,15 +4315,59 @@ server <- function(input, output, session) {
             table_data$`Yield Trend Display` <- NULL  # Remove the display column
         }
 
-        # Column indices after removing Yield Trend Display:
+        # Column indices after removing Yield Trend Display (and Alloc Rate % removed):
         # 0: Bond, 1: # Auctions, 2: Total (R mil), 3: Avg B2C, 4: B2C Range
-        # 5: Alloc Rate %, 6: Oversub %, 7: Yield Trend, 8: First Auction, 9: Last Auction
+        # 5: Oversub %, 6: Yield Trend, 7: First Auction, 8: Last Auction
 
-        # Build the datatable with improved formatting
+        # Column descriptions for tooltips
+        column_descriptions <- list(
+            "Bond" = "Bond instrument identifier (e.g., R2048, R2035). TOTAL row shows aggregate across all bonds.",
+            "# Auctions" = "Number of primary market auctions held for this bond during the selected period.",
+            "Total (R mil)" = "Total nominal amount offered by National Treasury across all auctions, in millions of Rand.",
+            "Avg B2C" = "Average Bid-to-Cover ratio. Measures auction demand: total bids received divided by amount offered. Higher values (>2.5x) indicate strong demand.",
+            "B2C Range" = "Range showing the minimum and maximum Bid-to-Cover ratios observed across all auctions for this bond.",
+            "Oversub %" = "Average Oversubscription percentage. Shows how much total bids exceeded the offer amount. 200% means bids were 2x the offer.",
+            "Yield Trend" = "Change in clearing yield from first to last auction WITHIN the selected date range. Negative (green) = yields decreased. Positive (red) = yields increased.",
+            "First Auction" = "Date of the earliest auction for this bond within the selected period.",
+            "Last Auction" = "Date of the most recent auction for this bond within the selected period."
+        )
+
+        # Helper function to create header with tooltip HTML
+        create_header_with_tooltip <- function(col_name, description) {
+            sprintf(
+                '<div class="column-header-tooltip">%s<span class="info-icon">i</span><span class="tooltip-text">%s</span></div>',
+                htmltools::htmlEscape(col_name),
+                htmltools::htmlEscape(description)
+            )
+        }
+
+        # Build custom column headers with tooltips
+        col_headers <- sapply(names(table_data), function(col) {
+            desc <- column_descriptions[[col]]
+            if (!is.null(desc)) {
+                create_header_with_tooltip(col, desc)
+            } else {
+                col
+            }
+        })
+
+        # Create a container with custom headers for DT
+        header_callback <- htmltools::withTags(table(
+            class = 'display',
+            thead(
+                tr(
+                    lapply(col_headers, function(h) th(HTML(h)))
+                )
+            )
+        ))
+
+        # Build the datatable with improved formatting and custom headers
         dt <- DT::datatable(
             table_data,
             rownames = FALSE,
             filter = "none",
+            container = header_callback,
+            escape = FALSE,  # Allow HTML in headers
             options = list(
                 pageLength = 15,
                 scrollX = TRUE,
@@ -4332,17 +4376,17 @@ server <- function(input, output, session) {
                 # Don't auto-sort since TOTAL is at top
                 order = list(),
                 columnDefs = list(
-                    # Right-align numeric columns
-                    list(className = 'dt-right', targets = c(1, 2, 3, 5, 6)),
+                    # Right-align numeric columns (updated indices without Alloc Rate %)
+                    list(className = 'dt-right', targets = c(1, 2, 3, 5)),
                     # Center the B2C Range and Yield Trend columns
-                    list(className = 'dt-center', targets = c(4, 7))
+                    list(className = 'dt-center', targets = c(4, 6, 7, 8))
                 ),
                 language = list(
                     search = "Search:",
-                    info = "Showing _START_ to _END_ of _TOTAL_ entries"
+                    info = "Showing _START_ to _END_ of _TOTAL_ bonds"
                 )
             ),
-            class = 'cell-border stripe hover compact'
+            class = 'cell-border stripe hover compact issuance-table'
         )
 
         # Format Total (R mil) with thousand separators
@@ -4363,12 +4407,7 @@ server <- function(input, output, session) {
                 DT::formatString(columns = 'Avg B2C', suffix = "x")
         }
 
-        # Format percentages
-        if ("Alloc Rate %" %in% names(table_data)) {
-            dt <- dt %>%
-                DT::formatRound(columns = 'Alloc Rate %', digits = 1) %>%
-                DT::formatString(columns = 'Alloc Rate %', suffix = "%")
-        }
+        # Format Oversub % percentage
         if ("Oversub %" %in% names(table_data)) {
             dt <- dt %>%
                 DT::formatRound(columns = 'Oversub %', digits = 1) %>%

@@ -605,6 +605,84 @@ ui <- dashboardPage(
           box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
 
+        /* Column header tooltips for Issuance Details table */
+        .column-header-tooltip {
+          position: relative;
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+        }
+
+        .column-header-tooltip .info-icon {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 16px;
+          height: 16px;
+          background-color: rgba(255,255,255,0.3);
+          border-radius: 50%;
+          font-size: 10px;
+          cursor: help;
+          font-style: italic;
+          font-weight: bold;
+          flex-shrink: 0;
+        }
+
+        .column-header-tooltip .info-icon:hover {
+          background-color: rgba(255,255,255,0.5);
+        }
+
+        /* Tooltip popup */
+        .column-header-tooltip .tooltip-text {
+          visibility: hidden;
+          width: 220px;
+          background-color: #333;
+          color: #fff;
+          text-align: left;
+          border-radius: 6px;
+          padding: 10px 12px;
+          position: absolute;
+          z-index: 1000;
+          top: 130%;
+          left: 50%;
+          transform: translateX(-50%);
+          opacity: 0;
+          transition: opacity 0.2s ease;
+          font-size: 12px;
+          font-weight: normal;
+          line-height: 1.4;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+          white-space: normal;
+        }
+
+        .column-header-tooltip .tooltip-text::after {
+          content: '';
+          position: absolute;
+          bottom: 100%;
+          left: 50%;
+          margin-left: -5px;
+          border-width: 5px;
+          border-style: solid;
+          border-color: transparent transparent #333 transparent;
+        }
+
+        .column-header-tooltip:hover .tooltip-text {
+          visibility: visible;
+          opacity: 1;
+        }
+
+        /* Issuance table specific styling */
+        .issuance-table thead th {
+          background-color: #1B3A6B !important;
+          color: white !important;
+        }
+
+        .issuance-table tbody tr:first-child {
+          background-color: #E3F2FD !important;
+          font-weight: bold;
+          border-bottom: 2px solid #1B3A6B;
+        }
+
         /* Value boxes enhancement */
         .small-box .inner h3 {
           font-size: 32px;
