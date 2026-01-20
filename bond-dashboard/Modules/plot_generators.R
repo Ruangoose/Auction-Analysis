@@ -2494,7 +2494,7 @@ generate_curve_steepness_gauge <- function(data, params) {
             panel.grid = element_blank(),
             plot.title = element_text(face = "bold", size = 11, color = "#1B3A6B"),
             plot.subtitle = element_text(size = 9, color = "gray50"),
-            plot.margin = margin(10, 15, 5, 15)
+            plot.margin = ggplot2::margin(10, 15, 5, 15)
         )
 
     return(p)
