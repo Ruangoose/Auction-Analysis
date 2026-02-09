@@ -445,6 +445,25 @@ generate_bond_holdings_bar_chart <- function(bond_pct_long,
         filter(!grepl("^\\s*NA\\s*$", sector, ignore.case = TRUE)) %>%
         filter(!grepl("^\\s*NA\\s*$", bond, ignore.case = TRUE))
 
+    # ========== Remove fully-matured bonds (all sectors sum to ~0%) ==========
+    # These are bonds that appear in older files with all-zero values after maturing.
+    # Keeping them creates misleading chart entries and noisy integrity warnings.
+    bond_totals_check <- filtered_data %>%
+        group_by(bond) %>%
+        summarise(total = sum(abs(value), na.rm = TRUE), .groups = "drop")
+
+    matured_bonds <- bond_totals_check %>%
+        filter(total < 0.001) %>%  # Less than 0.1% total across all sectors = effectively zero
+        pull(bond)
+
+    if (length(matured_bonds) > 0) {
+        message(sprintf("Excluding %d matured/zero-holdings bond(s) from chart: %s",
+                        length(matured_bonds), paste(matured_bonds, collapse = ", ")))
+        filtered_data <- filtered_data %>%
+            filter(!bond %in% matured_bonds)
+    }
+    # ========== END matured bond filter ==========
+
     # Validate that each bond sums to ~100% (data integrity check)
     bond_totals <- filtered_data %>%
         group_by(bond) %>%
@@ -637,6 +656,25 @@ generate_holdings_change_diverging <- function(bond_pct_long,
         # Additional safety check for edge cases
         filter(!grepl("^\\s*NA\\s*$", sector, ignore.case = TRUE)) %>%
         filter(!grepl("^\\s*NA\\s*$", bond, ignore.case = TRUE))
+
+    # ========== Remove fully-matured bonds (all sectors sum to ~0%) ==========
+    # Check on current date's data - bonds with zero current holdings are matured
+    current_bond_totals <- clean_bond_data %>%
+        filter(file_date == current_date) %>%
+        group_by(bond) %>%
+        summarise(total = sum(abs(value), na.rm = TRUE), .groups = "drop")
+
+    matured_bonds_div <- current_bond_totals %>%
+        filter(total < 0.001) %>%
+        pull(bond)
+
+    if (length(matured_bonds_div) > 0) {
+        message(sprintf("Excluding %d matured/zero-holdings bond(s) from diverging chart: %s",
+                        length(matured_bonds_div), paste(matured_bonds_div, collapse = ", ")))
+        clean_bond_data <- clean_bond_data %>%
+            filter(!bond %in% matured_bonds_div)
+    }
+    # ========== END matured bond filter ==========
 
     # Calculate changes using cleaned data
     current_data <- clean_bond_data %>%

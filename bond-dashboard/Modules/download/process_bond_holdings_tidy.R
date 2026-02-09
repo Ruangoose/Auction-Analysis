@@ -36,6 +36,8 @@ process_sa_bond_holdings_tidy <- function(source_folder = "bond_holdings",
     all_frn_pct <- list()
     all_sukuk_values <- list()
     all_sukuk_pct <- list()
+    all_infrastructure_values <- list()
+    all_infrastructure_pct <- list()
 
     # Helper function to validate Excel file
     is_valid_excel <- function(filepath) {
@@ -98,6 +100,56 @@ process_sa_bond_holdings_tidy <- function(source_folder = "bond_holdings",
 
                 # Rename first column to sector
                 names(data)[1] <- "sector"
+
+                # ========== Handle duplicate column names ==========
+                # Treasury sometimes has multiple tranches of the same bond (e.g., two R010 (2026) columns)
+                # readxl auto-renames them with ...N suffixes. We merge duplicates by summing values.
+                col_names <- names(data)
+                # Detect columns with readxl's auto-rename suffix pattern (e.g., "R010 (2026)...3")
+                has_suffix <- grepl("\\.\\.\\.[0-9]+$", col_names)
+
+                if (any(has_suffix)) {
+                    # Strip the ...N suffix to get base names
+                    base_names <- sub("\\.\\.\\.[0-9]+$", "", col_names)
+
+                    # Find which base names have duplicates
+                    dup_bases <- unique(base_names[duplicated(base_names) & has_suffix])
+
+                    if (length(dup_bases) > 0) {
+                        message(sprintf("    Merging duplicate columns: %s", paste(dup_bases, collapse = ", ")))
+
+                        for (dup_name in dup_bases) {
+                            # Find all columns that map to this base name
+                            dup_cols <- which(base_names == dup_name)
+
+                            if (length(dup_cols) >= 2) {
+                                # Convert to numeric and sum across duplicate columns
+                                merged_values <- rowSums(
+                                    sapply(dup_cols, function(i) {
+                                        suppressWarnings(as.numeric(as.character(data[[i]])))
+                                    }),
+                                    na.rm = TRUE
+                                )
+
+                                # Keep the first column with merged values, drop the rest
+                                data[[dup_cols[1]]] <- merged_values
+                                names(data)[dup_cols[1]] <- dup_name  # Restore clean name
+
+                                # Mark extra columns for removal
+                                cols_to_remove <- dup_cols[-1]
+                                data <- data[, -cols_to_remove, drop = FALSE]
+
+                                # Recalculate after removal (indices shift)
+                                col_names <- names(data)
+                                base_names <- sub("\\.\\.\\.[0-9]+$", "", col_names)
+                            }
+                        }
+                    }
+
+                    # Also clean any remaining ...N suffixes on non-duplicate columns
+                    names(data) <- sub("\\.\\.\\.[0-9]+$", "", names(data))
+                }
+                # ========== END duplicate handling ==========
 
                 # Add metadata columns
                 data <- data %>%
@@ -176,6 +228,21 @@ process_sa_bond_holdings_tidy <- function(source_folder = "bond_holdings",
                 sukuk_pct <- process_bond_sheet("Sukuk % (Values)", "percentage")
                 if (!is.null(sukuk_pct)) {
                     all_sukuk_pct[[filename]] <- sukuk_pct
+                }
+            }
+
+            # Infrastructure
+            if ("Infrastructure (Values)" %in% sheets) {
+                infra_values <- process_bond_sheet("Infrastructure (Values)", "value")
+                if (!is.null(infra_values)) {
+                    all_infrastructure_values[[filename]] <- infra_values
+                }
+            }
+
+            if ("Infrastructure % (Values)" %in% sheets) {
+                infra_pct <- process_bond_sheet("Infrastructure % (Values)", "percentage")
+                if (!is.null(infra_pct)) {
+                    all_infrastructure_pct[[filename]] <- infra_pct
                 }
             }
 
@@ -285,6 +352,8 @@ process_sa_bond_holdings_tidy <- function(source_folder = "bond_holdings",
     frn_pct_data <- combine_and_tidy(all_frn_pct, "FRN (%)", "FRN", create_long_format)
     sukuk_values_data <- combine_and_tidy(all_sukuk_values, "Sukuk (Values)", "Sukuk", create_long_format)
     sukuk_pct_data <- combine_and_tidy(all_sukuk_pct, "Sukuk (%)", "Sukuk", create_long_format)
+    infra_values_data <- combine_and_tidy(all_infrastructure_values, "Infrastructure Values", "Infrastructure", create_long_format)
+    infra_pct_data <- combine_and_tidy(all_infrastructure_pct, "Infrastructure Pct", "Infrastructure", create_long_format)
 
     # Save all datasets as RDS
     if (verbose) cat("\n=== Saving RDS files ===\n")
@@ -329,6 +398,8 @@ process_sa_bond_holdings_tidy <- function(source_folder = "bond_holdings",
     save_dataset(frn_pct_data, "frn_pct")
     save_dataset(sukuk_values_data, "sukuk_values")
     save_dataset(sukuk_pct_data, "sukuk_pct")
+    save_dataset(infra_values_data, "infrastructure_values")
+    save_dataset(infra_pct_data, "infrastructure_pct")
 
     # Create a combined long format dataset with all bond types
     if (create_long_format) {
@@ -338,7 +409,8 @@ process_sa_bond_holdings_tidy <- function(source_folder = "bond_holdings",
             fixed_values_data$long,
             ilb_values_data$long,
             frn_values_data$long,
-            sukuk_values_data$long
+            sukuk_values_data$long,
+            infra_values_data$long
         ) %>%
             filter(data_type == "value") %>%
             select(-data_type)
@@ -347,7 +419,8 @@ process_sa_bond_holdings_tidy <- function(source_folder = "bond_holdings",
             fixed_pct_data$long,
             ilb_pct_data$long,
             frn_pct_data$long,
-            sukuk_pct_data$long
+            sukuk_pct_data$long,
+            infra_pct_data$long
         ) %>%
             filter(data_type == "percentage") %>%
             select(-data_type)
@@ -387,7 +460,9 @@ process_sa_bond_holdings_tidy <- function(source_folder = "bond_holdings",
         frn_values = frn_values_data,
         frn_pct = frn_pct_data,
         sukuk_values = sukuk_values_data,
-        sukuk_pct = sukuk_pct_data
+        sukuk_pct = sukuk_pct_data,
+        infrastructure_values = infra_values_data,
+        infrastructure_pct = infra_pct_data
     ))
 }
 
@@ -411,6 +486,8 @@ load_bond_data <- function(dataset_name,
         "frn_pct" = "frn_pct",
         "sukuk_values" = "sukuk_values",
         "sukuk_pct" = "sukuk_pct",
+        "infrastructure_values" = "infrastructure_values",
+        "infrastructure_pct" = "infrastructure_pct",
         "all_values" = "all_bonds_values",
         "all_pct" = "all_bonds_pct"
     )

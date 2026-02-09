@@ -26,6 +26,37 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
 
     if (verbose) cat(sprintf("Found %d Excel files to process.\n\n", length(excel_files)))
 
+    # Helper function to merge duplicate columns from readxl auto-rename
+    # Treasury sometimes has multiple tranches of the same bond (e.g., two R010 (2026) columns)
+    # readxl auto-renames them with ...N suffixes. We merge duplicates by summing values.
+    merge_duplicate_columns <- function(data) {
+        col_names <- names(data)
+        has_suffix <- grepl("\\.\\.\\.[0-9]+$", col_names)
+
+        if (!any(has_suffix)) return(data)
+
+        base_names <- sub("\\.\\.\\.[0-9]+$", "", col_names)
+        dup_bases <- unique(base_names[duplicated(base_names) & has_suffix])
+
+        for (dup_name in dup_bases) {
+            dup_cols <- which(base_names == dup_name)
+            if (length(dup_cols) >= 2) {
+                merged <- rowSums(
+                    sapply(dup_cols, function(i) suppressWarnings(as.numeric(as.character(data[[i]])))),
+                    na.rm = TRUE
+                )
+                data[[dup_cols[1]]] <- merged
+                names(data)[dup_cols[1]] <- dup_name
+                data <- data[, -dup_cols[-1], drop = FALSE]
+                col_names <- names(data)
+                base_names <- sub("\\.\\.\\.[0-9]+$", "", col_names)
+            }
+        }
+
+        names(data) <- sub("\\.\\.\\.[0-9]+$", "", names(data))
+        return(data)
+    }
+
     # Helper function to validate Excel file
     is_valid_excel <- function(filepath) {
         # Check if file exists and has size > 0
@@ -51,6 +82,8 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
     all_frn_pct <- list()
     all_sukuk_values <- list()
     all_sukuk_pct <- list()
+    all_infrastructure_values <- list()
+    all_infrastructure_pct <- list()
 
     # Process each file
     for (file_path in excel_files) {
@@ -101,8 +134,7 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
             # 2. Fixed rate bond (Values)
             if ("Fixed rate bond (Values)" %in% sheets) {
                 fixed_values <- read_excel(file_path, sheet = "Fixed rate bond (Values)", skip = 1)
-                # Remove the date header row that becomes column names
-                # First row is the date, second row should be headers
+                fixed_values <- merge_duplicate_columns(fixed_values)
                 fixed_values$file_date <- file_date
                 all_fixed_rate_values[[filename]] <- fixed_values
             }
@@ -110,6 +142,7 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
             # 3. Fixed rate bond % (Values)
             if ("Fixed rate bond % (Values)" %in% sheets) {
                 fixed_pct <- read_excel(file_path, sheet = "Fixed rate bond % (Values)", skip = 1)
+                fixed_pct <- merge_duplicate_columns(fixed_pct)
                 fixed_pct$file_date <- file_date
                 all_fixed_rate_pct[[filename]] <- fixed_pct
             }
@@ -117,6 +150,7 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
             # 4. ILB (Values)
             if ("ILB (Values)" %in% sheets) {
                 ilb_values <- read_excel(file_path, sheet = "ILB (Values)", skip = 1)
+                ilb_values <- merge_duplicate_columns(ilb_values)
                 ilb_values$file_date <- file_date
                 all_ilb_values[[filename]] <- ilb_values
             }
@@ -124,6 +158,7 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
             # 5. ILB % (Values)
             if ("ILB % (Values)" %in% sheets) {
                 ilb_pct <- read_excel(file_path, sheet = "ILB % (Values)", skip = 1)
+                ilb_pct <- merge_duplicate_columns(ilb_pct)
                 ilb_pct$file_date <- file_date
                 all_ilb_pct[[filename]] <- ilb_pct
             }
@@ -131,6 +166,7 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
             # 6. FRN (Values)
             if ("FRN (Values)" %in% sheets) {
                 frn_values <- read_excel(file_path, sheet = "FRN (Values)", skip = 1)
+                frn_values <- merge_duplicate_columns(frn_values)
                 frn_values$file_date <- file_date
                 all_frn_values[[filename]] <- frn_values
             }
@@ -138,6 +174,7 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
             # 7. FRN % (Values)
             if ("FRN % (Values)" %in% sheets) {
                 frn_pct <- read_excel(file_path, sheet = "FRN % (Values)", skip = 1)
+                frn_pct <- merge_duplicate_columns(frn_pct)
                 frn_pct$file_date <- file_date
                 all_frn_pct[[filename]] <- frn_pct
             }
@@ -145,6 +182,7 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
             # 8. Sukuk (Values)
             if ("Sukuk (Values)" %in% sheets) {
                 sukuk_values <- read_excel(file_path, sheet = "Sukuk (Values)", skip = 1)
+                sukuk_values <- merge_duplicate_columns(sukuk_values)
                 sukuk_values$file_date <- file_date
                 all_sukuk_values[[filename]] <- sukuk_values
             }
@@ -152,8 +190,25 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
             # 9. Sukuk % (Values)
             if ("Sukuk % (Values)" %in% sheets) {
                 sukuk_pct <- read_excel(file_path, sheet = "Sukuk % (Values)", skip = 1)
+                sukuk_pct <- merge_duplicate_columns(sukuk_pct)
                 sukuk_pct$file_date <- file_date
                 all_sukuk_pct[[filename]] <- sukuk_pct
+            }
+
+            # 10. Infrastructure (Values)
+            if ("Infrastructure (Values)" %in% sheets) {
+                infra_values <- read_excel(file_path, sheet = "Infrastructure (Values)", skip = 1)
+                infra_values <- merge_duplicate_columns(infra_values)
+                infra_values$file_date <- file_date
+                all_infrastructure_values[[filename]] <- infra_values
+            }
+
+            # 11. Infrastructure % (Values)
+            if ("Infrastructure % (Values)" %in% sheets) {
+                infra_pct <- read_excel(file_path, sheet = "Infrastructure % (Values)", skip = 1)
+                infra_pct <- merge_duplicate_columns(infra_pct)
+                infra_pct$file_date <- file_date
+                all_infrastructure_pct[[filename]] <- infra_pct
             }
 
             if (verbose) cat(sprintf("  ✓ Successfully processed\n"))
@@ -312,6 +367,8 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
     combined_frn_pct <- safe_bind_rows(all_frn_pct, "FRN (%)")
     combined_sukuk_values <- safe_bind_rows(all_sukuk_values, "Sukuk (Values)")
     combined_sukuk_pct <- safe_bind_rows(all_sukuk_pct, "Sukuk (%)")
+    combined_infra_values <- safe_bind_rows(all_infrastructure_values, "Infrastructure (Values)")
+    combined_infra_pct <- safe_bind_rows(all_infrastructure_pct, "Infrastructure (%)")
 
     # Save all datasets as RDS
     if (verbose) cat("\n=== Saving RDS files ===\n")
@@ -343,6 +400,8 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
     save_if_exists(combined_frn_pct, "frn_pct.rds")
     save_if_exists(combined_sukuk_values, "sukuk_values.rds")
     save_if_exists(combined_sukuk_pct, "sukuk_pct.rds")
+    save_if_exists(combined_infra_values, "infrastructure_values.rds")
+    save_if_exists(combined_infra_pct, "infrastructure_pct.rds")
 
     # Create summary
     if (verbose) {
@@ -360,7 +419,9 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
             "FRN Values" = combined_frn_values,
             "FRN Percentages" = combined_frn_pct,
             "Sukuk Values" = combined_sukuk_values,
-            "Sukuk Percentages" = combined_sukuk_pct
+            "Sukuk Percentages" = combined_sukuk_pct,
+            "Infrastructure Values" = combined_infra_values,
+            "Infrastructure Percentages" = combined_infra_pct
         )
 
         for (name in names(datasets)) {
@@ -382,7 +443,9 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
         frn_values = combined_frn_values,
         frn_pct = combined_frn_pct,
         sukuk_values = combined_sukuk_values,
-        sukuk_pct = combined_sukuk_pct
+        sukuk_pct = combined_sukuk_pct,
+        infrastructure_values = combined_infra_values,
+        infrastructure_pct = combined_infra_pct
     ))
 }
 
@@ -398,7 +461,9 @@ load_bond_data <- function(dataset_name, folder = "bond_holdings_rds") {
         "frn_values",
         "frn_pct",
         "sukuk_values",
-        "sukuk_pct"
+        "sukuk_pct",
+        "infrastructure_values",
+        "infrastructure_pct"
     )
 
     # Map friendly names to actual filenames
@@ -414,7 +479,9 @@ load_bond_data <- function(dataset_name, folder = "bond_holdings_rds") {
         "frn_values" = "frn_values.rds",
         "frn_pct" = "frn_pct.rds",
         "sukuk_values" = "sukuk_values.rds",
-        "sukuk_pct" = "sukuk_pct.rds"
+        "sukuk_pct" = "sukuk_pct.rds",
+        "infrastructure_values" = "infrastructure_values.rds",
+        "infrastructure_pct" = "infrastructure_pct.rds"
     )
 
     if (!dataset_name %in% valid_names) {
