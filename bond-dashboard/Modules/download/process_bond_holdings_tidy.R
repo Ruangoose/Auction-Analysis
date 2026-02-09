@@ -101,52 +101,61 @@ process_sa_bond_holdings_tidy <- function(source_folder = "bond_holdings",
                 # Rename first column to sector
                 names(data)[1] <- "sector"
 
-                # ========== Handle duplicate column names ==========
-                # Treasury sometimes has multiple tranches of the same bond (e.g., two R010 (2026) columns)
-                # readxl auto-renames them with ...N suffixes. We merge duplicates by summing values.
+                # ========== Handle duplicate column names (bond tranches) ==========
+                # Treasury sometimes has multiple tranches of the same bond
+                # (e.g., two R010 (2026) columns for different maturity dates within 2026).
+                # readxl auto-renames them with ...N suffixes.
+                # CRITICAL: value data can be summed, but percentage data CANNOT.
                 col_names <- names(data)
-                # Detect columns with readxl's auto-rename suffix pattern (e.g., "R010 (2026)...3")
                 has_suffix <- grepl("\\.\\.\\.[0-9]+$", col_names)
 
                 if (any(has_suffix)) {
-                    # Strip the ...N suffix to get base names
                     base_names <- sub("\\.\\.\\.[0-9]+$", "", col_names)
-
-                    # Find which base names have duplicates
                     dup_bases <- unique(base_names[duplicated(base_names) & has_suffix])
 
                     if (length(dup_bases) > 0) {
-                        message(sprintf("    Merging duplicate columns: %s", paste(dup_bases, collapse = ", ")))
-
-                        for (dup_name in dup_bases) {
-                            # Find all columns that map to this base name
-                            dup_cols <- which(base_names == dup_name)
-
-                            if (length(dup_cols) >= 2) {
-                                # Convert to numeric and sum across duplicate columns
-                                merged_values <- rowSums(
-                                    sapply(dup_cols, function(i) {
-                                        suppressWarnings(as.numeric(as.character(data[[i]])))
-                                    }),
-                                    na.rm = TRUE
-                                )
-
-                                # Keep the first column with merged values, drop the rest
-                                data[[dup_cols[1]]] <- merged_values
-                                names(data)[dup_cols[1]] <- dup_name  # Restore clean name
-
-                                # Mark extra columns for removal
-                                cols_to_remove <- dup_cols[-1]
-                                data <- data[, -cols_to_remove, drop = FALSE]
-
-                                # Recalculate after removal (indices shift)
-                                col_names <- names(data)
-                                base_names <- sub("\\.\\.\\.[0-9]+$", "", col_names)
+                        if (value_type == "value") {
+                            # VALUE data: sum across tranches (total Rand holdings)
+                            message(sprintf("    Merging duplicate VALUE columns (summing): %s",
+                                            paste(dup_bases, collapse = ", ")))
+                            for (dup_name in dup_bases) {
+                                dup_cols <- which(base_names == dup_name)
+                                if (length(dup_cols) >= 2) {
+                                    merged <- rowSums(
+                                        sapply(dup_cols, function(i) {
+                                            suppressWarnings(as.numeric(as.character(data[[i]])))
+                                        }), na.rm = TRUE
+                                    )
+                                    data[[dup_cols[1]]] <- merged
+                                    names(data)[dup_cols[1]] <- dup_name
+                                    data <- data[, -dup_cols[-1], drop = FALSE]
+                                    # Recalculate after column removal
+                                    col_names <- names(data)
+                                    base_names <- sub("\\.\\.\\.[0-9]+$", "", col_names)
+                                }
+                            }
+                        } else {
+                            # PERCENTAGE data: keep separate with clean tranche labels
+                            # Each tranche independently sums to 100% — summing would give 200%
+                            message(sprintf("    Renaming duplicate PCT columns with tranche IDs: %s",
+                                            paste(dup_bases, collapse = ", ")))
+                            for (dup_name in dup_bases) {
+                                dup_cols <- which(base_names == dup_name)
+                                for (k in seq_along(dup_cols)) {
+                                    mat_year <- str_extract(dup_name, "\\(\\d{4}\\)")
+                                    bond_code <- str_trim(sub("\\s*\\(\\d{4}\\)", "", dup_name))
+                                    if (!is.na(mat_year)) {
+                                        names(data)[dup_cols[k]] <- sprintf("%s-T%d %s",
+                                                                             bond_code, k, mat_year)
+                                    } else {
+                                        names(data)[dup_cols[k]] <- sprintf("%s-T%d", dup_name, k)
+                                    }
+                                }
                             }
                         }
                     }
 
-                    # Also clean any remaining ...N suffixes on non-duplicate columns
+                    # Clean any remaining ...N suffixes on non-duplicate columns
                     names(data) <- sub("\\.\\.\\.[0-9]+$", "", names(data))
                 }
                 # ========== END duplicate handling ==========
