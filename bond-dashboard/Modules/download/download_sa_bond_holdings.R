@@ -19,6 +19,7 @@ download_sa_bond_holdings <- function(start_date = "2018-02-01",
     # Load required packages
     require(httr)
     require(lubridate)
+    require(readxl)
 
     # If end_date is NULL, set it to the last day of the previous month
     if (is.null(end_date)) {
@@ -65,14 +66,45 @@ download_sa_bond_holdings <- function(start_date = "2018-02-01",
         existing_files <- list.files(dest_folder, pattern = "Historical government bond holdings.*\\.(xls|xlsx)$")
 
         if (length(existing_files) > 0) {
-            existing_dates <- sapply(existing_files, extract_date_from_filename)
-            existing_dates <- as.Date(existing_dates[!is.na(existing_dates)], origin = "1970-01-01")
+            # Validate each existing file is actually valid Excel (not corrupted/HTML)
+            valid_existing_dates <- c()
+            for (ef in existing_files) {
+                ef_path <- file.path(dest_folder, ef)
+                ef_date <- extract_date_from_filename(ef)
+
+                if (!is.na(ef_date)) {
+                    # Check if file is valid Excel (not corrupted/HTML)
+                    is_valid <- tryCatch({
+                        # For .xlsx files, try to read sheet names
+                        if (grepl("\\.xlsx$", ef)) {
+                            sheets <- readxl::excel_sheets(ef_path)
+                            length(sheets) > 0
+                        } else {
+                            # For .xls files, just check file size as before
+                            file.size(ef_path) >= 10000
+                        }
+                    }, error = function(e) {
+                        FALSE
+                    })
+
+                    if (is_valid) {
+                        valid_existing_dates <- c(valid_existing_dates, ef_date)
+                    } else {
+                        if (verbose) cat(sprintf("  Warning: Corrupted file detected, will re-download: %s\n", ef))
+                        # Remove the corrupted file so it can be re-downloaded
+                        file.remove(ef_path)
+                    }
+                }
+            }
+
+            existing_dates <- as.Date(valid_existing_dates, origin = "1970-01-01")
 
             # Find missing dates by comparing all_dates with existing_dates
             missing_dates <- all_dates[!all_dates %in% existing_dates]
 
             if (verbose) {
-                cat(sprintf("Found %d existing files in folder.\n", length(existing_files)))
+                cat(sprintf("Found %d existing files in folder (%d valid).\n",
+                            length(existing_files), length(valid_existing_dates)))
                 cat(sprintf("Checking for missing files between %s and %s...\n",
                             format(start, "%B %Y"),
                             format(end, "%B %Y")))
@@ -127,6 +159,19 @@ download_sa_bond_holdings <- function(start_date = "2018-02-01",
                 if (status_code(response) == 200) {
                     # Verify file is not empty/corrupted
                     if (file.exists(dest_file) && file.size(dest_file) > 1000) {
+                        # Validate file is actually an Excel file, not an HTML error page
+                        is_valid_excel <- tryCatch({
+                            sheets <- readxl::excel_sheets(dest_file)
+                            length(sheets) > 0
+                        }, error = function(e) {
+                            FALSE
+                        })
+
+                        if (!is_valid_excel) {
+                            if (file.exists(dest_file)) file.remove(dest_file)
+                            return(list(success = FALSE, status = "Invalid file (not Excel)", attempts = attempt))
+                        }
+
                         return(list(success = TRUE, status = "Downloaded", attempts = attempt))
                     } else {
                         if (file.exists(dest_file)) file.remove(dest_file)

@@ -155,7 +155,8 @@ treasury_holdings_ui <- function(id) {
                                "Fixed Rate" = "Fixed Rate",
                                "Inflation Linked (ILB)" = "ILB",
                                "Floating Rate (FRN)" = "FRN",
-                               "Sukuk" = "Sukuk"
+                               "Sukuk" = "Sukuk",
+                               "Infrastructure" = "Infrastructure"
                            ),
                            selected = "Fixed Rate"
                        ),
@@ -345,6 +346,27 @@ treasury_holdings_ui <- function(id) {
                                           )
                                       )
                                )
+                           ),
+
+                           # Infrastructure Holdings
+                           fluidRow(
+                               column(6,
+                                      box(
+                                          title = span(icon("building"), "Infrastructure Holdings"),
+                                          status = "primary",
+                                          solidHeader = TRUE,
+                                          width = 12,
+                                          collapsible = TRUE,
+                                          collapsed = TRUE,
+                                          withSpinner(
+                                              plotOutput(ns("bond_holdings_infrastructure"), height = "500px"),
+                                              type = 4,
+                                              color = insele_primary
+                                          ),
+                                          downloadButton(ns("download_holdings_infrastructure"), "Download Chart",
+                                                         class = "btn-sm btn-primary")
+                                      )
+                               )
                            )
                        ),
 
@@ -523,6 +545,41 @@ treasury_holdings_ui <- function(id) {
                                           )
                                       )
                                )
+                           ),
+
+                           # Infrastructure Bond Changes
+                           fluidRow(
+                               column(6,
+                                      box(
+                                          title = span(icon("building"), "Infrastructure Bond Changes"),
+                                          status = "primary",
+                                          solidHeader = TRUE,
+                                          width = 12,
+                                          collapsible = TRUE,
+                                          collapsed = TRUE,
+                                          selectizeInput(
+                                              ns("exclude_bonds_infrastructure"),
+                                              "Bonds to exclude:",
+                                              choices = NULL,
+                                              selected = NULL,
+                                              multiple = TRUE,
+                                              options = list(
+                                                  placeholder = "Select bonds to exclude...",
+                                                  plugins = list("remove_button")
+                                              )
+                                          ),
+                                          withSpinner(
+                                              plotOutput(ns("diverging_change_infrastructure"), height = "400px"),
+                                              type = 4,
+                                              color = insele_primary
+                                          ),
+                                          tags$div(
+                                              style = "font-size: 11px; color: #666; margin-top: 5px; margin-bottom: 10px;",
+                                              textOutput(ns("excluded_bonds_info_infrastructure"))
+                                          ),
+                                          downloadButton(ns("download_diverging_infrastructure"), "Download Chart", class = "btn-sm btn-primary")
+                                      )
+                               )
                            )
                        ),
 
@@ -556,7 +613,7 @@ treasury_holdings_ui <- function(id) {
                                                          selectInput(
                                                              ns("table_bond_type"),
                                                              "Bond Type:",
-                                                             choices = c("Fixed Rate", "ILB", "FRN", "Sukuk"),
+                                                             choices = c("Fixed Rate", "ILB", "FRN", "Sukuk", "Infrastructure"),
                                                              selected = "Fixed Rate"
                                                          )
                                                      )
@@ -788,6 +845,18 @@ treasury_holdings_server <- function(id) {
             updateSelectizeInput(
                 session,
                 "exclude_bonds_sukuk",
+                choices = available_bonds,
+                selected = character(0)
+            )
+        })
+
+        # Update exclude_bonds choices for Infrastructure
+        observe({
+            req(treasury_data$bond_holdings)
+            available_bonds <- get_available_bonds("Infrastructure")
+            updateSelectizeInput(
+                session,
+                "exclude_bonds_infrastructure",
                 choices = available_bonds,
                 selected = character(0)
             )
@@ -1161,6 +1230,23 @@ treasury_holdings_server <- function(id) {
             )
         }, res = 96)
 
+        # 3e. Infrastructure Holdings Bar Chart
+        output$bond_holdings_infrastructure <- renderPlot({
+            req(treasury_data$bond_holdings)
+            req(input$snapshot_date)
+
+            if (!has_bond_data("Infrastructure")) {
+                return(create_empty_plot("No Infrastructure bond data available"))
+            }
+
+            generate_bond_holdings_bar_chart(
+                bond_pct_long = treasury_data$bond_holdings,
+                selected_bond_type = "Infrastructure",
+                target_date = as.Date(input$snapshot_date),
+                show_labels = TRUE
+            )
+        }, res = 96)
+
         # ==================================================================
         # PLOT OUTPUTS - CHANGES TAB (5 charts)
         # ==================================================================
@@ -1276,6 +1362,32 @@ treasury_holdings_server <- function(id) {
 
         output$excluded_bonds_info_sukuk <- renderText({
             p <- current_diverging_plot_sukuk()
+            format_excluded_bonds_text(p)
+        })
+
+        # 5e. Infrastructure Diverging Change Chart
+        current_diverging_plot_infrastructure <- reactive({
+            req(treasury_data$bond_holdings)
+            req(input$change_period_select)
+
+            generate_holdings_change_diverging(
+                bond_pct_long = treasury_data$bond_holdings,
+                period_months = as.integer(input$change_period_select),
+                selected_bond_type = "Infrastructure",
+                top_n = 12,
+                exclude_bonds = input$exclude_bonds_infrastructure,
+                auto_exclude_outliers = isTRUE(input$auto_exclude_outliers),
+                outlier_threshold = 80,
+                order_by_maturity = TRUE
+            )
+        })
+
+        output$diverging_change_infrastructure <- renderPlot({
+            current_diverging_plot_infrastructure()
+        }, res = 96)
+
+        output$excluded_bonds_info_infrastructure <- renderText({
+            p <- current_diverging_plot_infrastructure()
             format_excluded_bonds_text(p)
         })
 
@@ -1456,6 +1568,22 @@ treasury_holdings_server <- function(id) {
             }
         )
 
+        # Infrastructure holdings download
+        output$download_holdings_infrastructure <- downloadHandler(
+            filename = function() {
+                paste0("treasury_bond_holdings_infrastructure_", Sys.Date(), ".png")
+            },
+            content = function(file) {
+                p <- generate_bond_holdings_bar_chart(
+                    bond_pct_long = treasury_data$bond_holdings,
+                    selected_bond_type = "Infrastructure",
+                    target_date = as.Date(input$snapshot_date),
+                    show_labels = TRUE
+                )
+                ggsave(file, p, width = 10, height = 12, dpi = 300)
+            }
+        )
+
         # ==================================================================
         # DOWNLOAD HANDLERS - CHANGES TAB (5 charts)
         # ==================================================================
@@ -1546,6 +1674,26 @@ treasury_holdings_server <- function(id) {
                     selected_bond_type = "Sukuk",
                     top_n = 12,
                     exclude_bonds = input$exclude_bonds_sukuk,
+                    auto_exclude_outliers = isTRUE(input$auto_exclude_outliers),
+                    outlier_threshold = 80,
+                    order_by_maturity = TRUE
+                )
+                ggsave(file, p, width = 10, height = 8, dpi = 300)
+            }
+        )
+
+        # Infrastructure diverging chart download
+        output$download_diverging_infrastructure <- downloadHandler(
+            filename = function() {
+                paste0("treasury_bond_changes_infrastructure_", Sys.Date(), ".png")
+            },
+            content = function(file) {
+                p <- generate_holdings_change_diverging(
+                    bond_pct_long = treasury_data$bond_holdings,
+                    period_months = as.integer(input$change_period_select),
+                    selected_bond_type = "Infrastructure",
+                    top_n = 12,
+                    exclude_bonds = input$exclude_bonds_infrastructure,
                     auto_exclude_outliers = isTRUE(input$auto_exclude_outliers),
                     outlier_threshold = 80,
                     order_by_maturity = TRUE
