@@ -26,33 +26,54 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
 
     if (verbose) cat(sprintf("Found %d Excel files to process.\n\n", length(excel_files)))
 
-    # Helper function to merge duplicate columns from readxl auto-rename
-    # Treasury sometimes has multiple tranches of the same bond (e.g., two R010 (2026) columns)
-    # readxl auto-renames them with ...N suffixes. We merge duplicates by summing values.
-    merge_duplicate_columns <- function(data) {
+    # Helper: merge or rename duplicate columns from readxl auto-renaming
+    # value_type = "value" -> sum tranches; "percentage" -> keep separate with tranche labels
+    merge_duplicate_columns <- function(data, value_type = "value") {
         col_names <- names(data)
         has_suffix <- grepl("\\.\\.\\.[0-9]+$", col_names)
-
         if (!any(has_suffix)) return(data)
 
         base_names <- sub("\\.\\.\\.[0-9]+$", "", col_names)
         dup_bases <- unique(base_names[duplicated(base_names) & has_suffix])
 
+        if (length(dup_bases) == 0) {
+            # No actual duplicates, just clean the suffixes
+            names(data) <- sub("\\.\\.\\.[0-9]+$", "", names(data))
+            return(data)
+        }
+
         for (dup_name in dup_bases) {
             dup_cols <- which(base_names == dup_name)
-            if (length(dup_cols) >= 2) {
+            if (length(dup_cols) < 2) next
+
+            if (value_type == "value") {
+                # Sum Rand values across tranches
                 merged <- rowSums(
-                    sapply(dup_cols, function(i) suppressWarnings(as.numeric(as.character(data[[i]])))),
-                    na.rm = TRUE
+                    sapply(dup_cols, function(i) {
+                        suppressWarnings(as.numeric(as.character(data[[i]])))
+                    }), na.rm = TRUE
                 )
                 data[[dup_cols[1]]] <- merged
                 names(data)[dup_cols[1]] <- dup_name
                 data <- data[, -dup_cols[-1], drop = FALSE]
+                # Recalculate indices after column removal
                 col_names <- names(data)
                 base_names <- sub("\\.\\.\\.[0-9]+$", "", col_names)
+            } else {
+                # Keep percentage tranches separate with clean labels
+                for (k in seq_along(dup_cols)) {
+                    mat_year <- stringr::str_extract(dup_name, "\\(\\d{4}\\)")
+                    bond_code <- trimws(sub("\\s*\\(\\d{4}\\)", "", dup_name))
+                    if (!is.na(mat_year)) {
+                        names(data)[dup_cols[k]] <- sprintf("%s-T%d %s", bond_code, k, mat_year)
+                    } else {
+                        names(data)[dup_cols[k]] <- sprintf("%s-T%d", dup_name, k)
+                    }
+                }
             }
         }
 
+        # Clean any remaining ...N suffixes
         names(data) <- sub("\\.\\.\\.[0-9]+$", "", names(data))
         return(data)
     }
@@ -134,7 +155,7 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
             # 2. Fixed rate bond (Values)
             if ("Fixed rate bond (Values)" %in% sheets) {
                 fixed_values <- read_excel(file_path, sheet = "Fixed rate bond (Values)", skip = 1)
-                fixed_values <- merge_duplicate_columns(fixed_values)
+                fixed_values <- merge_duplicate_columns(fixed_values, "value")
                 fixed_values$file_date <- file_date
                 all_fixed_rate_values[[filename]] <- fixed_values
             }
@@ -142,7 +163,7 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
             # 3. Fixed rate bond % (Values)
             if ("Fixed rate bond % (Values)" %in% sheets) {
                 fixed_pct <- read_excel(file_path, sheet = "Fixed rate bond % (Values)", skip = 1)
-                fixed_pct <- merge_duplicate_columns(fixed_pct)
+                fixed_pct <- merge_duplicate_columns(fixed_pct, "percentage")
                 fixed_pct$file_date <- file_date
                 all_fixed_rate_pct[[filename]] <- fixed_pct
             }
@@ -150,7 +171,7 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
             # 4. ILB (Values)
             if ("ILB (Values)" %in% sheets) {
                 ilb_values <- read_excel(file_path, sheet = "ILB (Values)", skip = 1)
-                ilb_values <- merge_duplicate_columns(ilb_values)
+                ilb_values <- merge_duplicate_columns(ilb_values, "value")
                 ilb_values$file_date <- file_date
                 all_ilb_values[[filename]] <- ilb_values
             }
@@ -158,7 +179,7 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
             # 5. ILB % (Values)
             if ("ILB % (Values)" %in% sheets) {
                 ilb_pct <- read_excel(file_path, sheet = "ILB % (Values)", skip = 1)
-                ilb_pct <- merge_duplicate_columns(ilb_pct)
+                ilb_pct <- merge_duplicate_columns(ilb_pct, "percentage")
                 ilb_pct$file_date <- file_date
                 all_ilb_pct[[filename]] <- ilb_pct
             }
@@ -166,7 +187,7 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
             # 6. FRN (Values)
             if ("FRN (Values)" %in% sheets) {
                 frn_values <- read_excel(file_path, sheet = "FRN (Values)", skip = 1)
-                frn_values <- merge_duplicate_columns(frn_values)
+                frn_values <- merge_duplicate_columns(frn_values, "value")
                 frn_values$file_date <- file_date
                 all_frn_values[[filename]] <- frn_values
             }
@@ -174,7 +195,7 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
             # 7. FRN % (Values)
             if ("FRN % (Values)" %in% sheets) {
                 frn_pct <- read_excel(file_path, sheet = "FRN % (Values)", skip = 1)
-                frn_pct <- merge_duplicate_columns(frn_pct)
+                frn_pct <- merge_duplicate_columns(frn_pct, "percentage")
                 frn_pct$file_date <- file_date
                 all_frn_pct[[filename]] <- frn_pct
             }
@@ -182,7 +203,7 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
             # 8. Sukuk (Values)
             if ("Sukuk (Values)" %in% sheets) {
                 sukuk_values <- read_excel(file_path, sheet = "Sukuk (Values)", skip = 1)
-                sukuk_values <- merge_duplicate_columns(sukuk_values)
+                sukuk_values <- merge_duplicate_columns(sukuk_values, "value")
                 sukuk_values$file_date <- file_date
                 all_sukuk_values[[filename]] <- sukuk_values
             }
@@ -190,7 +211,7 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
             # 9. Sukuk % (Values)
             if ("Sukuk % (Values)" %in% sheets) {
                 sukuk_pct <- read_excel(file_path, sheet = "Sukuk % (Values)", skip = 1)
-                sukuk_pct <- merge_duplicate_columns(sukuk_pct)
+                sukuk_pct <- merge_duplicate_columns(sukuk_pct, "percentage")
                 sukuk_pct$file_date <- file_date
                 all_sukuk_pct[[filename]] <- sukuk_pct
             }
@@ -198,7 +219,7 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
             # 10. Infrastructure (Values)
             if ("Infrastructure (Values)" %in% sheets) {
                 infra_values <- read_excel(file_path, sheet = "Infrastructure (Values)", skip = 1)
-                infra_values <- merge_duplicate_columns(infra_values)
+                infra_values <- merge_duplicate_columns(infra_values, "value")
                 infra_values$file_date <- file_date
                 all_infrastructure_values[[filename]] <- infra_values
             }
@@ -206,7 +227,7 @@ process_sa_bond_holdings <- function(source_folder = "bond_holdings",
             # 11. Infrastructure % (Values)
             if ("Infrastructure % (Values)" %in% sheets) {
                 infra_pct <- read_excel(file_path, sheet = "Infrastructure % (Values)", skip = 1)
-                infra_pct <- merge_duplicate_columns(infra_pct)
+                infra_pct <- merge_duplicate_columns(infra_pct, "percentage")
                 infra_pct$file_date <- file_date
                 all_infrastructure_pct[[filename]] <- infra_pct
             }
