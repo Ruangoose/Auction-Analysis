@@ -180,10 +180,13 @@ generate_enhanced_auction_analytics <- function(data, params) {
             facet_label = paste0(bond, "\n(n=", n, ", Avg: ", sprintf("%.2f", avg_b2c), "x)")
         )
 
-    # Join facet labels back
+    # Join facet labels back and add sparse data note
     auction_data <- auction_data %>%
         left_join(bond_stats %>% select(bond, facet_label, n), by = "bond") %>%
-        mutate(facet_label = factor(facet_label, levels = bond_stats$facet_label))
+        mutate(
+            facet_label = factor(facet_label, levels = bond_stats$facet_label),
+            sparse_note = ifelse(n <= 3, sprintf("Limited data (n=%d)", n), "")
+        )
 
     # Determine facet layout
     n_bonds <- length(unique(auction_data$bond))
@@ -324,7 +327,7 @@ generate_enhanced_auction_analytics <- function(data, params) {
                 vjust = 1,
                 color = "#333333"
             ),
-            axis.text.y = element_text(size = 9, color = "#333333"),
+            axis.text.y = element_text(size = 9, color = "#333333", margin = ggplot2::margin(r = 2)),
             axis.title.y = element_text(size = 10, color = "#1B3A6B", margin = ggplot2::margin(r = 10)),
 
             # Panel styling
@@ -783,28 +786,28 @@ generate_auction_forecast_plot <- function(data, selected_bonds) {
 
     p <- ggplot(forecast_data, aes(x = date)) +
 
-        # 95% CI
+        # 95% CI — reduced opacity to prevent visual clutter
         geom_ribbon(aes(ymin = lower_95, ymax = upper_95, fill = bond),
-                    alpha = 0.15, na.rm = TRUE) +
+                    alpha = 0.08, na.rm = TRUE) +
 
         # 80% CI
         geom_ribbon(aes(ymin = lower_80, ymax = upper_80, fill = bond),
-                    alpha = 0.25, na.rm = TRUE) +
+                    alpha = 0.15, na.rm = TRUE) +
 
-        # Historical line
+        # Historical line (solid)
         geom_line(data = filter(forecast_data, type == "Historical"),
                   aes(y = bid_to_cover, color = bond),
-                  size = 1.2, na.rm = TRUE) +
+                  linewidth = 1.2, na.rm = TRUE) +
 
         # Historical points
         geom_point(data = filter(forecast_data, type == "Historical"),
                    aes(y = bid_to_cover, color = bond),
                    size = 2, na.rm = TRUE) +
 
-        # Forecast line
+        # Forecast line (dashed to distinguish from historical)
         geom_line(data = filter(forecast_data, type == "Forecast"),
                   aes(y = bid_to_cover, color = bond),
-                  size = 1.2, linetype = "dashed", na.rm = TRUE) +
+                  linewidth = 1.2, linetype = "dashed", na.rm = TRUE) +
 
         # Forecast points
         geom_point(data = filter(forecast_data, type == "Forecast"),
@@ -821,16 +824,18 @@ generate_auction_forecast_plot <- function(data, selected_bonds) {
 
         labs(
             title = "Bid-to-Cover Forecast",
-            subtitle = "Historical data with 3-month forecast",
+            subtitle = "Historical data with 3-month ARIMA forecast | Solid = historical, Dashed = forecast",
             x = "",
             y = "Bid-to-Cover Ratio",
-            color = "Bond"
+            color = "Bond",
+            caption = "Forecasts based on historical time series only; macro conditions and supply calendar not incorporated."
         ) +
 
         create_insele_theme() +
         theme(
             legend.position = "bottom",
-            panel.grid.minor = element_blank()
+            panel.grid.minor = element_blank(),
+            plot.caption = element_text(size = 8, hjust = 0, color = "grey50")
         )
 
     return(p)
@@ -908,9 +913,9 @@ generate_demand_elasticity_plot <- function(data, params) {
         ) %>%
         mutate(
             # Quality checks
-            sufficient_data = n_auctions >= 5,
+            sufficient_data = n_auctions >= 3,
             sufficient_variance = offer_cv > 10,  # At least 10% coefficient of variation
-            has_valid_points = n_valid_elasticity >= 3,
+            has_valid_points = n_valid_elasticity >= 2,
 
             # Overall quality flag
             quality_ok = sufficient_data & sufficient_variance & has_valid_points
@@ -953,9 +958,11 @@ generate_demand_elasticity_plot <- function(data, params) {
     }
 
     if(nrow(elasticity_data_filtered) == 0) {
-        return(create_no_auction_data_plot(
-            "Insufficient data quality for elasticity analysis.\nRequires: ≥5 auctions per bond with ≥10% variance in offer sizes."
-        ))
+        n_total_bonds <- n_distinct(elasticity_data$bond)
+        n_qualifying <- sum(bond_quality$quality_ok, na.rm = TRUE)
+        message(sprintf("Demand elasticity: %d/%d bonds qualify for analysis", n_qualifying, n_total_bonds))
+        # Return NULL so collect_report_charts() skips this chart gracefully
+        return(NULL)
     }
 
     # Create elasticity curves using filtered high-quality data
@@ -1011,7 +1018,7 @@ generate_demand_elasticity_plot <- function(data, params) {
             x = "Offer Size Change (%)",
             y = "Bid-to-Cover Change (%)",
             color = "Bond",
-            caption = "Green zones: Normal response | Red: Inverse response | Size: Elasticity magnitude\nFiltered to show only bonds with ≥5 auctions and ≥10% offer variance. Elasticity capped at ±10."
+            caption = "Green zones: Normal response | Red: Inverse response | Size: Elasticity magnitude\nFiltered to show only bonds with ≥3 auctions and ≥10% offer variance. Elasticity capped at ±10."
         ) +
 
         create_insele_theme() +
@@ -1643,12 +1650,15 @@ generate_auction_sentiment_gauge <- function(data, params) {
         xlim(0, 1) + ylim(0, 1) +
         theme_void()
 
-    # Arrange all components
+    # TODO: Refine component sensitivity — currently only volatility contributes to the composite index
+    # when other components (trend, volume, success) have zero or near-zero values.
+
+    # Arrange all components — compact layout to reduce vertical space
     return(gridExtra::arrangeGrob(
         p_gauge,
         gridExtra::arrangeGrob(p_components, p_metrics, ncol = 2, widths = c(2, 1)),
         ncol = 1,
-        heights = c(2, 1)
+        heights = c(1.5, 1)
     ))
 }
 

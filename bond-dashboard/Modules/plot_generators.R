@@ -592,15 +592,15 @@ generate_enhanced_yield_curve <- function(data, params) {
                 data = label_data,
                 aes(y = yield_to_maturity, label = bond),
                 size = 3.2,
-                max.overlaps = 25,           # Increased to check more overlaps
+                max.overlaps = Inf,          # Never drop labels due to overlap
                 min.segment.length = 0.2,    # Draw connectors for closer labels
                 segment.size = 0.3,
                 segment.alpha = 0.5,
-                segment.color = insele_palette$medium_gray,
-                box.padding = 0.5,           # Increased padding around labels
-                point.padding = 0.4,         # Increased distance from points
-                force = 3,                   # Increased repulsion force
-                force_pull = 0.3,            # Pull toward original position
+                segment.color = "grey60",
+                box.padding = 0.5,           # Padding around labels
+                point.padding = 0.3,         # Distance from points
+                force = 2,                   # Repulsion force
+                force_pull = 0.5,            # Pull toward original position
                 direction = "both",          # Allow movement in x and y
                 seed = 42,                   # Reproducible positioning
                 color = insele_palette$dark_gray,
@@ -658,12 +658,11 @@ generate_enhanced_yield_curve <- function(data, params) {
                     "Spread: N/A"
                 }
 
-                paste(
-                    "Model:", params$curve_model, "|",
-                    "X-Axis:", gsub("_", " ", tools::toTitleCase(x_var)), "|",
-                    "Date:", format(params$curve_date, "%d %B %Y"), "|",
-                    "Bonds:", length(unique(data$bond)), "|",
-                    spread_summary
+                paste0(
+                    "Model: ", params$curve_model, " | ",
+                    "Date: ", format(params$curve_date, "%d %B %Y"), " | ",
+                    "Bonds: ", length(unique(data$bond)),
+                    "\n", spread_summary
                 )
             },
             x = x_label,
@@ -674,7 +673,8 @@ generate_enhanced_yield_curve <- function(data, params) {
                         SIGNAL_THRESHOLDS$strong, SIGNAL_THRESHOLDS$moderate),
                 "Color = Spread to Fair Value (Red = Rich/SELL, Green = Cheap/BUY) | ",
                 "95% confidence band shown",
-                if (has_maturing_bonds) " | Triangle = Matures in period" else ""
+                if (has_maturing_bonds) " | Triangle = Matures in period" else "",
+                if (x_var == "modified_duration") "\nX-axis: Modified Duration (not time to maturity) \u2014 compresses long-end bonds by design" else ""
             )
         ) +
         create_insele_theme() +
@@ -827,7 +827,7 @@ generate_relative_value_heatmap <- function(data, params) {
         )
 
     p <- ggplot(rv_matrix, aes(x = week, y = bond, fill = avg_z_score)) +
-        geom_tile(color = "gray90", linewidth = 0.3) +  # Light grid lines between cells
+        geom_tile(color = "white", linewidth = 0.2) +  # Clean white borders between cells
 
         # "Today" vertical line
         geom_vline(
@@ -852,6 +852,15 @@ generate_relative_value_heatmap <- function(data, params) {
                 title.position = "top",
                 title.hjust = 0.5
             )
+        ) +
+
+        # Highlight strongest emerging signal in most recent week
+        geom_tile(
+            data = rv_matrix %>%
+                filter(week == max(week)) %>%
+                filter(abs(avg_z_score) == max(abs(avg_z_score))),
+            aes(x = week, y = bond),
+            color = insele_palette$primary, linewidth = 1.2, fill = NA
         ) +
 
         # Z-score labels with configurable threshold
@@ -1002,17 +1011,29 @@ generate_enhanced_zscore_plot <- function(data, params) {
             expand = c(0.05, 0)
         ) +
         coord_flip() +
+        # In-plot threshold legend (more visible than a small footnote)
+        annotate("label",
+                 x = nrow(plot_data), y = max(3, max(plot_data$z_score) + 0.2),
+                 label = "Normal: |z|<1\nNotable: 1\u2264|z|<2\nExtreme: |z|\u22652",
+                 hjust = 1, vjust = 1,
+                 size = 2.8,
+                 fill = "white",
+                 color = "grey40",
+                 label.padding = unit(0.3, "lines"),
+                 fontface = "italic") +
+
         labs(
             title = "Z-Score Distribution",
             subtitle = sprintf("Statistical Significance | %d bonds | %d in extreme territory",
                               nrow(plot_data), sum(abs(plot_data$z_score) > 2)),
             x = "",
             y = "Z-Score (Standard Deviations)",
-            caption = "Normal: |z| < 1 | Notable: 1 ≤ |z| < 2 | Extreme: |z| ≥ 2"
+            caption = "Positive Z = cheap (yields above fair value) | Negative Z = rich (yields below fair value)"
         ) +
         create_insele_theme() +
         theme(
             panel.grid.major.y = element_blank(),
+            panel.spacing.y = unit(0.1, "lines"),
             legend.position = "top",
             legend.direction = "horizontal"
         )
@@ -1053,8 +1074,8 @@ generate_enhanced_convexity_plot <- function(data, params = list()) {
         mutate(
             # Calculate DV01 for point sizing
             dv01 = notional * modified_duration * 0.0001,
-            # Scale DV01 to reasonable point size range (3 to 15)
-            dv01_scaled = scales::rescale(dv01, to = c(3, 15)),
+            # Scale DV01 to reasonable point size range (4 to 12) — min 4 ensures short-end bonds are visible
+            dv01_scaled = scales::rescale(dv01, to = c(4, 12)),
             # Calculate convexity-per-duration ratio (higher = better)
             convexity_ratio = convexity / (modified_duration^2)
         )
@@ -1149,16 +1170,16 @@ generate_enhanced_convexity_plot <- function(data, params = list()) {
             alpha = 0.8
         ) +
 
-        # Bond labels - IMPROVED ggrepel settings to prevent overlapping
+        # Bond labels - aggressive ggrepel settings to prevent overlapping
         ggrepel::geom_text_repel(
             aes(label = bond),
-            size = 3,
-            max.overlaps = 20,              # Allow more labels to be shown
+            size = 3.2,
+            max.overlaps = Inf,             # Never drop labels
             min.segment.length = 0.2,       # Only show segments when needed
             segment.size = 0.3,
             segment.alpha = 0.6,
-            segment.color = "grey50",
-            box.padding = 0.35,             # Space between label box and point
+            segment.color = "grey60",
+            box.padding = 0.5,              # Space between label box and point
             point.padding = 0.3,            # Minimum distance from point
             force = 2,                      # Repulsion force between labels
             force_pull = 0.5,               # Force pulling labels toward points
@@ -1182,9 +1203,13 @@ generate_enhanced_convexity_plot <- function(data, params = list()) {
         labs(
             title = "Convexity Profile Analysis",
             subtitle = sprintf(
-                "Quadratic fit shown | Best: %s (%.2f per dur\u00B2) | Worst: %s (%.2f per dur\u00B2)",
-                best_conv$bond, best_conv$convexity_ratio,
-                worst_conv$bond, worst_conv$convexity_ratio
+                "Quadratic fit shown | Best convexity/duration: %s (%s, %.2f per dur\u00B2) | Lowest: %s (%s, %.2f per dur\u00B2)",
+                best_conv$bond,
+                if(best_conv$modified_duration > 15) "ultra-long" else if(best_conv$modified_duration > 10) "long" else if(best_conv$modified_duration > 5) "medium" else "short-end",
+                best_conv$convexity_ratio,
+                worst_conv$bond,
+                if(worst_conv$modified_duration > 15) "ultra-long" else if(worst_conv$modified_duration > 10) "long" else if(worst_conv$modified_duration > 5) "medium" else "short-end, expected",
+                worst_conv$convexity_ratio
             ),
             x = "Modified Duration (years)",
             y = "Convexity",
@@ -1355,7 +1380,7 @@ generate_enhanced_correlation_plot <- function(data, params) {
 
         create_insele_theme() +
         theme(
-            axis.text.x = element_text(angle = 0, hjust = 0.5, size = axis_text_size),
+            axis.text.x = element_text(angle = 45, hjust = 1, size = axis_text_size),
             axis.text.y = element_text(hjust = 1, size = axis_text_size),
             panel.border = element_rect(fill = NA, color = insele_palette$dark_gray, linewidth = 1),
             legend.position = "bottom",
@@ -1364,7 +1389,7 @@ generate_enhanced_correlation_plot <- function(data, params) {
             plot.title = element_text(hjust = 0.5),
             plot.subtitle = element_text(hjust = 0.5, size = 9),
             plot.margin = ggplot2::margin(10, 10, 10, 10),
-            plot.caption = element_text(hjust = 0, size = 7, lineheight = 1.2,
+            plot.caption = element_text(hjust = 0, size = 8, lineheight = 1.2,
                                         margin = ggplot2::margin(t = 10)),
             panel.grid = element_blank()
         ) +
@@ -1433,11 +1458,14 @@ generate_term_structure_3d_plot <- function(data, params) {
         # Add contour lines for better visualization
         geom_contour(aes(z = avg_yield), color = "white", alpha = 0.3, linewidth = 0.5) +
 
-        # Color scale - Insele-branded sequential palette
-        scale_fill_gradientn(
-            colors = c("#E8EEF5", "#8FADD4", "#4A7AB5", "#1B3A6B", "#0D1F3C"),
+        # Diverging colour scale centred on mean yield to highlight dynamics
+        scale_fill_gradient2(
+            low = "#1B3A6B",
+            mid = "#F5F5F5",
+            high = "#D32F2F",
+            midpoint = mean(term_evolution$avg_yield, na.rm = TRUE),
             name = "Yield (%)",
-            na.value = "#F5F5F5",
+            na.value = "#E0E0E0",
             guide = guide_colorbar(
                 barwidth = 20,
                 barheight = 0.5,
@@ -1457,10 +1485,11 @@ generate_term_structure_3d_plot <- function(data, params) {
 
         labs(
             title = "Term Structure Evolution",
-            subtitle = "Yield surface dynamics across maturity buckets",
+            subtitle = sprintf("Yield surface dynamics across maturity buckets | Centred on mean yield (%.2f%%)",
+                               mean(term_evolution$avg_yield, na.rm = TRUE)),
             x = "Date",
             y = "Maturity Bucket",
-            caption = "Weekly averages | Darker colors = higher yields"
+            caption = "Weekly averages | Blue = below mean yield | Red = above mean yield | Grey = no active bonds in bucket"
         ) +
 
         create_insele_theme() +

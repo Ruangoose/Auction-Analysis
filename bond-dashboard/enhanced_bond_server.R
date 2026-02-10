@@ -1745,11 +1745,24 @@ server <- function(input, output, session) {
             selected = valid_selection
         )
 
+        # Select benchmark bond closest to 10y modified duration as default
+        tech_default <- if(length(active) > 0) {
+            tryCatch({
+                latest <- bond_data() %>%
+                    filter(bond %in% active, date == max(date, na.rm = TRUE)) %>%
+                    mutate(dist_to_10y = abs(modified_duration - 10)) %>%
+                    arrange(dist_to_10y) %>%
+                    pull(bond) %>%
+                    first()
+                if(is.null(latest) || is.na(latest)) sort(active)[1] else latest
+            }, error = function(e) sort(active)[1])
+        } else NULL
+
         updateSelectInput(
             session,
             "tech_bond_select",
             choices = sort(active),
-            selected = if(length(active) > 0) sort(active)[1] else NULL
+            selected = tech_default
         )
     })
 
@@ -11931,7 +11944,7 @@ server <- function(input, output, session) {
                         if (is.null(cs)) return(0)
                         sum(vapply(cs, function(cn) !is.null(chart_grobs[[cn]]), logical(1)))
                     }))
-                    total_pages <- 2 + length(config$sections) + total_chart_count + 1  # title + exec + dividers + charts + footer
+                    total_pages <- 2 + total_chart_count + 1  # title + exec + charts (section headers combined with first chart) + footer
 
                     # Helper to add page number footer
                     add_page_number <- function(pn, tp) {
@@ -11978,6 +11991,18 @@ server <- function(input, output, session) {
                             card_w <- 0.9 / n_cols
                             card_h <- 0.22
 
+                            # Colour-coded card backgrounds by metric category
+                            card_fill_map <- c(
+                                "var_summary" = "#E8F0FE",       # Risk: light blue
+                                "regime" = "#E8F0FE",             # Risk: light blue
+                                "rv_opportunities" = "#E8F5E9",   # RV/opportunity: light green
+                                "top_signals" = "#E8F5E9",        # RV/opportunity: light green
+                                "yield_range" = "#F5F5F5",        # Market: light grey
+                                "avg_duration" = "#F5F5F5",       # Market: light grey
+                                "steepest_spread" = "#F5F5F5",    # Market: light grey
+                                "top_carry" = "#E8F5E9"           # Opportunity: light green
+                            )
+
                             for (i in seq_along(metric_names)) {
                                 m <- exec_metrics[[metric_names[i]]]
                                 if (is.null(m)) next
@@ -11986,9 +12011,10 @@ server <- function(input, output, session) {
                                 cx <- 0.05 + (col_idx - 0.5) * card_w
                                 cy <- 0.85 - row_idx * (card_h + 0.02)
 
-                                # Card background
+                                # Card background with colour-coded tint
+                                card_fill <- card_fill_map[[metric_names[i]]] %||% "#F5F7FA"
                                 grid.rect(x = cx, y = cy, width = card_w * 0.92, height = card_h,
-                                          gp = gpar(fill = "#F5F7FA", col = "#E0E4E8", lwd = 0.5),
+                                          gp = gpar(fill = card_fill, col = "#E0E4E8", lwd = 0.5),
                                           just = "centre")
                                 # Metric label (small gray)
                                 grid.text(m$label, x = cx, y = cy + card_h * 0.35,
@@ -12137,48 +12163,11 @@ server <- function(input, output, session) {
 
                         section_title <- section_names[[section]]
 
-                        # ENHANCED SECTION DIVIDER PAGE (Priority 7)
-                        page_number <- page_number + 1
-                        tryCatch({
-                        grid.newpage()
-
-                        # Logo top-right
-                        if (!is.null(logo_grob)) {
-                            pushViewport(viewport(x = 0.92, y = 0.95, width = 0.1, height = 0.06,
-                                                  just = c("right", "top")))
-                            grid.draw(logo_grob)
-                            popViewport()
-                        }
-
-                        # Horizontal rule
-                        grid.lines(x = c(0.1, 0.9), y = c(0.65, 0.65),
-                                   gp = gpar(col = "#1B3A6B", lwd = 2))
-
-                        # Section title
-                        grid.text(section_title, x = 0.5, y = 0.58,
-                                  gp = gpar(fontsize = 28, fontface = 2, col = "#1B3A6B"))
-
-                        # Section preview text (dynamic summary)
-                        sec_summary <- section_summaries[[section]] %||% ""
-                        if (nchar(sec_summary) > 0) {
-                            wrapped_summary <- strwrap(sec_summary, width = 80)
-                            grid.text(paste(wrapped_summary, collapse = "\n"),
-                                      x = 0.5, y = 0.48,
-                                      gp = gpar(fontsize = 11, col = "#666666", lineheight = 1.4),
-                                      just = "center")
-                        }
-
-                        add_page_number(page_number, total_pages)
-                        }, error = function(e) {
-                            message(sprintf("Section divider page error (%s): %s", section, e$message))
-                            grid.newpage()
-                            grid.text(section_title, x = 0.5, y = 0.5,
-                                      gp = gpar(fontsize = 28, fontface = 2, col = "#1B3A6B"))
-                            add_page_number(page_number, total_pages)
-                        })
-
-                        # Render each chart in this section using pre-rendered grobs
+                        # Render charts organized by section
+                        # Section header is combined with first chart to save space
                         section_chart_names <- chart_sections_map[[section]]
+                        first_chart_in_section <- TRUE
+
                         if (!is.null(section_chart_names)) {
                             for (chart_name in section_chart_names) {
                                 if (!chart_name %in% names(chart_grobs)) next
@@ -12189,10 +12178,53 @@ server <- function(input, output, session) {
                                 page_number <- page_number + 1
                                 tryCatch({
                                     grid.newpage()
-                                    add_page_header(gsub("_", " ", tools::toTitleCase(chart_name)))
-                                    pushViewport(viewport(x = 0.5, y = 0.45, width = 0.92, height = 0.82))
-                                    grid.draw(chart_grob)
-                                    popViewport()
+
+                                    if (first_chart_in_section) {
+                                        # Combined section header (top 22%) + chart (bottom 78%)
+                                        # Section header area
+                                        pushViewport(viewport(x = 0.5, y = 0.91, width = 0.92, height = 0.16))
+
+                                        # Logo top-right of header
+                                        if (!is.null(logo_grob)) {
+                                            pushViewport(viewport(x = 0.95, y = 0.85, width = 0.08, height = 0.5,
+                                                                  just = c("right", "top")))
+                                            grid.draw(logo_grob)
+                                            popViewport()
+                                        }
+
+                                        # Section title
+                                        grid.text(section_title, x = 0.02, y = 0.65, just = "left",
+                                                  gp = gpar(fontsize = 18, fontface = 2, col = "#1B3A6B"))
+
+                                        # Horizontal rule
+                                        grid.lines(x = c(0, 1), y = c(0.35, 0.35),
+                                                   gp = gpar(col = "#1B3A6B", lwd = 1.5))
+
+                                        # Section summary text (compact)
+                                        sec_summary <- section_summaries[[section]] %||% ""
+                                        if (nchar(sec_summary) > 0) {
+                                            wrapped_summary <- strwrap(sec_summary, width = 110)
+                                            display_summary <- paste(wrapped_summary[1:min(2, length(wrapped_summary))], collapse = "\n")
+                                            grid.text(display_summary, x = 0.02, y = 0.1, just = "left",
+                                                      gp = gpar(fontsize = 9, col = "#666666", lineheight = 1.3))
+                                        }
+
+                                        popViewport()
+
+                                        # Chart area (below header)
+                                        pushViewport(viewport(x = 0.5, y = 0.39, width = 0.92, height = 0.72))
+                                        grid.draw(chart_grob)
+                                        popViewport()
+
+                                        first_chart_in_section <- FALSE
+                                    } else {
+                                        # Subsequent charts: full page with small header
+                                        add_page_header(gsub("_", " ", tools::toTitleCase(chart_name)))
+                                        pushViewport(viewport(x = 0.5, y = 0.45, width = 0.92, height = 0.82))
+                                        grid.draw(chart_grob)
+                                        popViewport()
+                                    }
+
                                     add_page_number(page_number, total_pages)
                                 }, error = function(e) {
                                     grid.newpage()
@@ -12203,6 +12235,18 @@ server <- function(input, output, session) {
                                     add_page_number(page_number, total_pages)
                                 })
                             }
+                        }
+
+                        # If section had no valid charts, still render a section page
+                        if (first_chart_in_section) {
+                            page_number <- page_number + 1
+                            grid.newpage()
+                            grid.text(section_title, x = 0.5, y = 0.6,
+                                      gp = gpar(fontsize = 22, fontface = 2, col = "#1B3A6B"))
+                            grid.text("No charts available for this section",
+                                      x = 0.5, y = 0.45,
+                                      gp = gpar(fontsize = 11, col = "#999999"))
+                            add_page_number(page_number, total_pages)
                         }
                     }
 

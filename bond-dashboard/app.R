@@ -5,7 +5,7 @@
 pacman::p_load(
     shiny, shinydashboard, shinyWidgets, shinycssloaders, shinyjs,
     readxl, dplyr, tidyverse, lubridate, zoo, tibble, rlang, tidyr,
-    ggplot2, plotly, scales, viridis, gridExtra,
+    ggplot2, plotly, scales, viridis, gridExtra, ggrepel, ggridges,
     DT, rmarkdown, knitr, openxlsx,
     splines, mgcv
 )

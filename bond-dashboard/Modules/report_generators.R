@@ -562,10 +562,10 @@ generate_report_summaries <- function(processed_data, filtered_data, var_data, r
                         label = "Yield Range"
                     )
 
-                    # Steepest spread
+                    # Steepest spread — clarify direction
                     exec_metrics$steepest_spread <- list(
                         value = sprintf("%.0f bps", (yield_max - yield_min) * 100),
-                        subtitle = sprintf("%s vs %s", max_bond, min_bond),
+                        subtitle = sprintf("%s over %s", max_bond, min_bond),
                         label = "Steepest Spread"
                     )
                 }
@@ -633,12 +633,12 @@ generate_report_summaries <- function(processed_data, filtered_data, var_data, r
                         value = sig_text,
                         subtitle = sprintf("Z: %+.2f, %+.2f", sig_data$z_score[1],
                                            if(nrow(sig_data) > 1) sig_data$z_score[2] else 0),
-                        label = "Strongest Signals"
+                        label = "Most Notable Deviations"
                     )
                 }
             }
             if (is.null(exec_metrics$top_signals)) {
-                exec_metrics$top_signals <- list(value = "N/A", subtitle = "", label = "Strongest Signals")
+                exec_metrics$top_signals <- list(value = "N/A", subtitle = "", label = "Most Notable Deviations")
             }
 
             # VaR summary
@@ -653,11 +653,15 @@ generate_report_summaries <- function(processed_data, filtered_data, var_data, r
                 exec_metrics$var_summary <- list(value = "N/A", subtitle = "", label = "Value-at-Risk")
             }
 
-            # RV Opportunities
+            # RV Opportunities — clarify zero as "no extreme mispricings"
             exec_metrics$rv_opportunities <- list(
-                value = as.character(opportunities_count),
-                subtitle = if(opportunities_count > 0) "bonds with |Z| > 1.5" else "fair value pricing",
-                label = "RV Opportunities"
+                value = if(opportunities_count > 0) as.character(opportunities_count) else "No Extreme Mispricings",
+                subtitle = if(opportunities_count > 0) {
+                    sprintf("%d bonds with |Z| > 1.5", opportunities_count)
+                } else {
+                    paste0("All bonds within ", "\u00B1", "2\u03C3 of fair value")
+                },
+                label = "Relative Value"
             )
 
         }, error = function(e) {
