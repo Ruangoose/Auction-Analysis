@@ -561,9 +561,13 @@ generate_auction_pattern_analysis <- function(data, params, selected_bonds = cha
                     data = trend_data %>% filter(is_selected),
                     aes(x = date, y = bid_to_cover, label = bond),
                     size = 3, fontface = "bold",
-                    box.padding = 0.3, point.padding = 0.2,
-                    segment.color = "gray50", segment.size = 0.3,
-                    max.overlaps = 15
+                    box.padding = 0.35, point.padding = 0.3,
+                    segment.color = "grey60", segment.size = 0.3,
+                    segment.linetype = "dotted",
+                    min.segment.length = 0.2,
+                    force = 2, force_pull = 0.5,
+                    direction = "both",
+                    max.overlaps = 20
                 )
         }
     } else {
@@ -1601,7 +1605,8 @@ generate_auction_sentiment_gauge <- function(data, params) {
     p_components <- ggplot(components, aes(x = metric, y = value)) +
         geom_col(fill = components$color, alpha = 0.8, width = 0.6) +
         geom_hline(yintercept = 0, color = "#666", size = 0.5) +
-        geom_text(aes(label = sprintf("%+.0f", value)),
+        geom_text(aes(label = ifelse(is.na(value) | (value == 0 & is.na(components$raw_value %||% value)),
+                                      "N/A", sprintf("%+.0f", value))),
                   vjust = ifelse(components$value > 0, -0.5, 1.5),
                   size = 2.5, fontface = 2) +
         scale_y_continuous(limits = c(-40, 40)) +

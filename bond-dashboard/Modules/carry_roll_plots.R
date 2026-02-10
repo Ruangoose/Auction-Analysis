@@ -99,9 +99,9 @@ generate_enhanced_carry_roll_heatmap <- function(data, return_type = "net", fund
         # Diverging scale when negative returns exist - centered on zero
         max_abs <- max(abs(min_return), abs(max_return))
         color_scale <- scale_fill_gradient2(
-            low = "#D32F2F",           # Red for negative (bad)
-            mid = "#FFFDE7",           # Light yellow at zero (neutral)
-            high = "#388E3C",          # Green for positive (good)
+            low = "#B71C1C",           # Deep red for negative (bad)
+            mid = "white",             # White at zero (neutral)
+            high = "#1B5E20",          # Deep green for positive (good)
             midpoint = 0,
             limits = c(-max_abs, max_abs),
             oob = scales::squish,
@@ -117,8 +117,8 @@ generate_enhanced_carry_roll_heatmap <- function(data, return_type = "net", fund
         # ALL POSITIVE RETURNS: Use sequential GREEN scale (light to dark)
         # This is the critical fix - positive values should ALWAYS be green
         color_scale <- scale_fill_gradient(
-            low = "#E8F5E9",           # Very light green for lowest positive
-            high = "#1B5E20",          # Dark green for highest positive
+            low = "#FFFFFF",           # White for zero/low
+            high = "#1B5E20",          # Deep green for high carry
             limits = c(max(0, min_return - 0.1), max_return + 0.1),
             oob = scales::squish,
             name = "Return (%)",
@@ -625,10 +625,14 @@ generate_forward_curve_plot <- function(data, params = NULL, selected_period = N
             expand = expansion(mult = c(0.02, 0.05))
         ) +
 
-        # Add legend annotation for spot curve
+        # Subtle vertical tick marks at forward period boundaries
+        geom_vline(xintercept = unique(c(forward_data$start_year, forward_data$end_year)),
+                   linetype = "dotted", color = "grey80", linewidth = 0.3) +
+
+        # Spot curve label - positioned in clear area (top-left)
         annotate("text",
-                 x = 1.5,
-                 y = curve_data$yield_to_maturity[which.min(curve_data$modified_duration)] + y_range * 0.06,
+                 x = 0.5,
+                 y = max(curve_data$yield_to_maturity, na.rm = TRUE) + y_range * 0.08,
                  label = "Spot Curve",
                  color = insele_palette$primary,
                  fontface = "bold",

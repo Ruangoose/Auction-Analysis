@@ -1119,13 +1119,6 @@ generate_var_distribution_plot <- function(data, params = list()) {
 
     # Determine dynamic layout
     n_bonds <- n_distinct(returns_data$bond)
-    n_cols <- case_when(
-        n_bonds <= 2 ~ n_bonds,
-        n_bonds <= 4 ~ 2,
-        n_bonds <= 6 ~ 3,
-        n_bonds <= 9 ~ 3,
-        TRUE ~ 4
-    )
 
     # Prepare VaR lines data for cleaner legend
     var_lines <- var_levels %>%
@@ -1136,94 +1129,111 @@ generate_var_distribution_plot <- function(data, params = list()) {
                               labels = c("95% VaR", "99% VaR"))
         )
 
-    # Create the IMPROVED plot (decluttered facets)
-    p <- ggplot(returns_data, aes(x = scaled_return)) +
+    # ══════════════════════════════════════════════════════════════
+    # RIDGELINE PLOT (ggridges) - superior readability vs facets
+    # Fallback to faceted approach if ggridges not available
+    # ══════════════════════════════════════════════════════════════
+    use_ridgeline <- requireNamespace("ggridges", quietly = TRUE)
 
-        # Histogram with density
-        geom_histogram(
-            aes(y = after_stat(density)),
-            bins = 30,
-            fill = "#64B5F6",
-            color = "white",
-            alpha = 0.7
-        ) +
+    if (use_ridgeline) {
+        # Order bonds by 95% VaR (highest risk at top)
+        var_order <- var_levels %>%
+            arrange(VaR_95) %>%
+            pull(bond)
+        returns_data$bond_ridge <- factor(returns_data$bond, levels = var_order)
 
-        # Density curve overlay
-        geom_density(
-            color = insele_palette$primary,
-            linewidth = 0.8
-        ) +
-
-        # VaR threshold lines - 95% (dashed orange)
-        geom_vline(data = var_levels,
-                   aes(xintercept = VaR_95),
-                   color = "#FF9800",
-                   linetype = "dashed",
-                   linewidth = 1) +
-
-        # VaR threshold lines - 99% (solid red)
-        geom_vline(data = var_levels,
-                   aes(xintercept = VaR_99),
-                   color = "#D32F2F",
-                   linetype = "solid",
-                   linewidth = 1) +
-
-        # Facet by bond_display - SAME ORDER as Risk Ladder, with quality indicators
-        facet_wrap(
-            ~ bond_display,
-            ncol = n_cols,
-            scales = "free_y"  # Free y, but we'll constrain x
-        ) +
-
-        # Scales
-        scale_x_continuous(
-            labels = scales::percent_format(accuracy = 1, scale = 1),
-            limits = c(-8, 8)  # -8% to +8% covers most bond moves
-        ) +
-
-        scale_y_continuous(
-            expand = c(0, 0, 0.1, 0)
-        ) +
-
-        # Labels - include data quality legend if applicable
-        labs(
-            title = "Daily Return Distributions",
-            subtitle = if (has_quality_issues) {
-                sprintf(
-                    "%s Method | %d-day horizon | Dashed orange = 95%% VaR | Solid red = 99%% VaR\n* Limited history (<252 obs) | ** Insufficient history (<60 obs)",
-                    str_to_title(method),
-                    horizon_days
+        p <- ggplot(returns_data, aes(x = scaled_return, y = bond_ridge, fill = after_stat(x))) +
+            ggridges::geom_density_ridges_gradient(
+                scale = 2.5,
+                rel_min_height = 0.01,
+                gradient_lwd = 0.3,
+                quantile_lines = TRUE,
+                quantiles = c(0.05, 0.01)
+            ) +
+            scale_fill_viridis_c(option = "C", name = "Return (%)") +
+            geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
+            scale_x_continuous(
+                labels = scales::percent_format(accuracy = 1, scale = 1),
+                limits = c(-8, 8)
+            ) +
+            labs(
+                title = "Value-at-Risk Distribution by Bond",
+                subtitle = paste0("Ordered by 95% VaR | Quantile lines show 95% and 99% VaR thresholds | ",
+                                  str_to_title(method), " method | ", horizon_days, "-day horizon"),
+                x = "Daily Return (%)",
+                y = NULL,
+                caption = sprintf(
+                    "Returns calculated using modified duration and convexity | %d active bonds",
+                    n_bonds
                 )
-            } else {
-                sprintf(
-                    "%s Method | %d-day horizon | Dashed orange = 95%% VaR | Solid red = 99%% VaR",
-                    str_to_title(method),
-                    horizon_days
-                )
-            },
-            x = "Daily Price Return (%)",
-            y = "Density",
-            caption = sprintf(
-                "Returns calculated using modified duration and convexity | %d active bonds ordered by 95%% VaR (highest risk first, top-left to bottom-right)",
-                n_bonds
+            ) +
+            create_insele_theme() +
+            theme(
+                axis.text.y = element_text(size = 9, face = "bold"),
+                legend.position = "bottom",
+                plot.title = element_text(face = "bold", color = insele_palette$primary),
+                plot.caption = element_text(
+                    hjust = 0, size = 8, lineheight = 1.2,
+                    margin = ggplot2::margin(t = 10, r = 0, b = 0, l = 0, unit = "pt")
+                ),
+                panel.grid.minor = element_blank()
             )
-        ) +
-
-        create_insele_theme() +
-        theme(
-            strip.background = element_rect(fill = "#E3F2FD", color = NA),
-            strip.text = element_text(face = "bold", size = 9, color = insele_palette$primary),
-            panel.spacing = unit(1, "lines"),
-            plot.title = element_text(face = "bold", color = insele_palette$primary),
-            plot.caption = element_text(
-                hjust = 0,
-                size = 8,
-                lineheight = 1.2,
-                margin = ggplot2::margin(t = 10, r = 0, b = 0, l = 0, unit = "pt")
-            ),
-            legend.position = "top",
-            panel.grid.minor = element_blank()
+    } else {
+        # Fallback: faceted approach with top/bottom 5 bonds by VaR
+        n_cols <- case_when(
+            n_bonds <= 2 ~ n_bonds,
+            n_bonds <= 4 ~ 2,
+            n_bonds <= 6 ~ 3,
+            n_bonds <= 9 ~ 3,
+            TRUE ~ 4
         )
+
+        # If many bonds, reduce to top 5 and bottom 5 by VaR
+        if (n_bonds > 10) {
+            top5 <- var_levels %>% arrange(VaR_95) %>% head(5) %>% pull(bond)
+            bot5 <- var_levels %>% arrange(desc(VaR_95)) %>% head(5) %>% pull(bond)
+            selected <- unique(c(top5, bot5))
+            returns_data <- returns_data %>% filter(bond %in% selected)
+            var_levels_plot <- var_levels %>% filter(bond %in% selected)
+            n_bonds_display <- length(selected)
+        } else {
+            var_levels_plot <- var_levels
+            n_bonds_display <- n_bonds
+        }
+
+        p <- ggplot(returns_data, aes(x = scaled_return)) +
+            geom_histogram(aes(y = after_stat(density)), bins = 30,
+                           fill = "#64B5F6", color = "white", alpha = 0.7) +
+            geom_density(color = insele_palette$primary, linewidth = 0.8) +
+            geom_vline(data = var_levels_plot, aes(xintercept = VaR_95),
+                       color = "#FF9800", linetype = "dashed", linewidth = 1.0) +
+            geom_vline(data = var_levels_plot, aes(xintercept = VaR_99),
+                       color = "#D32F2F", linetype = "solid", linewidth = 1.0) +
+            facet_wrap(~ bond_display, ncol = n_cols, scales = "free_y") +
+            scale_x_continuous(labels = scales::percent_format(accuracy = 1, scale = 1),
+                               limits = c(-8, 8)) +
+            scale_y_continuous(expand = c(0, 0, 0.1, 0)) +
+            labs(
+                title = "Daily Return Distributions",
+                subtitle = sprintf("%s Method | %d-day horizon | Dashed orange = 95%% VaR | Solid red = 99%% VaR",
+                    str_to_title(method), horizon_days),
+                x = "Daily Price Return (%)", y = "Density",
+                caption = sprintf(
+                    "Returns calculated using modified duration and convexity | %d active bonds ordered by 95%% VaR",
+                    n_bonds_display)
+            ) +
+            create_insele_theme() +
+            theme(
+                strip.background = element_rect(fill = "#E3F2FD", color = NA),
+                strip.text = element_text(face = "bold", size = 9, color = insele_palette$primary),
+                panel.spacing = unit(1, "lines"),
+                plot.title = element_text(face = "bold", color = insele_palette$primary),
+                plot.caption = element_text(hjust = 0, size = 8, lineheight = 1.2,
+                    margin = ggplot2::margin(t = 10, r = 0, b = 0, l = 0, unit = "pt")),
+                legend.position = "top",
+                panel.grid.minor = element_blank()
+            )
+    }
 
     # Add summary table as attribute (for external statistics table)
     attr(p, "var_summary") <- var_levels %>%
@@ -1497,7 +1507,7 @@ generate_var_ladder_plot <- function(var_data, params = list()) {
             },
             x = NULL,
             y = "Risk (basis points of price)",
-            caption = "Wide bar = 95% VaR | Narrow bar = 99% VaR | \u25C6 = CVaR (Expected Shortfall)"
+            caption = "Wide bar = 95% VaR | Narrow bar = 99% VaR | \u25C6 = CVaR (Expected Shortfall)\nNote: Short-duration bonds may show elevated CVaR due to percentage-based calculation on low-duration instruments."
         ) +
 
         theme_minimal(base_size = 11) +
@@ -1640,11 +1650,11 @@ generate_dv01_ladder_plot <- function(data, params = list()) {
                 sprintf("Avg: R%.1fk", avg_dv01 * 1000)
             }
             annotate("text",
-                     x = nrow(dv01_data) + 0.3,
+                     x = nrow(dv01_data) + 0.5,
                      y = avg_dv01,
                      label = avg_label,
-                     hjust = 0,
-                     vjust = -0.5,
+                     hjust = -0.1,
+                     vjust = 0.5,
                      color = "#E65100",
                      size = 3,
                      fontface = "bold")
@@ -1656,14 +1666,12 @@ generate_dv01_ladder_plot <- function(data, params = list()) {
             name = "Duration (years)"
         ) +
 
-        # Adaptive y-axis labels for DV01 precision
+        # Standardized x-axis labels in thousands
         scale_y_continuous(
             labels = function(x) {
                 sapply(x, function(v) {
                     if(is.na(v)) return("")
-                    if(v >= 0.10) sprintf("R%.2fm", v)
-                    else if(v >= 0.01) sprintf("R%.3fm", v)
-                    else sprintf("R%.1fk", v * 1000)
+                    paste0("R", round(v * 1000, 1), "k")
                 })
             },
             expand = expansion(mult = c(0, 0.15)),
@@ -1780,23 +1788,38 @@ generate_scenario_analysis_plot <- function(data, params = list()) {
         latest_data <- filter(latest_data, bond %in% valid_bonds)
 
     } else {
-        # Auto-select: representative bonds across duration spectrum
-        if (n_distinct(latest_data$bond) > max_bonds) {
-            # Sort by duration
-            duration_ranked <- latest_data %>%
-                arrange(modified_duration) %>%
-                mutate(row_num = row_number(), total_bonds = n())
-
-            # Select evenly spaced bonds across the duration range
-            n_bonds <- nrow(duration_ranked)
-            selected_indices <- unique(round(seq(1, n_bonds, length.out = max_bonds)))
-
-            auto_selected_bonds <- duration_ranked %>%
-                filter(row_num %in% selected_indices) %>%
-                pull(bond)
-
-            latest_data <- filter(latest_data, bond %in% auto_selected_bonds)
-        }
+        # Auto-select: 4 representative bonds (shortest, ~5y, ~10y, longest)
+        tryCatch({
+            dur_ranked <- latest_data %>% arrange(modified_duration)
+            representative_bonds <- c()
+            # Shortest
+            representative_bonds <- c(representative_bonds, dur_ranked$bond[1])
+            # ~5y
+            mid5 <- dur_ranked %>% mutate(d5 = abs(modified_duration - 5)) %>%
+                arrange(d5) %>% slice(1)
+            representative_bonds <- c(representative_bonds, mid5$bond)
+            # ~10y
+            mid10 <- dur_ranked %>% mutate(d10 = abs(modified_duration - 10)) %>%
+                arrange(d10) %>% slice(1)
+            representative_bonds <- c(representative_bonds, mid10$bond)
+            # Longest
+            representative_bonds <- c(representative_bonds, dur_ranked$bond[nrow(dur_ranked)])
+            representative_bonds <- unique(representative_bonds)
+            latest_data <- filter(latest_data, bond %in% representative_bonds)
+        }, error = function(e) {
+            # Fallback: evenly spaced selection
+            if (n_distinct(latest_data$bond) > max_bonds) {
+                duration_ranked <- latest_data %>%
+                    arrange(modified_duration) %>%
+                    mutate(row_num = row_number())
+                n_bonds <- nrow(duration_ranked)
+                selected_indices <- unique(round(seq(1, n_bonds, length.out = max_bonds)))
+                auto_selected_bonds <- duration_ranked %>%
+                    filter(row_num %in% selected_indices) %>%
+                    pull(bond)
+                latest_data <- filter(latest_data, bond %in% auto_selected_bonds)
+            }
+        })
     }
 
     # Colorblind-friendly palette for scenario analysis (5 distinct colors)
@@ -1975,13 +1998,13 @@ generate_scenario_analysis_plot <- function(data, params = list()) {
             geom_ribbon(aes(ymin = confidence_lower,
                             ymax = confidence_upper,
                             fill = bond, group = bond),
-                        alpha = 0.15)
+                        alpha = 0.1)
     }
 
     p <- p +
         # Main scenario lines
         geom_line(aes(color = bond, group = bond),
-                  size = 1.2,
+                  linewidth = 1.0,
                   alpha = 0.9) +
 
         # Highlight key points (-100, 0, +100 bps)

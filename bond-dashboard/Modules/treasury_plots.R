@@ -102,10 +102,10 @@ treasury_sector_colors <- c(
 
 # Change periods (navy gradient - lightest to darkest)
 treasury_change_period_colors <- c(
-    "1-month" = "#9AB5C0",     # Lightest (slate light)
-    "3-month" = "#5B7B8A",     # Medium (slate dark)
+    "1-month" = "#B0C4DE",     # Light steel blue
+    "3-month" = "#4A7AB5",     # Medium blue
     "6-month" = "#2B4F7F",     # Medium-dark (navy medium)
-    "12-month" = "#1B3A6B"     # Darkest (navy)
+    "12-month" = "#1B3A6B"     # Dark navy
 )
 
 # ================================================================================
@@ -378,14 +378,14 @@ generate_ownership_change_chart <- function(holdings_long,
 #' @param selected_bond_type Filter for bond type (e.g., "Fixed Rate", "ILB", "FRN", "Sukuk")
 #' @param target_date Date to display (default: most recent)
 #' @param show_labels Whether to show percentage labels inside bars
-#' @param min_pct_label Minimum percentage to show label (default: 5)
+#' @param min_pct_label Minimum percentage to show label (default: 10)
 #' @return ggplot2 object
 #' @export
 generate_bond_holdings_bar_chart <- function(bond_pct_long,
                                              selected_bond_type = "Fixed Rate",
                                              target_date = NULL,
                                              show_labels = TRUE,
-                                             min_pct_label = 5) {
+                                             min_pct_label = 10) {
 
     # Input validation
     if (is.null(bond_pct_long) || nrow(bond_pct_long) == 0) {
@@ -967,8 +967,17 @@ generate_sector_trend_chart <- function(holdings_long,
     # Use Insele navy color for single sector trend (professional, consistent look)
     sector_color <- treasury_brand_colors$navy_dark
 
+    # Calculate all-time high for reference
+    all_time_high_pct <- max(plot_data$percentage * 100, na.rm = TRUE)
+
     # Create the line chart - convert decimal percentages to display percentages
     p <- ggplot(plot_data, aes(x = date, y = percentage * 100)) +
+        # All-time high reference line
+        geom_hline(yintercept = all_time_high_pct, linetype = "dotted",
+                   color = "#E8913A", linewidth = 0.6) +
+        annotate("text", x = min(plot_data$date, na.rm = TRUE), y = all_time_high_pct,
+                 label = sprintf("All-time high: %.1f%%", all_time_high_pct),
+                 hjust = 0, vjust = -0.5, size = 3, color = "#E8913A") +
         geom_area(fill = sector_color, alpha = 0.3) +
         geom_line(color = sector_color, linewidth = 1.2) +
         geom_point(color = sector_color, size = 2) +

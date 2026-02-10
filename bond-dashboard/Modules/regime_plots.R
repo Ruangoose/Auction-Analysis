@@ -77,7 +77,7 @@ generate_regime_analysis_plot <- function(data, params) {
         # Stress score line: transform from stress space to volatility y-axis space
         geom_line(aes(y = (stress_score - stress_to_vol_offset) * stress_to_vol_scale),
                   color = insele_palette$danger,
-                  linewidth = 0.9,
+                  linewidth = 1.2,
                   linetype = "dashed", na.rm = TRUE) +
 
         # Zero-line for stress score (stress=0 maps to specific y value)
@@ -85,6 +85,30 @@ generate_regime_analysis_plot <- function(data, params) {
                    linetype = "dotted",
                    color = insele_palette$danger,
                    alpha = 0.5) +
+
+        # Current regime annotation box
+        {
+            current_row <- regime_df %>% filter(date == max(date, na.rm = TRUE)) %>% slice(1)
+            if (nrow(current_row) > 0 && "regime" %in% names(current_row)) {
+                current_regime <- as.character(current_row$regime)
+                regime_color_map <- c("Stressed" = insele_palette$danger,
+                                      "Elevated" = insele_palette$warning,
+                                      "Normal" = insele_palette$secondary,
+                                      "Calm" = insele_palette$success)
+                reg_col <- regime_color_map[current_regime] %||% insele_palette$secondary
+                annotate("label",
+                         x = max(regime_df$date, na.rm = TRUE),
+                         y = vol_max * 0.95,
+                         label = paste0("Current: ", current_regime),
+                         hjust = 1, vjust = 1,
+                         fill = reg_col,
+                         color = "white",
+                         fontface = "bold",
+                         size = 4,
+                         label.padding = unit(0.4, "lines"),
+                         label.r = unit(0.2, "lines"))
+            }
+        } +
 
         scale_fill_manual(
             values = c("Stressed" = insele_palette$danger,
