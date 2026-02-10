@@ -484,7 +484,8 @@ collect_report_charts <- function(processed_data, filtered_data, filtered_data_w
 
 #' @export
 # This should NOT be a reactive - it should be a regular function
-generate_report_summaries <- function(processed_data, filtered_data, var_data, regime_data, carry_roll_data) {
+generate_report_summaries <- function(processed_data, filtered_data, var_data, regime_data, carry_roll_data,
+                                       treasury_holdings_ts = NULL, treasury_bond_holdings = NULL) {
     summaries <- list()
 
     tryCatch({
@@ -598,6 +599,57 @@ generate_report_summaries <- function(processed_data, filtered_data, var_data, r
         }, error = function(e) {
             "Auction analysis in progress."
         })
+
+        # Technical Analysis summary
+        summaries$technical_summary <- tryCatch({
+            if (!is.null(filtered_data) && "yield" %in% names(filtered_data)) {
+                n_bonds <- length(unique(filtered_data$bond))
+                sprintf("Technical analysis covers %d bonds with RSI, MACD, and Bollinger Band indicators applied to yield time series.", n_bonds)
+            } else {
+                "Technical indicators being calculated."
+            }
+        }, error = function(e) "Technical analysis in progress.")
+
+        # Carry & Roll summary
+        summaries$carry_summary <- tryCatch({
+            if (!is.null(carry_roll_data) && nrow(carry_roll_data) > 0) {
+                best_carry <- carry_roll_data %>%
+                    arrange(desc(if ("total_return" %in% names(carry_roll_data)) total_return else net_return)) %>%
+                    slice(1)
+                if (nrow(best_carry) > 0 && "bond" %in% names(best_carry)) {
+                    sprintf("Carry and roll analysis across %d bonds. %s shows the highest expected total return.",
+                            length(unique(carry_roll_data$bond)),
+                            best_carry$bond[1])
+                } else {
+                    "Carry analysis available for current bond universe."
+                }
+            } else {
+                "Carry and roll metrics being calculated."
+            }
+        }, error = function(e) "Carry analysis in progress.")
+
+        # Intelligence summary
+        summaries$intelligence_summary <- tryCatch({
+            if (!is.null(filtered_data) && length(unique(filtered_data$bond)) > 2) {
+                sprintf("Cross-bond correlation analysis covers %d instruments with term structure evolution.",
+                        length(unique(filtered_data$bond)))
+            } else {
+                "Market intelligence metrics require multiple bonds."
+            }
+        }, error = function(e) "Intelligence analysis in progress.")
+
+        # Treasury Holdings summary
+        summaries$treasury_summary <- tryCatch({
+            if (!is.null(treasury_holdings_ts) && nrow(treasury_holdings_ts) > 0) {
+                sprintf("Government bond ownership analysis across %d reporting periods.",
+                        length(unique(treasury_holdings_ts$date)))
+            } else {
+                "Government bond ownership analysis across institutional sectors."
+            }
+        }, error = function(e) "Treasury holdings analysis in progress.")
+
+        # Overview summary (alias for market_conditions)
+        summaries$overview_summary <- summaries$market_conditions
 
         # Recommendations
         summaries$recommendations <- tryCatch({
@@ -789,127 +841,8 @@ generate_chart_summary <- function(plot_type, data) {
 }
 
 
-#' @export
-# Create R Markdown template for PDF reports
-create_report_template <- function(params) {
-    template <- paste0('
----
-title: "SA Government Bond Analysis Report"
-subtitle: "', params$report_title, '"
-author: "Insele Capital Partners - Broking Services"
-date: "', format(params$report_date, "%B %d, %Y"), '"
-output:
-  pdf_document:
-    toc: true
-    toc_depth: 2
-    number_sections: true
-    fig_caption: true
-    highlight: tango
-header-includes:
-  - \\usepackage{fancyhdr}
-  - \\pagestyle{fancy}
-  - \\fancyhead[L]{Insele Capital Partners}
-  - \\fancyhead[R]{Bond Analysis Report}
-  - \\usepackage{color}
-  - \\definecolor{insele}{RGB}{27,58,107}
----
-
-\\newpage
-
-# Executive Summary
-
-**Report Date:** ', format(params$report_date, "%B %d, %Y"), '
-**Analysis Period:** ', format(params$date_range[1], "%B %d, %Y"), ' to ',
-                       format(params$date_range[2], "%B %d, %Y"), '
-**Bonds Analyzed:** ', params$bond_count, '
-
-## Key Findings
-
-', params$executive_summary, '
-
-## Market Conditions
-
-', params$market_conditions, '
-
-\\newpage
-
-')
-
-    # Add sections based on selection
-    if("relative" %in% params$sections) {
-        template <- paste0(template, '
-# Relative Value Analysis
-
-', params$relative_summary, '
-
-![Yield Curve Analysis](', params$chart_paths$yield_curve, ')
-
-![Relative Value Heatmap](', params$chart_paths$relative_heatmap, ')
-
-![Z-Score Distribution](', params$chart_paths$zscore_plot, ')
-
-')
-    }
-
-    if("risk" %in% params$sections) {
-        template <- paste0(template, '
-# Risk Analytics
-
-', params$risk_summary, '
-
-![Value at Risk Distribution](', params$chart_paths$var_distribution, ')
-
-![VaR Ladder](', params$chart_paths$var_ladder, ')
-
-![DV01 Analysis](', params$chart_paths$dv01_ladder, ')
-
-')
-    }
-
-    if("auction" %in% params$sections) {
-        template <- paste0(template, '
-# Auction Intelligence
-
-', params$auction_summary, '
-
-## Upcoming Auctions This Week
-
-', params$weekly_auctions, '
-
-![Auction Performance](', params$chart_paths$auction_performance, ')
-
-![Historical Patterns](', params$chart_paths$auction_patterns, ')
-
-')
-    }
-
-    if("recommendations" %in% params$sections) {
-        template <- paste0(template, '
-# Recommendations
-
-## Trading Opportunities
-
-', params$recommendations, '
-
-## Risk Considerations
-
-', params$risk_considerations, '
-
-')
-    }
-
-    template <- paste0(template, '
-
----
-
-*This report is proprietary and confidential. © ', format(Sys.Date(), "%Y"),
-                       ' Insele Capital Partners. All rights reserved.*
-
-*Disclaimer: This report is for informational purposes only and does not constitute investment advice.*
-')
-
-    return(template)
-}
+# create_report_template() removed — unused R Markdown template generator
+# PDF reports are generated directly with pdf() + grid graphics in enhanced_bond_server.R
 
 #' @export
 # Enhanced email template function
@@ -1073,6 +1006,195 @@ create_email_template <- function(charts_base64, summaries, auction_data, messag
             <strong>Important Notice:</strong> This report contains proprietary analysis and should not be forwarded without authorization.
         </div>',
                         format(Sys.Date(), "%Y")
+    )
+
+    return(template)
+}
+
+#' @export
+#' @title Full HTML Report Template with All Charts
+#' @description Generates a complete HTML report with all selected charts organized by section
+create_html_report_template <- function(charts, summaries, sections, config, auction_data = NULL) {
+    # charts = named list of ggplot/grob objects
+    # summaries = output of generate_report_summaries()
+    # sections = character vector of selected sections
+    # config = list with report_title, client_name, report_date
+
+    # Section display names
+    section_names <- c(
+        overview = "Market Overview",
+        relative = "Relative Value Analysis",
+        risk = "Risk Analytics",
+        technical = "Technical Analysis",
+        carry = "Carry &amp; Roll Analysis",
+        auction = "Auction Intelligence",
+        intelligence = "Market Intelligence",
+        treasury = "Treasury Holdings",
+        recommendations = "Trading Recommendations"
+    )
+
+    # Map chart names to sections
+    chart_sections_map <- list(
+        overview = c("regime_plot"),
+        relative = c("yield_curve", "relative_heatmap", "zscore_plot", "convexity"),
+        risk = c("var_distribution", "var_ladder", "dv01_ladder"),
+        technical = c("technical_plot", "signal_matrix"),
+        carry = c("carry_heatmap", "scenario_analysis", "butterfly_spread", "forward_curve"),
+        auction = c("auction_performance", "auction_patterns", "auction_forecast",
+                     "demand_elasticity", "success_probability", "bid_distribution",
+                     "ytd_issuance", "auction_sentiment", "auction_success_factors"),
+        intelligence = c("correlation", "term_structure"),
+        treasury = c("holdings_area", "sector_trend", "holdings_fixed", "holdings_ilb",
+                      "holdings_frn", "holdings_sukuk", "ownership_changes",
+                      "holdings_diverging_fixed", "holdings_diverging_ilb")
+    )
+
+    # Summary key mapping per section
+    summary_keys <- c(
+        overview = "overview_summary",
+        relative = "relative_summary",
+        risk = "risk_summary",
+        technical = "technical_summary",
+        carry = "carry_summary",
+        auction = "auction_summary",
+        intelligence = "intelligence_summary",
+        treasury = "treasury_summary"
+    )
+
+    # Build HTML content section by section
+    body_html <- ""
+
+    for (section in sections) {
+        section_title <- section_names[[section]]
+
+        # Add section header
+        body_html <- paste0(body_html, sprintf(
+            '<h2 style="color: #1B3A6B; margin-top: 30px; border-bottom: 2px solid #1B3A6B; padding-bottom: 8px;">%s</h2>',
+            section_title
+        ))
+
+        # Add section summary text if available
+        summary_key <- summary_keys[[section]]
+        if (!is.null(summary_key) && !is.null(summaries[[summary_key]]) && nchar(summaries[[summary_key]]) > 0) {
+            body_html <- paste0(body_html, sprintf(
+                '<div style="background: #e8f4f8; padding: 15px; border-left: 4px solid #1B3A6B; margin: 15px 0;">%s</div>',
+                summaries[[summary_key]]
+            ))
+        }
+
+        # Add recommendations text (no charts)
+        if (section == "recommendations") {
+            if (!is.null(summaries$recommendations)) {
+                body_html <- paste0(body_html, sprintf(
+                    '<div style="padding: 15px;"><h3 style="color: #1B3A6B;">Trading Opportunities</h3><p>%s</p></div>',
+                    summaries$recommendations
+                ))
+            }
+            if (!is.null(summaries$risk_considerations)) {
+                body_html <- paste0(body_html, sprintf(
+                    '<div style="padding: 15px;"><h3 style="color: #1B3A6B;">Risk Considerations</h3><p>%s</p></div>',
+                    summaries$risk_considerations
+                ))
+            }
+            next
+        }
+
+        # Add charts for this section
+        section_charts <- chart_sections_map[[section]]
+        if (!is.null(section_charts)) {
+            for (chart_name in section_charts) {
+                if (chart_name %in% names(charts) && !is.null(charts[[chart_name]])) {
+                    chart_b64 <- tryCatch(
+                        plot_to_base64(charts[[chart_name]], width = 10, height = 6, dpi = 150),
+                        error = function(e) NULL
+                    )
+                    if (!is.null(chart_b64)) {
+                        display_name <- gsub("_", " ", tools::toTitleCase(chart_name))
+                        body_html <- paste0(body_html, sprintf(
+                            '<div style="margin: 20px 0; text-align: center; background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                                <div style="font-weight: bold; color: #1B3A6B; margin-bottom: 10px;">%s</div>
+                                <img src="data:image/png;base64,%s" style="max-width: 100%%; height: auto;">
+                            </div>',
+                            display_name, chart_b64
+                        ))
+                    }
+                }
+            }
+        }
+    }
+
+    # Add auction table if auction section is selected and data exists
+    auction_html <- ""
+    if ("auction" %in% sections && !is.null(auction_data) && !is.null(auction_data$upcoming_bonds) &&
+        nrow(auction_data$upcoming_bonds) > 0) {
+        bonds_html <- paste(apply(auction_data$upcoming_bonds, 1, function(row) {
+            sprintf('<tr>
+                <td style="padding: 10px; border-bottom: 1px solid #ddd;">%s</td>
+                <td style="padding: 10px; border-bottom: 1px solid #ddd;">%s</td>
+                <td style="padding: 10px; border-bottom: 1px solid #ddd;">%.2fx</td>
+                <td style="padding: 10px; border-bottom: 1px solid #ddd;">%.2f%%%%</td>
+            </tr>',
+                    row["bond"],
+                    tryCatch(format(as.Date(row["expected_next_auction"]), "%%b %%d"), error = function(e) "TBD"),
+                    as.numeric(row["predicted_btc"]),
+                    as.numeric(row["yield"])
+            )
+        }), collapse = "")
+
+        auction_html <- sprintf('
+            <h3 style="color: #1B3A6B; margin-top: 20px;">Bonds on Auction This Week</h3>
+            <table style="width: 100%%%%; border-collapse: collapse; margin: 15px 0;">
+                <thead>
+                    <tr style="background: #1B3A6B; color: white;">
+                        <th style="padding: 12px; text-align: left;">Bond</th>
+                        <th style="padding: 12px; text-align: left;">Expected Date</th>
+                        <th style="padding: 12px; text-align: left;">Predicted B/C</th>
+                        <th style="padding: 12px; text-align: left;">Yield</th>
+                    </tr>
+                </thead>
+                <tbody>%s</tbody>
+            </table>', bonds_html)
+    }
+
+    # Assemble full HTML document
+    template <- sprintf('
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 900px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+        .header { background: linear-gradient(135deg, #1B3A6B 0%%%%, #2A4D8C 100%%%%); color: white; padding: 30px; border-radius: 10px 10px 0 0; text-align: center; }
+        .logo { font-size: 24px; font-weight: bold; margin-bottom: 10px; }
+        .content { background: white; padding: 30px; border: 1px solid #e0e0e0; border-top: none; }
+        .footer { background: #343A40; color: white; padding: 20px; text-align: center; border-radius: 0 0 10px 10px; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="logo">INSELE CAPITAL PARTNERS</div>
+        <p>SA Government Bond Analysis Report</p>
+        <p style="font-size: 14px;">%s</p>
+        %s
+    </div>
+    <div class="content">
+        %s
+        %s
+        <div style="background: #fff3cd; padding: 15px; border: 1px solid #ffc107; border-radius: 5px; margin: 20px 0;">
+            <strong>Important Notice:</strong> This report contains proprietary analysis and should not be forwarded without authorization.
+        </div>
+    </div>
+    <div class="footer">
+        <p>&copy; %s Insele Capital Partners - Broking Services</p>
+        <p>This report is confidential and intended solely for the addressee.</p>
+    </div>
+</body>
+</html>',
+        format(config$report_date, "%%B %%d, %%Y"),
+        if (!is.null(config$client_name) && config$client_name != "") sprintf('<p style="font-size: 13px;">Prepared for: %s</p>', config$client_name) else "",
+        body_html,
+        auction_html,
+        format(Sys.Date(), "%%Y")
     )
 
     return(template)
