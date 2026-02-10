@@ -11793,6 +11793,34 @@ server <- function(input, output, session) {
 
                 incProgress(0.5, detail = "Creating PDF")
 
+                # Section display names and chart-to-section mapping
+                section_names <- c(
+                    overview = "Market Overview",
+                    relative = "Relative Value Analysis",
+                    risk = "Risk Analytics",
+                    technical = "Technical Analysis",
+                    carry = "Carry & Roll Analysis",
+                    auction = "Auction Intelligence",
+                    intelligence = "Market Intelligence",
+                    treasury = "Treasury Holdings",
+                    recommendations = "Trading Recommendations"
+                )
+
+                chart_sections_map <- list(
+                    overview = c("regime_plot"),
+                    relative = c("yield_curve", "relative_heatmap", "zscore_plot", "convexity"),
+                    risk = c("var_distribution", "var_ladder", "dv01_ladder"),
+                    technical = c("technical_plot", "signal_matrix"),
+                    carry = c("carry_heatmap", "scenario_analysis", "butterfly_spread", "forward_curve"),
+                    auction = c("auction_performance", "auction_patterns", "auction_forecast",
+                                 "demand_elasticity", "success_probability", "bid_distribution",
+                                 "ytd_issuance", "auction_sentiment", "auction_success_factors"),
+                    intelligence = c("correlation", "term_structure"),
+                    treasury = c("holdings_area", "sector_trend", "holdings_fixed", "holdings_ilb",
+                                  "holdings_frn", "holdings_sukuk", "ownership_changes",
+                                  "holdings_diverging_fixed", "holdings_diverging_ilb")
+                )
+
                 tryCatch({
                     # PRE-RENDER all ggplot charts to grobs BEFORE opening PDF device
                     message("Pre-rendering charts to grobs...")
@@ -11817,34 +11845,6 @@ server <- function(input, output, session) {
                     }
 
                     pdf(temp_pdf, width = 11, height = 8.5)
-
-                    # Section display names and chart-to-section mapping
-                    section_names <- c(
-                        overview = "Market Overview",
-                        relative = "Relative Value Analysis",
-                        risk = "Risk Analytics",
-                        technical = "Technical Analysis",
-                        carry = "Carry & Roll Analysis",
-                        auction = "Auction Intelligence",
-                        intelligence = "Market Intelligence",
-                        treasury = "Treasury Holdings",
-                        recommendations = "Trading Recommendations"
-                    )
-
-                    chart_sections_map <- list(
-                        overview = c("regime_plot"),
-                        relative = c("yield_curve", "relative_heatmap", "zscore_plot", "convexity"),
-                        risk = c("var_distribution", "var_ladder", "dv01_ladder"),
-                        technical = c("technical_plot", "signal_matrix"),
-                        carry = c("carry_heatmap", "scenario_analysis", "butterfly_spread", "forward_curve"),
-                        auction = c("auction_performance", "auction_patterns", "auction_forecast",
-                                     "demand_elasticity", "success_probability", "bid_distribution",
-                                     "ytd_issuance", "auction_sentiment", "auction_success_factors"),
-                        intelligence = c("correlation", "term_structure"),
-                        treasury = c("holdings_area", "sector_trend", "holdings_fixed", "holdings_ilb",
-                                      "holdings_frn", "holdings_sukuk", "ownership_changes",
-                                      "holdings_diverging_fixed", "holdings_diverging_ilb")
-                    )
 
                     # ENHANCED TITLE PAGE WITH LOGO
                     tryCatch({
