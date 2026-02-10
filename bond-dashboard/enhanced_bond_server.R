@@ -11,7 +11,8 @@ required_packages <- c(
     "data.table", "RColorBrewer", "viridis", "gridExtra", "corrplot",
     "quantmod", "PerformanceAnalytics", "xts", "tseries", "randomForest",
     "glmnet", "shinyjqui", "waiter", "htmltools", "knitr", "blastula", "openxlsx", "base64enc",
-    "webshot2", "htmltools", "htmlwidgets", "DT", "stringr", "officer", "flextable", "future", "promises", "magick", "shinyjs", "jsonlite"#, "webp"
+    "webshot2", "htmltools", "htmlwidgets", "DT", "stringr", "officer", "flextable", "future", "promises", "magick", "shinyjs", "jsonlite",
+    "ggrepel", "ggridges"#, "webp"
 )
 
 # Install and load packages
@@ -11862,55 +11863,112 @@ server <- function(input, output, session) {
                         grid.draw(company_grob)
                     }
 
-                    # EXECUTIVE SUMMARY PAGE WITH HEADER
+                    # ══════════════════════════════════════════════════════════════
+                    # PAGE COUNTER INITIALIZATION
+                    # ══════════════════════════════════════════════════════════════
+                    page_number <- 1  # Title page is page 1
+                    # Estimate total pages (title + exec + sections*divider + charts + footer)
+                    total_chart_count <- sum(sapply(config$sections, function(s) {
+                        if (s == "recommendations") return(1)
+                        cs <- chart_sections_map[[s]]
+                        if (is.null(cs)) return(0)
+                        sum(cs %in% names(charts))
+                    }))
+                    total_pages <- 2 + length(config$sections) + total_chart_count + 1  # title + exec + dividers + charts + footer
+
+                    # Helper to add page number footer
+                    add_page_number <- function(pn, tp) {
+                        if (pn > 1) {
+                            grid.text(
+                                label = paste0("Page ", pn, " of ", tp),
+                                x = 0.95, y = 0.02,
+                                just = c("right", "bottom"),
+                                gp = gpar(fontsize = 8, col = "#999999", fontface = 1)
+                            )
+                        }
+                    }
+
+                    # EXECUTIVE SUMMARY PAGE - DASHBOARD STYLE
+                    page_number <- page_number + 1
                     if(!is.null(summaries$executive)) {
                         grid.newpage()
 
                         # Add small logo in header
                         if(!is.null(logo_grob)) {
-                            pushViewport(viewport(x = 0.9, y = 0.95, width = 0.15, height = 0.06))
+                            pushViewport(viewport(x = 0.92, y = 0.95, width = 0.1, height = 0.06,
+                                                  just = c("right", "top")))
                             grid.draw(logo_grob)
                             popViewport()
-
-                            # Header line
-                            grid.lines(x = c(0.05, 0.95), y = c(0.92, 0.92),
-                                       gp = gpar(col = "#E0E0E0", lwd = 1))
                         }
 
-                        exec_title_grob <- textGrob(
-                            "Executive Summary",
-                            x = 0.05, y = 0.95,
-                            just = "left",
-                            gp = gpar(fontsize = 18, fontface = 2, col = "#1B3A6B")
-                        )
-                        grid.draw(exec_title_grob)
+                        # Header line
+                        grid.lines(x = c(0.05, 0.95), y = c(0.92, 0.92),
+                                   gp = gpar(col = "#E0E0E0", lwd = 1))
 
-                        # [Rest of executive summary content...]
-                        summary_text <- summaries$executive
-                        wrapped_text <- tryCatch({
-                            strwrap(summary_text, width = 95)
-                        }, error = function(e) {
-                            "Report content being generated."
-                        })
+                        grid.text("Executive Summary",
+                                  x = 0.05, y = 0.95, just = "left",
+                                  gp = gpar(fontsize = 18, fontface = 2, col = "#1B3A6B"))
 
-                        summary_df <- data.frame(
-                            Content = wrapped_text,
-                            stringsAsFactors = FALSE
-                        )
+                        # Dashboard-style metric cards
+                        exec_metrics <- summaries$exec_metrics
+                        if (!is.null(exec_metrics) && length(exec_metrics) > 0) {
+                            metric_names <- names(exec_metrics)
+                            n_metrics <- length(metric_names)
+                            # Layout: up to 2x4 grid
+                            n_cols <- min(4, n_metrics)
+                            n_rows <- ceiling(n_metrics / n_cols)
+                            card_w <- 0.9 / n_cols
+                            card_h <- 0.22
 
-                        summary_table <- tableGrob(
-                            summary_df,
-                            rows = NULL,
-                            cols = NULL,
-                            theme = ttheme_minimal(
-                                base_size = 11,
-                                base_colour = "#333333"
-                            )
-                        )
+                            for (i in seq_along(metric_names)) {
+                                m <- exec_metrics[[metric_names[i]]]
+                                if (is.null(m)) next
+                                col_idx <- ((i - 1) %% n_cols) + 1
+                                row_idx <- ((i - 1) %/% n_cols) + 1
+                                cx <- 0.05 + (col_idx - 0.5) * card_w
+                                cy <- 0.85 - row_idx * (card_h + 0.02)
 
-                        pushViewport(viewport(x = 0.5, y = 0.5, width = 0.9, height = 0.7))
-                        grid.draw(summary_table)
-                        popViewport()
+                                # Card background
+                                grid.rect(x = cx, y = cy, width = card_w * 0.92, height = card_h,
+                                          gp = gpar(fill = "#F5F7FA", col = "#E0E4E8", lwd = 0.5),
+                                          just = "centre")
+                                # Metric label (small gray)
+                                grid.text(m$label, x = cx, y = cy + card_h * 0.35,
+                                          gp = gpar(fontsize = 8, col = "#888888", fontface = 1))
+                                # Metric value (large navy)
+                                grid.text(m$value, x = cx, y = cy + card_h * 0.05,
+                                          gp = gpar(fontsize = 13, col = "#1B3A6B", fontface = 2))
+                                # Subtitle (small text below)
+                                if (!is.null(m$subtitle) && nchar(m$subtitle) > 0) {
+                                    grid.text(m$subtitle, x = cx, y = cy - card_h * 0.3,
+                                              gp = gpar(fontsize = 7, col = "#999999", fontface = 1))
+                                }
+                            }
+
+                            # Executive text summary below the cards
+                            summary_y <- 0.85 - (n_rows + 1) * (card_h + 0.02)
+                            if (summary_y > 0.05) {
+                                wrapped_exec <- strwrap(summaries$executive, width = 110)
+                                grid.text(paste(wrapped_exec, collapse = "\n"),
+                                          x = 0.5, y = max(summary_y, 0.08),
+                                          gp = gpar(fontsize = 9, col = "#555555", lineheight = 1.3))
+                            }
+                        } else {
+                            # Fallback: text-only executive summary
+                            wrapped_text <- tryCatch({
+                                strwrap(summaries$executive, width = 95)
+                            }, error = function(e) {
+                                "Report content being generated."
+                            })
+                            summary_df <- data.frame(Content = wrapped_text, stringsAsFactors = FALSE)
+                            summary_table <- tableGrob(summary_df, rows = NULL, cols = NULL,
+                                theme = ttheme_minimal(base_size = 11, base_colour = "#333333"))
+                            pushViewport(viewport(x = 0.5, y = 0.5, width = 0.9, height = 0.7))
+                            grid.draw(summary_table)
+                            popViewport()
+                        }
+
+                        add_page_number(page_number, total_pages)
                     }
 
                     # Function to add header with logo to each page
@@ -11962,32 +12020,117 @@ server <- function(input, output, session) {
                                       "holdings_diverging_fixed", "holdings_diverging_ilb")
                     )
 
+                    # ══════════════════════════════════════════════════════════════
+                    # DYNAMIC SECTION SUMMARIES FOR DIVIDER PAGES (Priority 7)
+                    # ══════════════════════════════════════════════════════════════
+                    section_summaries <- list()
+                    tryCatch({
+                        section_summaries$overview <- summaries$market_conditions %||% ""
+                        section_summaries$relative <- summaries$relative_summary %||% ""
+                        section_summaries$risk <- summaries$risk_summary %||% ""
+                        section_summaries$technical <- summaries$technical_summary %||% ""
+                        section_summaries$carry <- summaries$carry_summary %||% ""
+                        section_summaries$auction <- summaries$auction_summary %||% ""
+                        section_summaries$intelligence <- summaries$intelligence_summary %||% ""
+                        section_summaries$treasury <- summaries$treasury_summary %||% ""
+                        section_summaries$recommendations <- ""
+                    }, error = function(e) {})
+
+                    # Generate structured trading recommendations
+                    trading_recs <- tryCatch({
+                        generate_trading_recommendations(
+                            proc_data, filt_data, var_data_val,
+                            carry_data_val, regime_data_val
+                        )
+                    }, error = function(e) {
+                        list()
+                    })
+
                     # Render charts organized by section with divider pages
                     for (section in config$sections) {
-                        # Skip recommendations (text-only section)
+                        # TRADING RECOMMENDATIONS - structured page (Priority 1)
                         if (section == "recommendations") {
-                            # Add recommendations text page
-                            if (!is.null(summaries$recommendations)) {
-                                grid.newpage()
-                                add_page_header("Trading Recommendations")
+                            page_number <- page_number + 1
+                            grid.newpage()
+                            add_page_header("Trading Recommendations")
+
+                            if (length(trading_recs) > 0) {
+                                y_pos <- 0.88
+                                for (rec_section in trading_recs) {
+                                    if (is.null(rec_section) || !is.list(rec_section)) next
+                                    title <- rec_section$title %||% ""
+                                    items <- rec_section$items %||% character()
+
+                                    # Section header
+                                    grid.text(title, x = 0.06, y = y_pos, just = "left",
+                                              gp = gpar(fontsize = 12, fontface = 2, col = "#1B3A6B"))
+                                    y_pos <- y_pos - 0.03
+
+                                    # Horizontal rule
+                                    grid.lines(x = c(0.06, 0.94), y = c(y_pos, y_pos),
+                                               gp = gpar(col = "#E0E4E8", lwd = 0.5))
+                                    y_pos <- y_pos - 0.02
+
+                                    # Items
+                                    if (is.character(items) && length(items) > 0) {
+                                        for (item in items) {
+                                            wrapped <- strwrap(paste0("\u2022 ", item), width = 105)
+                                            for (line in wrapped) {
+                                                grid.text(line, x = 0.08, y = y_pos, just = "left",
+                                                          gp = gpar(fontsize = 9, col = "#444444", lineheight = 1.3))
+                                                y_pos <- y_pos - 0.025
+                                            }
+                                        }
+                                    }
+                                    y_pos <- y_pos - 0.02
+
+                                    if (y_pos < 0.08) break  # Don't overflow
+                                }
+                            } else if (!is.null(summaries$recommendations)) {
+                                # Fallback to simple text
                                 wrapped_recs <- strwrap(summaries$recommendations, width = 95)
                                 grid.text(paste(wrapped_recs, collapse = "\n"),
                                           x = 0.5, y = 0.5,
                                           gp = gpar(fontsize = 11, col = "#333333", lineheight = 1.4))
                             }
+
+                            add_page_number(page_number, total_pages)
                             next
                         }
 
                         section_title <- section_names[[section]]
 
-                        # Section divider page
+                        # ENHANCED SECTION DIVIDER PAGE (Priority 7)
+                        page_number <- page_number + 1
                         grid.newpage()
-                        add_page_header()
-                        grid.text(section_title,
-                                  x = 0.5, y = 0.5,
-                                  gp = gpar(fontsize = 24, fontface = "bold", col = "#1B3A6B"))
-                        grid.lines(x = c(0.2, 0.8), y = c(0.42, 0.42),
+
+                        # Logo top-right
+                        if (!is.null(logo_grob)) {
+                            pushViewport(viewport(x = 0.92, y = 0.95, width = 0.1, height = 0.06,
+                                                  just = c("right", "top")))
+                            grid.draw(logo_grob)
+                            popViewport()
+                        }
+
+                        # Horizontal rule
+                        grid.lines(x = c(0.1, 0.9), y = c(0.65, 0.65),
                                    gp = gpar(col = "#1B3A6B", lwd = 2))
+
+                        # Section title
+                        grid.text(section_title, x = 0.5, y = 0.58,
+                                  gp = gpar(fontsize = 28, fontface = 2, col = "#1B3A6B"))
+
+                        # Section preview text (dynamic summary)
+                        sec_summary <- section_summaries[[section]] %||% ""
+                        if (nchar(sec_summary) > 0) {
+                            wrapped_summary <- strwrap(sec_summary, width = 80)
+                            grid.text(paste(wrapped_summary, collapse = "\n"),
+                                      x = 0.5, y = 0.48,
+                                      gp = gpar(fontsize = 11, col = "#666666", lineheight = 1.4),
+                                      just = "center")
+                        }
+
+                        add_page_number(page_number, total_pages)
 
                         # Render each chart in this section
                         section_chart_names <- chart_sections_map[[section]]
@@ -11995,6 +12138,7 @@ server <- function(input, output, session) {
                             for (chart_name in section_chart_names) {
                                 if (!chart_name %in% names(charts) || is.null(charts[[chart_name]])) next
 
+                                page_number <- page_number + 1
                                 chart_obj <- charts[[chart_name]]
                                 tryCatch({
                                     if ("ggplot" %in% class(chart_obj)) {
@@ -12018,18 +12162,21 @@ server <- function(input, output, session) {
                                         grid.draw(chart_obj)
                                         popViewport()
                                     }
+                                    add_page_number(page_number, total_pages)
                                 }, error = function(e) {
                                     grid.newpage()
                                     add_page_header()
                                     grid.text(paste("Chart", chart_name, "temporarily unavailable"),
                                               x = 0.5, y = 0.5,
                                               gp = gpar(fontsize = 12, col = "#666666"))
+                                    add_page_number(page_number, total_pages)
                                 })
                             }
                         }
                     }
 
                     # FOOTER PAGE WITH LOGO
+                    page_number <- page_number + 1
                     grid.newpage()
 
                     # Add logo at bottom
@@ -12049,6 +12196,7 @@ server <- function(input, output, session) {
                         gp = gpar(fontsize = 10, col = "#666666", lineheight = 1.5)
                     )
                     grid.draw(footer_grob)
+                    add_page_number(page_number, total_pages)
 
                     dev.off()
 

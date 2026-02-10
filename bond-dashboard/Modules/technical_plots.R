@@ -12,8 +12,8 @@ get_date_breaks <- function(date_range) {
     if(days_diff <= 90) return("2 weeks")
     if(days_diff <= 180) return("1 month")
     if(days_diff <= 365) return("2 months")
-    if(days_diff <= 730) return("3 months")
-    return("6 months")
+    if(days_diff <= 730) return("2 months")
+    return("3 months")
 }
 
 # ════════════════════════════════════════════════════════════════════════
@@ -1381,21 +1381,25 @@ generate_signal_matrix_heatmap <- function(data) {
         geom_tile(color = "white", linewidth = 1) +
 
         # Use score_label to ensure 0s are displayed (show original scores)
+        # TOTAL column gets larger, bolder text
         geom_text(aes(label = score_label),
-                  size = 3.5,
+                  size = ifelse(signal_scores_long$indicator == "total_signal", 4.5, 3.5),
                   fontface = "bold",
                   color = case_when(
                       signal_scores_long$color_category %in% c("strong_buy", "strong_sell") ~ "white",
                       signal_scores_long$color_category %in% c("buy", "sell") ~ "gray20",
-                      TRUE ~ "black"
+                      TRUE ~ "gray40"
                   )) +
 
-        # FIX: Use discrete color scale so TOTAL values (+5, -5) get proper colors
+        # TOTAL column left border separator
+        geom_vline(xintercept = 4.5, color = "#1B3A6B", linewidth = 1.2) +
+
+        # FIX: Use discrete color scale with near-white neutral
         scale_fill_manual(
             values = c(
                 "strong_sell" = "#B71C1C",  # Dark red
                 "sell" = "#E57373",          # Light red
-                "neutral" = "#9E9E9E",       # Grey
+                "neutral" = "#F5F5F5",       # Near-white for neutral
                 "buy" = "#81C784",           # Light green
                 "strong_buy" = "#1B5E20"     # Dark green
             ),

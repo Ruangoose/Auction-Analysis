@@ -618,7 +618,7 @@ generate_enhanced_yield_curve <- function(data, params) {
     if (point_size_metric != "uniform") {
         p <- p +
             scale_size_continuous(
-                range = c(3, 12),
+                range = c(1.5, 8),
                 limits = size_limits,
                 name = size_name,
                 breaks = size_breaks,
@@ -646,11 +646,14 @@ generate_enhanced_yield_curve <- function(data, params) {
         labs(
             title = "South African Government Bond Yield Curve",
             subtitle = {
-                # Calculate dynamic spread summary
+                # Calculate dynamic spread summary with rich/cheap count
+                n_rich <- sum(data$spread_to_curve < 0, na.rm = TRUE)
+                n_cheap <- sum(data$spread_to_curve > 0, na.rm = TRUE)
                 spread_summary <- if(sum(!is.na(data$spread_to_curve)) > 0) {
                     avg_spread <- mean(abs(data$spread_to_curve), na.rm = TRUE)
                     max_spread <- max(abs(data$spread_to_curve), na.rm = TRUE)
-                    sprintf("Avg: %.1f bps | Max: %.1f bps", avg_spread, max_spread)
+                    sprintf("Avg: %.1f bps | Max: %.1f bps (%d rich, %d cheap vs fitted curve)",
+                            avg_spread, max_spread, n_rich, n_cheap)
                 } else {
                     "Spread: N/A"
                 }
@@ -658,10 +661,9 @@ generate_enhanced_yield_curve <- function(data, params) {
                 paste(
                     "Model:", params$curve_model, "|",
                     "X-Axis:", gsub("_", " ", tools::toTitleCase(x_var)), "|",
-                    # Use the stored curve_date from params (set during date filtering)
                     "Date:", format(params$curve_date, "%d %B %Y"), "|",
                     "Bonds:", length(unique(data$bond)), "|",
-                    spread_summary  # Use dynamic spread summary
+                    spread_summary
                 )
             },
             x = x_label,
@@ -692,9 +694,9 @@ generate_enhanced_yield_curve <- function(data, params) {
 
             # Caption improvements - make it more readable
             plot.caption = element_text(
-                size = 9,
+                size = 7,
                 color = insele_palette$medium_gray,
-                hjust = 0.5,  # Center the caption
+                hjust = 0,
                 lineheight = 1.3,
                 margin = ggplot2::margin(t = 10, b = 0)
             ),
@@ -837,15 +839,15 @@ generate_relative_value_heatmap <- function(data, params) {
         ) +
 
         scale_fill_gradient2(
-            low = insele_palette$danger,
+            low = "#B71C1C",
             mid = "white",
-            high = insele_palette$success,
+            high = "#1B5E20",
             midpoint = 0,
             limits = c(-3, 3),
             oob = scales::squish,
             name = "Z-Score",
             guide = guide_colorbar(
-                barwidth = 20,
+                barwidth = 12,
                 barheight = 0.5,
                 title.position = "top",
                 title.hjust = 0.5
@@ -913,7 +915,8 @@ generate_enhanced_zscore_plot <- function(data, params) {
         filter(!is.na(z_score)) %>%
         arrange(desc(abs(z_score))) %>%
         mutate(
-            bond_name = factor(bond, levels = rev(bond)),  # Preserve order
+            # Sort by absolute z-score (strongest signals first)
+            bond_name = forcats::fct_reorder(bond, abs(z_score), .desc = TRUE),
 
             # Dynamic label positioning based on Z-Score sign AND magnitude
             # Nudge labels away from circles
@@ -932,7 +935,10 @@ generate_enhanced_zscore_plot <- function(data, params) {
                                labels = c("Normal", "Notable", "Extreme"))
         )
 
-    p <- ggplot(plot_data, aes(x = reorder(bond, z_score), y = z_score)) +
+    # Portfolio-weighted average z-score (equal weight if no weights available)
+    weighted_avg_zscore <- mean(plot_data$z_score, na.rm = TRUE)
+
+    p <- ggplot(plot_data, aes(x = forcats::fct_reorder(bond, abs(z_score)), y = z_score)) +
 
         # Background zones
         annotate("rect", xmin = -Inf, xmax = Inf,
@@ -951,6 +957,13 @@ generate_enhanced_zscore_plot <- function(data, params) {
                    color = c(insele_palette$danger, insele_palette$warning,
                              "black", insele_palette$warning, insele_palette$danger),
                    alpha = c(0.7, 0.5, 1, 0.5, 0.7)) +
+
+        # Portfolio average z-score reference line
+        geom_hline(yintercept = weighted_avg_zscore, linetype = "dashed",
+                   color = "#1B3A6B", linewidth = 0.8) +
+        annotate("text", x = Inf, y = weighted_avg_zscore,
+                 label = sprintf("Wtd Avg: %+.2f", weighted_avg_zscore),
+                 vjust = -0.5, hjust = 1.1, size = 3, color = "#1B3A6B") +
 
         # Lollipop stems
         geom_segment(aes(x = bond, xend = bond, y = 0, yend = z_score,
@@ -1336,12 +1349,13 @@ generate_enhanced_correlation_plot <- function(data, params) {
             y = NULL,
             caption = paste0("Date range: ", format(min(data$date), "%Y-%m-%d"),
                              " to ", format(max(data$date), "%Y-%m-%d"),
-                             " | Based on yield changes (not levels)")
+                             " | Based on yield changes (not levels)",
+                             "\nNote: Near-maturity bonds may show low correlations due to reduced market sensitivity rather than true portfolio diversification.")
         ) +
 
         create_insele_theme() +
         theme(
-            axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = axis_text_size),
+            axis.text.x = element_text(angle = 0, hjust = 0.5, size = axis_text_size),
             axis.text.y = element_text(hjust = 1, size = axis_text_size),
             panel.border = element_rect(fill = NA, color = insele_palette$dark_gray, linewidth = 1),
             legend.position = "bottom",
@@ -1350,6 +1364,8 @@ generate_enhanced_correlation_plot <- function(data, params) {
             plot.title = element_text(hjust = 0.5),
             plot.subtitle = element_text(hjust = 0.5, size = 9),
             plot.margin = ggplot2::margin(10, 10, 10, 10),
+            plot.caption = element_text(hjust = 0, size = 7, lineheight = 1.2,
+                                        margin = ggplot2::margin(t = 10)),
             panel.grid = element_blank()
         ) +
 
@@ -1417,10 +1433,11 @@ generate_term_structure_3d_plot <- function(data, params) {
         # Add contour lines for better visualization
         geom_contour(aes(z = avg_yield), color = "white", alpha = 0.3, linewidth = 0.5) +
 
-        # Color scale
-        scale_fill_viridis_c(
-            option = "D",
+        # Color scale - Insele-branded sequential palette
+        scale_fill_gradientn(
+            colors = c("#E8EEF5", "#8FADD4", "#4A7AB5", "#1B3A6B", "#0D1F3C"),
             name = "Yield (%)",
+            na.value = "#F5F5F5",
             guide = guide_colorbar(
                 barwidth = 20,
                 barheight = 0.5,

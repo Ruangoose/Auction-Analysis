@@ -111,43 +111,27 @@ generate_ytd_bond_issuance_chart <- function(data, params = list()) {
     # Calculate total issuance for subtitle
     total_issuance_all <- sum(issuance_summary$total_issuance, na.rm = TRUE) / 1e9  # in billions
 
-    # Create gradient colors: light green to dark green based on issuance amount
-    # Using a green gradient for financial/positive growth visualization
-    color_low <- "#90EE90"      # Light green
-    color_mid <- "#28a745"      # Medium green (insele_palette$success)
-    color_high <- "#006400"     # Dark green
+    # Calculate percentage of total for each bond
+    grand_total <- sum(issuance_summary$total_issuance, na.rm = TRUE)
+    issuance_summary <- issuance_summary %>%
+        mutate(pct_of_total = total_issuance / grand_total * 100)
 
-    # Create the bar chart
+    # Create the bar chart with flat Insele navy fill
     p <- ggplot(issuance_summary, aes(x = reorder(bond_label, total_issuance_mil),
                                       y = total_issuance_mil)) +
 
-        # Bars with fill based on issuance amount (gradient)
-        geom_col(aes(fill = total_issuance_mil),
+        # Bars with flat Insele navy fill
+        geom_col(fill = "#1B3A6B",
                  alpha = 0.9,
                  width = 0.7) +
 
-        # Add value labels on bars
-        geom_text(aes(label = paste0("R", format(round(total_issuance_mil, 0), big.mark = ","), "m")),
-                  hjust = -0.1,
-                  size = 3.5,
+        # Add value labels on bars with percentage
+        geom_text(aes(label = paste0("R", format(round(total_issuance_mil, 0), big.mark = ","),
+                                     "m (", round(pct_of_total, 1), "%)")),
+                  hjust = -0.05,
+                  size = 3.2,
                   color = insele_palette$text_primary,
                   fontface = "bold") +
-
-        # Color scale: green gradient based on issuance amount
-        scale_fill_gradient(
-            low = color_low,
-            high = color_high,
-            name = "Issuance Scale\n(R millions)",
-            labels = function(x) paste0("R", format(round(x, 0), big.mark = ",")),
-            guide = guide_colorbar(
-                title.position = "top",
-                title.hjust = 0.5,
-                barwidth = 15,
-                barheight = 1.5,
-                frame.colour = insele_palette$border,
-                ticks.colour = insele_palette$border
-            )
-        ) +
 
         # Y-axis: format in millions
         scale_y_continuous(
@@ -195,9 +179,7 @@ generate_ytd_bond_issuance_chart <- function(data, params = list()) {
                                         color = insele_palette$text_secondary,
                                         hjust = 1,
                                         margin = ggplot2::margin(t = 10)),
-            legend.position = "bottom",
-            legend.title = element_text(size = 10, face = "bold"),
-            legend.text = element_text(size = 9),
+            legend.position = "none",
             plot.margin = ggplot2::margin(15, 15, 15, 15)
         )
 

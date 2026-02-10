@@ -102,10 +102,17 @@ collect_report_charts <- function(processed_data, filtered_data, filtered_data_w
         ),
         technical = list(
             technical_plot = function() {
-                # Use filtered_data_with_technicals for bond selection fallback
+                # Select benchmark bond (~10y duration) instead of first/shortest bond
                 bond_select <- input_params$tech_bond_select %||%
                     (if(!is.null(filtered_data_with_technicals) && nrow(filtered_data_with_technicals) > 0) {
-                        unique(filtered_data_with_technicals$bond)[1]
+                        tryCatch({
+                            filtered_data_with_technicals %>%
+                                filter(date == max(date, na.rm = TRUE)) %>%
+                                mutate(dist_to_10y = abs(modified_duration - 10)) %>%
+                                arrange(dist_to_10y) %>%
+                                pull(bond) %>%
+                                first()
+                        }, error = function(e) unique(filtered_data_with_technicals$bond)[1])
                     } else { NULL })
 
                 if(!is.null(bond_select) && !is.null(filtered_data_with_technicals) &&
@@ -536,6 +543,128 @@ generate_report_summaries <- function(processed_data, filtered_data, var_data, r
             if(opportunities_count > 0) sprintf("Currently, %d bonds present relative value opportunities.", opportunities_count) else ""
         )
 
+        # ══════════════════════════════════════════════════════════════════════
+        # STRUCTURED EXECUTIVE METRICS FOR DASHBOARD-STYLE PDF PAGE
+        # ══════════════════════════════════════════════════════════════════════
+        exec_metrics <- list()
+        tryCatch({
+            # Yield range (min-max at latest date)
+            if (!is.null(processed_data) && nrow(processed_data) > 0) {
+                latest <- processed_data %>% filter(date == max(date, na.rm = TRUE))
+                if (nrow(latest) > 0) {
+                    yield_min <- min(latest$yield_to_maturity, na.rm = TRUE)
+                    yield_max <- max(latest$yield_to_maturity, na.rm = TRUE)
+                    min_bond <- latest$bond[which.min(latest$yield_to_maturity)]
+                    max_bond <- latest$bond[which.max(latest$yield_to_maturity)]
+                    exec_metrics$yield_range <- list(
+                        value = sprintf("%.2f%% - %.2f%%", yield_min, yield_max),
+                        subtitle = sprintf("%s to %s", min_bond, max_bond),
+                        label = "Yield Range"
+                    )
+
+                    # Steepest spread
+                    exec_metrics$steepest_spread <- list(
+                        value = sprintf("%.0f bps", (yield_max - yield_min) * 100),
+                        subtitle = sprintf("%s vs %s", max_bond, min_bond),
+                        label = "Steepest Spread"
+                    )
+                }
+            }
+
+            # Average modified duration
+            exec_metrics$avg_duration <- list(
+                value = if(!is.na(avg_duration)) sprintf("%.2f years", avg_duration) else "N/A",
+                subtitle = sprintf("%d bonds in universe", bond_count),
+                label = "Avg Modified Duration"
+            )
+
+            # Current regime
+            if (!is.null(regime_data) && nrow(regime_data) > 0) {
+                current_reg <- regime_data %>%
+                    filter(date == max(date, na.rm = TRUE)) %>%
+                    slice(1)
+                regime_name <- if ("regime" %in% names(current_reg) && nrow(current_reg) > 0) {
+                    tools::toTitleCase(tolower(as.character(current_reg$regime)))
+                } else { "N/A" }
+                vol_text <- if ("vol_20d" %in% names(current_reg) && nrow(current_reg) > 0) {
+                    sprintf("20d vol: %.2f%%", current_reg$vol_20d * 100)
+                } else { "" }
+                exec_metrics$regime <- list(
+                    value = regime_name,
+                    subtitle = vol_text,
+                    label = "Market Regime"
+                )
+            } else {
+                exec_metrics$regime <- list(value = "N/A", subtitle = "", label = "Market Regime")
+            }
+
+            # Top carry trade
+            if (!is.null(carry_roll_data) && nrow(carry_roll_data) > 0) {
+                ret_col <- if ("total_return" %in% names(carry_roll_data)) "total_return" else if ("net_return" %in% names(carry_roll_data)) "net_return" else NULL
+                if (!is.null(ret_col)) {
+                    best_carry <- carry_roll_data %>%
+                        arrange(desc(.data[[ret_col]])) %>%
+                        slice(1)
+                    if (nrow(best_carry) > 0 && "bond" %in% names(best_carry)) {
+                        exec_metrics$top_carry <- list(
+                            value = as.character(best_carry$bond[1]),
+                            subtitle = sprintf("%.2f%% return", best_carry[[ret_col]][1]),
+                            label = "Top Carry Trade"
+                        )
+                    }
+                }
+            }
+            if (is.null(exec_metrics$top_carry)) {
+                exec_metrics$top_carry <- list(value = "N/A", subtitle = "", label = "Top Carry Trade")
+            }
+
+            # Strongest buy/sell signals (from z-scores)
+            if (!is.null(processed_data) && "z_score" %in% names(processed_data)) {
+                sig_data <- processed_data %>%
+                    filter(!is.na(z_score)) %>%
+                    arrange(desc(abs(z_score))) %>%
+                    head(2)
+                if (nrow(sig_data) > 0) {
+                    sig_text <- paste(sapply(1:nrow(sig_data), function(i) {
+                        direction <- if (sig_data$z_score[i] > 0) "Cheap" else "Rich"
+                        sprintf("%s (%s)", sig_data$bond[i], direction)
+                    }), collapse = ", ")
+                    exec_metrics$top_signals <- list(
+                        value = sig_text,
+                        subtitle = sprintf("Z: %+.2f, %+.2f", sig_data$z_score[1],
+                                           if(nrow(sig_data) > 1) sig_data$z_score[2] else 0),
+                        label = "Strongest Signals"
+                    )
+                }
+            }
+            if (is.null(exec_metrics$top_signals)) {
+                exec_metrics$top_signals <- list(value = "N/A", subtitle = "", label = "Strongest Signals")
+            }
+
+            # VaR summary
+            if (!is.null(var_data) && nrow(var_data) > 0 && "VaR_95_bps" %in% names(var_data)) {
+                avg_var <- mean(var_data$VaR_95_bps, na.rm = TRUE)
+                exec_metrics$var_summary <- list(
+                    value = sprintf("%.0f bps", avg_var),
+                    subtitle = "Portfolio avg 95% VaR",
+                    label = "Value-at-Risk"
+                )
+            } else {
+                exec_metrics$var_summary <- list(value = "N/A", subtitle = "", label = "Value-at-Risk")
+            }
+
+            # RV Opportunities
+            exec_metrics$rv_opportunities <- list(
+                value = as.character(opportunities_count),
+                subtitle = if(opportunities_count > 0) "bonds with |Z| > 1.5" else "fair value pricing",
+                label = "RV Opportunities"
+            )
+
+        }, error = function(e) {
+            message(sprintf("[Exec Metrics] Error computing metrics: %s", e$message))
+        })
+        summaries$exec_metrics <- exec_metrics
+
         # Market Conditions with safe regime data handling
         if(!is.null(regime_data) && nrow(regime_data) > 0) {
             tryCatch({
@@ -692,6 +821,163 @@ generate_report_summaries <- function(processed_data, filtered_data, var_data, r
     return(summaries)
 }
 
+
+#' @export
+#' @title Generate Structured Trading Recommendations
+#' @description Produces structured trading recommendations from report data
+#' @return List of recommendation sections for PDF rendering
+generate_trading_recommendations <- function(processed_data, filtered_data, var_data,
+                                              carry_roll_data, regime_data) {
+    recs <- list()
+
+    tryCatch({
+        # 1. TOP CONVICTION IDEAS (from z-scores)
+        conviction_ideas <- character()
+        if (!is.null(processed_data) && "z_score" %in% names(processed_data)) {
+            latest <- processed_data %>%
+                filter(date == max(date, na.rm = TRUE), !is.na(z_score)) %>%
+                arrange(desc(abs(z_score)))
+
+            top_signals <- head(latest, 3)
+            if (nrow(top_signals) > 0) {
+                conviction_ideas <- sapply(1:nrow(top_signals), function(i) {
+                    row <- top_signals[i, ]
+                    direction <- if (row$z_score > 0) "Cheap (BUY)" else "Rich (SELL)"
+                    spread_text <- if ("spread_to_curve" %in% names(row) && !is.na(row$spread_to_curve)) {
+                        sprintf(", %.0f bps from fair value", row$spread_to_curve)
+                    } else { "" }
+                    sprintf("%s: %s signal (z-score: %+.2f%s)",
+                            row$bond, direction, row$z_score, spread_text)
+                })
+            }
+        }
+        recs$conviction <- list(
+            title = "Top Conviction Ideas",
+            items = if (length(conviction_ideas) > 0) conviction_ideas else "No strong conviction signals at present."
+        )
+
+        # 2. RELATIVE VALUE TRADES (pairs from z-scores)
+        rv_trades <- character()
+        if (!is.null(processed_data) && "z_score" %in% names(processed_data)) {
+            latest <- processed_data %>%
+                filter(date == max(date, na.rm = TRUE), !is.na(z_score), !is.na(modified_duration))
+            rich_bonds <- latest %>% filter(z_score < -1) %>% arrange(z_score)
+            cheap_bonds <- latest %>% filter(z_score > 1) %>% arrange(desc(z_score))
+            if (nrow(rich_bonds) > 0 && nrow(cheap_bonds) > 0) {
+                n_pairs <- min(2, nrow(rich_bonds), nrow(cheap_bonds))
+                for (i in 1:n_pairs) {
+                    rv_trades <- c(rv_trades, sprintf(
+                        "Buy %s (z: %+.2f, %.1fy) vs Sell %s (z: %+.2f, %.1fy)",
+                        cheap_bonds$bond[i], cheap_bonds$z_score[i], cheap_bonds$modified_duration[i],
+                        rich_bonds$bond[i], rich_bonds$z_score[i], rich_bonds$modified_duration[i]
+                    ))
+                }
+            }
+        }
+        recs$rv_trades <- list(
+            title = "Relative Value Trades",
+            items = if (length(rv_trades) > 0) rv_trades else "No clear pair trade opportunities identified."
+        )
+
+        # 3. CARRY OPTIMIZATION (best per duration bucket)
+        carry_items <- character()
+        if (!is.null(carry_roll_data) && nrow(carry_roll_data) > 0) {
+            ret_col <- if ("total_return" %in% names(carry_roll_data)) "total_return" else if ("net_return" %in% names(carry_roll_data)) "net_return" else NULL
+            if (!is.null(ret_col) && "modified_duration" %in% names(carry_roll_data)) {
+                carry_buckets <- carry_roll_data %>%
+                    mutate(bucket = case_when(
+                        modified_duration < 5 ~ "Short (0-5y)",
+                        modified_duration < 10 ~ "Medium (5-10y)",
+                        TRUE ~ "Long (10y+)"
+                    )) %>%
+                    group_by(bucket) %>%
+                    arrange(desc(.data[[ret_col]])) %>%
+                    slice(1) %>%
+                    ungroup()
+
+                if (nrow(carry_buckets) > 0) {
+                    carry_items <- sapply(1:nrow(carry_buckets), function(i) {
+                        row <- carry_buckets[i, ]
+                        sprintf("%s: %s (%.2f%% return)", row$bucket, row$bond, row[[ret_col]])
+                    })
+                }
+            }
+        }
+        recs$carry <- list(
+            title = "Carry Optimization",
+            items = if (length(carry_items) > 0) carry_items else "Carry data not available."
+        )
+
+        # 4. RISK WARNINGS
+        risk_warnings <- character()
+        if (!is.null(var_data) && nrow(var_data) > 0 && "VaR_95_bps" %in% names(var_data)) {
+            high_var <- var_data %>%
+                arrange(desc(VaR_95_bps)) %>%
+                head(2)
+            if (nrow(high_var) > 0) {
+                risk_warnings <- c(risk_warnings,
+                    sprintf("Highest VaR: %s (%.0f bps), %s (%.0f bps)",
+                            high_var$bond[1], high_var$VaR_95_bps[1],
+                            if(nrow(high_var) > 1) high_var$bond[2] else "N/A",
+                            if(nrow(high_var) > 1) high_var$VaR_95_bps[2] else 0))
+            }
+        }
+        if (!is.null(regime_data) && nrow(regime_data) > 0) {
+            current_reg <- regime_data %>% filter(date == max(date, na.rm = TRUE)) %>% slice(1)
+            if (nrow(current_reg) > 0 && "regime" %in% names(current_reg)) {
+                reg_name <- tolower(as.character(current_reg$regime))
+                if (reg_name %in% c("stressed", "elevated")) {
+                    risk_warnings <- c(risk_warnings,
+                        sprintf("Market regime is %s - consider reduced position sizes.", reg_name))
+                }
+            }
+        }
+        if (!is.null(processed_data) && "z_score" %in% names(processed_data)) {
+            extreme_z <- processed_data %>%
+                filter(date == max(date, na.rm = TRUE), abs(z_score) > 2.5)
+            if (nrow(extreme_z) > 0) {
+                risk_warnings <- c(risk_warnings,
+                    sprintf("Extreme z-scores: %s - monitor for mean reversion or structural shift.",
+                            paste(extreme_z$bond, collapse = ", ")))
+            }
+        }
+        recs$risk_warnings <- list(
+            title = "Risk Warnings",
+            items = if (length(risk_warnings) > 0) risk_warnings else "No elevated risk warnings at present."
+        )
+
+        # 5. KEY LEVELS TO WATCH
+        key_levels <- character()
+        if (!is.null(processed_data) && nrow(processed_data) > 0) {
+            # Pick benchmark bond (~10y duration)
+            bench <- processed_data %>%
+                filter(date == max(date, na.rm = TRUE)) %>%
+                mutate(dist_to_10y = abs(modified_duration - 10)) %>%
+                arrange(dist_to_10y) %>%
+                slice(1)
+            if (nrow(bench) > 0) {
+                bench_hist <- processed_data %>% filter(bond == bench$bond)
+                if (nrow(bench_hist) > 10) {
+                    high_yield <- max(bench_hist$yield_to_maturity, na.rm = TRUE)
+                    low_yield <- min(bench_hist$yield_to_maturity, na.rm = TRUE)
+                    key_levels <- c(key_levels,
+                        sprintf("Benchmark %s: Current %.2f%% | Range: %.2f%% - %.2f%% (%.0f bps)",
+                                bench$bond, bench$yield_to_maturity,
+                                low_yield, high_yield, (high_yield - low_yield) * 100))
+                }
+            }
+        }
+        recs$key_levels <- list(
+            title = "Key Levels to Watch",
+            items = if (length(key_levels) > 0) key_levels else "Insufficient data for key level identification."
+        )
+
+    }, error = function(e) {
+        message(sprintf("[Trading Recs] Error: %s", e$message))
+    })
+
+    return(recs)
+}
 
 
 #' @export
