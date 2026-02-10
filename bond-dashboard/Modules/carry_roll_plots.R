@@ -639,6 +639,24 @@ generate_forward_curve_plot <- function(data, params = NULL, selected_period = N
                  hjust = 0,
                  size = 3.5) +
 
+        # Narrative annotation for steepest forward segment
+        {
+            steepest_fwd <- forward_data %>%
+                filter(start_year > 0) %>%
+                arrange(desc(abs(spread_bps))) %>%
+                slice(1)
+            if (nrow(steepest_fwd) > 0 && abs(steepest_fwd$spread_bps) > 20) {
+                direction_text <- if(steepest_fwd$spread_bps > 0) "rate\nincreases" else "rate\ndeclines"
+                annotate("label",
+                         x = steepest_fwd$mid_point,
+                         y = min(curve_data$yield_to_maturity, na.rm = TRUE) - y_range * 0.05,
+                         label = sprintf("Market pricing\nsignificant %s\nhere (%+.0f bps)", direction_text, steepest_fwd$spread_bps),
+                         fill = "#FFF3E0", colour = "#E65100",
+                         size = 2.8, fontface = "italic",
+                         label.padding = unit(0.3, "lines"))
+            }
+        } +
+
         labs(
             title = "Spot Curve vs Implied Forward Rates",
             subtitle = "Segments show forward rate periods | Color indicates spread vs current spot",

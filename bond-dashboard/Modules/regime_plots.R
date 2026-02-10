@@ -14,27 +14,21 @@ generate_regime_analysis_plot <- function(data, params) {
 
     # Choose date breaks and labels based on time span
     if (date_span_days <= 90) {
-        # Up to 3 months: weekly breaks
         date_breaks <- "1 week"
-        date_labels <- "%b %d"
+        date_labels <- "%d %b"
     } else if (date_span_days <= 365) {
-        # Up to 1 year: monthly breaks
         date_breaks <- "1 month"
-        date_labels <- "%b\n%Y"
+        date_labels <- "%b '%y"
     } else if (date_span_days <= 730) {
-        # 1-2 years: bi-monthly breaks
         date_breaks <- "2 months"
-        date_labels <- "%b\n%Y"
+        date_labels <- "%b '%y"
     } else if (date_span_days <= 1095) {
-        # 2-3 years: quarterly breaks
         date_breaks <- "3 months"
-        date_labels <- "%b\n%Y"
+        date_labels <- "%b '%y"
     } else if (date_span_days <= 1825) {
-        # 3-5 years: semi-annual breaks
         date_breaks <- "6 months"
-        date_labels <- "%b\n%Y"
+        date_labels <- "%b '%y"
     } else {
-        # 5+ years: yearly breaks
         date_breaks <- "1 year"
         date_labels <- "%Y"
     }
@@ -67,7 +61,7 @@ generate_regime_analysis_plot <- function(data, params) {
                       xmax = dplyr::lead(date, default = max(date, na.rm = TRUE)),
                       ymin = -Inf, ymax = Inf,
                       fill = regime),
-                  alpha = 0.2) +
+                  alpha = 0.25) +
 
         # Volatility line (vol_20d in decimal form, multiply by 100 for %)
         geom_line(aes(y = vol_20d * 100),
@@ -77,7 +71,7 @@ generate_regime_analysis_plot <- function(data, params) {
         # Stress score line: transform from stress space to volatility y-axis space
         geom_line(aes(y = (stress_score - stress_to_vol_offset) * stress_to_vol_scale),
                   color = insele_palette$danger,
-                  linewidth = 1.2,
+                  linewidth = 1.4,
                   linetype = "dashed", na.rm = TRUE) +
 
         # Zero-line for stress score (stress=0 maps to specific y value)
@@ -113,7 +107,7 @@ generate_regime_analysis_plot <- function(data, params) {
         scale_fill_manual(
             values = c("Stressed" = insele_palette$danger,
                        "Elevated" = insele_palette$warning,
-                       "Normal" = insele_palette$secondary,
+                       "Normal" = "#90CAF9",
                        "Calm" = insele_palette$success),
             name = "Regime"
         ) +

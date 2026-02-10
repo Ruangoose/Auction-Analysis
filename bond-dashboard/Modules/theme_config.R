@@ -865,6 +865,60 @@ create_gradient_fill <- function(low = NULL, high = NULL, mid = NULL, mode = NUL
     }
 }
 
+# ================================================================================
+# PDF THEME MODIFIER — ensures minimum font sizes for printed reports
+# ================================================================================
+#' @title PDF-optimised Insele theme
+#' @description Applies create_insele_theme() with minimum font sizes >=8pt
+#' @param base_size Base font size (default 11)
+#' @export
+insele_theme_pdf <- function(base_size = 11) {
+    create_insele_theme(base_size = base_size) +
+    ggplot2::theme(
+        axis.text = ggplot2::element_text(size = max(9, base_size - 2)),
+        axis.title = ggplot2::element_text(size = max(10, base_size - 1)),
+        plot.subtitle = ggplot2::element_text(size = max(9, base_size - 2)),
+        plot.caption = ggplot2::element_text(size = 8),
+        legend.text = ggplot2::element_text(size = 8),
+        strip.text = ggplot2::element_text(size = max(9, base_size - 2))
+    )
+}
+
+# ================================================================================
+# STANDARDISED DIVERGING PALETTES
+# ================================================================================
+# Ensures consistent colour encoding across all plotting functions.
+# Reference these values instead of hardcoding hex colours in individual plots.
+
+insele_palettes_standard <- list(
+    # Rich/Cheap (Relative Value): Red = Rich -> White -> Green = Cheap
+    rich_cheap = list(
+        rich  = "#D32F2F",
+        mid   = "#FFFFFF",
+        cheap = "#2E7D32"
+    ),
+    # Signal Strength: same red-green scale
+    signal = list(
+        strong_sell = "#B71C1C",
+        sell        = "#EF9A9A",
+        neutral     = "#F5F5F5",
+        buy         = "#A5D6A7",
+        strong_buy  = "#1B5E20"
+    ),
+    # Risk levels: Green (low) -> Yellow -> Red (high)
+    risk = list(
+        low    = "#2E7D32",
+        medium = "#FFC107",
+        high   = "#D32F2F"
+    ),
+    # VaR Ladder
+    var_ladder = list(
+        var_95 = "#1B3A6B",
+        var_99 = "#4A90D9",
+        cvar   = "#D32F2F"
+    )
+)
+
 #' @title Get Animation CSS
 #' @description Generate CSS for animations
 #' @export

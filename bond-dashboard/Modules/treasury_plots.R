@@ -271,6 +271,23 @@ generate_holdings_area_chart <- function(holdings_long,
         ) +
         guides(fill = guide_legend(nrow = 2, byrow = TRUE))
 
+    # Add structural break annotations if data spans relevant dates
+    max_y_val <- max(date_totals$total, na.rm = TRUE)
+    if (date_min <= as.Date("2018-02-01") && date_max >= as.Date("2018-06-01")) {
+        p <- p +
+            annotate("segment", x = as.Date("2018-02-01"), xend = as.Date("2018-02-01"),
+                     y = 0, yend = max_y_val * 0.95, linetype = "dotted", colour = "grey40", linewidth = 0.4) +
+            annotate("text", x = as.Date("2018-02-01"), y = max_y_val * 0.97,
+                     label = "Ramaphoria\npeak", size = 2.8, colour = "grey40", hjust = 0.5)
+    }
+    if (date_min <= as.Date("2020-03-01") && date_max >= as.Date("2020-06-01")) {
+        p <- p +
+            annotate("segment", x = as.Date("2020-03-01"), xend = as.Date("2020-03-01"),
+                     y = 0, yend = max_y_val * 0.95, linetype = "dotted", colour = "grey40", linewidth = 0.4) +
+            annotate("text", x = as.Date("2020-03-01"), y = max_y_val * 0.97,
+                     label = "COVID\noutflows", size = 2.8, colour = "grey40", hjust = 0.5)
+    }
+
     return(p)
 }
 

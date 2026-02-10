@@ -11,9 +11,17 @@ get_date_breaks <- function(date_range) {
     if(days_diff <= 30) return("1 week")
     if(days_diff <= 90) return("2 weeks")
     if(days_diff <= 180) return("1 month")
-    if(days_diff <= 365) return("2 months")
+    if(days_diff <= 365) return("1 month")
     if(days_diff <= 730) return("2 months")
     return("3 months")
+}
+
+#' @title Get Date Label Format
+#' @description Determine optimal date label format based on date range
+get_date_label_format <- function(date_range) {
+    days_diff <- as.numeric(diff(range(date_range, na.rm = TRUE)))
+    if(days_diff <= 180) return("%d %b")
+    return("%b '%y")
 }
 
 # ════════════════════════════════════════════════════════════════════════
@@ -185,6 +193,7 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
     # ════════════════════════════════════════════════════════════════════
 
     date_breaks <- get_date_breaks(tech_data$date)
+    date_label_fmt <- get_date_label_format(tech_data$date)
 
     # ════════════════════════════════════════════════════════════════════
     # CREATE PLOTS BASED ON INDICATOR TYPE
@@ -226,7 +235,7 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
                 ) +
                 scale_x_date(
                     date_breaks = date_breaks,
-                    date_labels = "%b\n%Y"
+                    date_labels = date_label_fmt
                 ) +
                 scale_y_continuous(
                     labels = function(x) paste0(x, "%")
@@ -300,7 +309,7 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
                 ) +
                 scale_x_date(
                     date_breaks = date_breaks,
-                    date_labels = "%b"
+                    date_labels = date_label_fmt
                 ) +
                 scale_y_continuous(
                     labels = function(x) paste0(x, "%"),
@@ -362,7 +371,7 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
                 ) +
                 scale_x_date(
                     date_breaks = date_breaks,
-                    date_labels = "%b\n%Y"
+                    date_labels = date_label_fmt
                 ) +
                 scale_y_continuous(
                     labels = function(x) paste0(x, "%")
@@ -421,7 +430,7 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
                 ) +
                 scale_x_date(
                     date_breaks = date_breaks,
-                    date_labels = "%b"
+                    date_labels = date_label_fmt
                 ) +
                 scale_y_continuous(breaks = seq(-3, 3, 1)) +
                 labs(
@@ -583,7 +592,7 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
 
                 scale_x_date(
                     date_breaks = date_breaks,
-                    date_labels = "%b"
+                    date_labels = date_label_fmt
                 ) +
                 scale_y_continuous(
                     limits = c(0, 100),
@@ -675,7 +684,7 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
 
                 scale_x_date(
                     date_breaks = date_breaks,
-                    date_labels = "%b"
+                    date_labels = date_label_fmt
                 ) +
 
                 labs(
@@ -764,7 +773,7 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
                 ) +
                 scale_x_date(
                     date_breaks = date_breaks,
-                    date_labels = "%b\n%Y"
+                    date_labels = date_label_fmt
                 ) +
                 scale_y_continuous(
                     labels = function(x) paste0(x, "%")
@@ -858,7 +867,7 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
                 ) +
                 scale_x_date(
                     date_breaks = date_breaks,
-                    date_labels = "%b"
+                    date_labels = date_label_fmt
                 ) +
                 scale_y_continuous(
                     limits = c(0, 100),
@@ -934,7 +943,7 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
                 ) +
                 scale_x_date(
                     date_breaks = date_breaks,
-                    date_labels = "%b"
+                    date_labels = date_label_fmt
                 ) +
                 labs(
                     title = sprintf("MACD (Histogram: %s%.4f)",
@@ -1329,6 +1338,10 @@ generate_signal_matrix_heatmap <- function(data) {
         message("✓ Good signal diversity - bonds showing differentiated signals")
     }
 
+    # TODO: Consider adding RV_SIGNAL column derived from Z-score data (maps Z-score to -2/+2 scale)
+    # TODO: Consider adding carry signal column for fundamental diversification
+    # The four indicators (RSI, BB, MACD, MOM) are all momentum/mean-reversion types and likely correlated.
+
     # ════════════════════════════════════════════════════════════════════════
     # SORT BONDS BY TOTAL SIGNAL SCORE (strongest buy at top)
     # ════════════════════════════════════════════════════════════════════════
@@ -1394,14 +1407,14 @@ generate_signal_matrix_heatmap <- function(data) {
         # TOTAL column left border separator
         geom_vline(xintercept = 4.5, color = "#1B3A6B", linewidth = 1.2) +
 
-        # FIX: Use discrete color scale with near-white neutral
+        # Colour scale with high contrast between neutral and ±1
         scale_fill_manual(
             values = c(
-                "strong_sell" = "#B71C1C",  # Dark red
-                "sell" = "#E57373",          # Light red
-                "neutral" = "#F5F5F5",       # Near-white for neutral
-                "buy" = "#81C784",           # Light green
-                "strong_buy" = "#1B5E20"     # Dark green
+                "strong_sell" = "#B71C1C",  # Dark red (-2)
+                "sell" = "#EF9A9A",          # Medium pink (-1)
+                "neutral" = "#F5F5F5",       # Near-white grey (0)
+                "buy" = "#A5D6A7",           # Medium green (+1)
+                "strong_buy" = "#1B5E20"     # Dark green (+2)
             ),
             name = "Signal",
             labels = c("Strong Sell", "Sell", "Neutral", "Buy", "Strong Buy"),

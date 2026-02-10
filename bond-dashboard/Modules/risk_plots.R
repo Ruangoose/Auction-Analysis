@@ -1142,10 +1142,15 @@ generate_var_distribution_plot <- function(data, params = list()) {
             pull(bond)
         returns_data$bond_ridge <- factor(returns_data$bond, levels = var_order)
 
+        # Dynamic x-axis limits based on actual return data range
+        return_range <- range(returns_data$scaled_return, na.rm = TRUE)
+        x_limit <- max(abs(return_range)) * 1.3  # 30% buffer beyond data range
+        x_limit <- max(x_limit, 0.5)  # Minimum ±0.5% to avoid degenerate axis
+
         p <- ggplot(returns_data, aes(x = scaled_return, y = bond_ridge, fill = after_stat(x))) +
             ggridges::geom_density_ridges_gradient(
                 scale = 2.5,
-                rel_min_height = 0.01,
+                rel_min_height = 0.005,
                 gradient_lwd = 0.3,
                 quantile_lines = TRUE,
                 quantiles = c(0.05, 0.01)
@@ -1153,8 +1158,8 @@ generate_var_distribution_plot <- function(data, params = list()) {
             scale_fill_viridis_c(option = "C", name = "Return (%)") +
             geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
             scale_x_continuous(
-                labels = scales::percent_format(accuracy = 1, scale = 1),
-                limits = c(-8, 8)
+                labels = scales::percent_format(accuracy = 0.1, scale = 1),
+                limits = c(-x_limit, x_limit)
             ) +
             labs(
                 title = "Value-at-Risk Distribution by Bond",
@@ -1201,6 +1206,11 @@ generate_var_distribution_plot <- function(data, params = list()) {
             n_bonds_display <- n_bonds
         }
 
+        # Dynamic x-axis limits for fallback plot
+        fallback_range <- range(returns_data$scaled_return, na.rm = TRUE)
+        fallback_limit <- max(abs(fallback_range)) * 1.3
+        fallback_limit <- max(fallback_limit, 0.5)
+
         p <- ggplot(returns_data, aes(x = scaled_return)) +
             geom_histogram(aes(y = after_stat(density)), bins = 30,
                            fill = "#64B5F6", color = "white", alpha = 0.7) +
@@ -1210,8 +1220,8 @@ generate_var_distribution_plot <- function(data, params = list()) {
             geom_vline(data = var_levels_plot, aes(xintercept = VaR_99),
                        color = "#D32F2F", linetype = "solid", linewidth = 1.0) +
             facet_wrap(~ bond_display, ncol = n_cols, scales = "free_y") +
-            scale_x_continuous(labels = scales::percent_format(accuracy = 1, scale = 1),
-                               limits = c(-8, 8)) +
+            scale_x_continuous(labels = scales::percent_format(accuracy = 0.1, scale = 1),
+                               limits = c(-fallback_limit, fallback_limit)) +
             scale_y_continuous(expand = c(0, 0, 0.1, 0)) +
             labs(
                 title = "Daily Return Distributions",
@@ -1432,26 +1442,26 @@ generate_var_ladder_plot <- function(var_data, params = list()) {
     # Build plot using x = bond_display with coord_flip() for horizontal bars
     p <- ggplot(var_ladder, aes(x = bond_display)) +
 
-        # 95% VaR bar (wide, orange)
+        # 95% VaR bar (wide, Insele navy)
         geom_col(
             aes(y = VaR_95_bps),
-            fill = "#FFB74D",
+            fill = "#1B3A6B",
             width = 0.7
         ) +
 
-        # 99% VaR bar (narrow, red) - overlaid on top
+        # 99% VaR bar (narrow, lighter blue)
         geom_col(
             aes(y = VaR_99_bps),
-            fill = "#E57373",
+            fill = "#4A90D9",
             width = 0.4
         ) +
 
-        # CVaR diamond
+        # CVaR diamond (red — signals tail risk)
         geom_point(
             aes(y = CVaR_bps),
             shape = 23,
             size = 4,
-            fill = "#1565C0",
+            fill = "#D32F2F",
             color = "white",
             stroke = 1.5
         ) +
@@ -1507,7 +1517,7 @@ generate_var_ladder_plot <- function(var_data, params = list()) {
             },
             x = NULL,
             y = "Risk (basis points of price)",
-            caption = "Wide bar = 95% VaR | Narrow bar = 99% VaR | \u25C6 = CVaR (Expected Shortfall)\nNote: Short-duration bonds may show elevated CVaR due to percentage-based calculation on low-duration instruments."
+            caption = "Navy bar = 95% VaR | Blue bar = 99% VaR | Red \u25C6 = CVaR (Expected Shortfall)\nNote: Short-duration bonds may show elevated CVaR due to percentage-based calculation on low-duration instruments."
         ) +
 
         theme_minimal(base_size = 11) +
@@ -2010,7 +2020,7 @@ generate_scenario_analysis_plot <- function(data, params = list()) {
         # Highlight key points (-100, 0, +100 bps)
         geom_point(data = filter(scenario_results, shift %in% c(-100, 0, 100)),
                    aes(color = bond),
-                   size = 3,
+                   size = 5,
                    shape = 21,
                    fill = "white",
                    stroke = 1.5) +
@@ -2020,7 +2030,7 @@ generate_scenario_analysis_plot <- function(data, params = list()) {
                        group_by(bond, scenario) %>%
                        filter(abs(plot_return) == min(abs(plot_return))),
                    aes(color = bond),
-                   size = 2,
+                   size = 4,
                    shape = 4,
                    stroke = 2) +
 
@@ -2072,7 +2082,7 @@ generate_scenario_analysis_plot <- function(data, params = list()) {
             x = "Yield Change",
             y = sprintf("%s Return (%%)", ifelse(show_total_return, "Total", "Price")),
             caption = paste(
-                "Scenarios: Parallel (uniform shift) | Flattening (short\u2191 long\u2193) | Steepening (short\u2193 long\u2191) | Butterfly (belly outperforms)",
+                "Scenarios: Parallel (uniform shift) | Flattening (short\u2191 long\u2193) | Steepening (short\u2193 long\u2191) | Butterfly Twist (5-7y belly outperforms wings)",
                 ifelse(show_confidence,
                        sprintf("\n%d%% confidence bands based on bond-specific historical volatility", confidence_level * 100),
                        ""),
