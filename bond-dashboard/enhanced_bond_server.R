@@ -2133,11 +2133,13 @@ server <- function(input, output, session) {
         content = function(file) {
             tryCatch({
                 req(filtered_data())
-
-                # Prepare data for export
+                cols <- get_export_columns(
+                    filtered_data(),
+                    include_metadata = isTRUE(input$include_metadata),
+                    include_calculations = isTRUE(input$include_calculations)
+                )
                 export_data <- filtered_data() %>%
-                    select(date, bond, yield, modified_duration,
-                           convexity, dv01, time_to_maturity) %>%
+                    select(all_of(cols)) %>%
                     arrange(date, bond)
 
                 write.csv(export_data, file, row.names = FALSE)
@@ -2159,14 +2161,15 @@ server <- function(input, output, session) {
         content = function(file) {
             tryCatch({
                 req(filtered_data())
-
-                # Prepare data for export
+                cols <- get_export_columns(
+                    filtered_data(),
+                    include_metadata = isTRUE(input$include_metadata),
+                    include_calculations = isTRUE(input$include_calculations)
+                )
                 export_data <- filtered_data() %>%
-                    select(date, bond, yield, modified_duration,
-                           convexity, dv01, time_to_maturity) %>%
+                    select(all_of(cols)) %>%
                     arrange(date, bond)
 
-                # Convert to JSON
                 json_data <- jsonlite::toJSON(export_data, pretty = TRUE)
                 writeLines(json_data, file)
 
@@ -2188,17 +2191,23 @@ server <- function(input, output, session) {
             tryCatch({
                 req(filtered_data())
 
-                # Format for Bloomberg (specific column names and format)
+                # Format for Bloomberg with expanded column set
                 bloomberg_data <- filtered_data() %>%
                     mutate(
                         Ticker = bond,
                         Date = format(date, "%Y%m%d"),
                         YLD_YTM_MID = round(yield, 4),
+                        CPN = if ("coupon" %in% names(.)) round(coupon, 4) else NA,
                         DUR_MID = round(modified_duration, 4),
+                        DUR_MAC = if ("duration" %in% names(.)) round(duration, 4) else NA,
                         CONVEXITY_MID = round(convexity, 4),
-                        DV01 = round(dv01, 6)
+                        DV01 = round(dv01, 6),
+                        PX_CLEAN = if ("clean_price" %in% names(.)) round(clean_price, 4) else NA,
+                        PX_DIRTY = if ("full_price" %in% names(.)) round(full_price, 4) else NA,
+                        INT_ACC = if ("accrued_interest" %in% names(.)) round(accrued_interest, 4) else NA
                     ) %>%
-                    select(Ticker, Date, YLD_YTM_MID, DUR_MID, CONVEXITY_MID, DV01) %>%
+                    select(Ticker, Date, YLD_YTM_MID, CPN, DUR_MID, DUR_MAC,
+                           CONVEXITY_MID, DV01, PX_CLEAN, PX_DIRTY, INT_ACC) %>%
                     arrange(Date, Ticker)
 
                 write.csv(bloomberg_data, file, row.names = FALSE)
@@ -10261,88 +10270,198 @@ server <- function(input, output, session) {
 
 
 
+    # ================================================================================
+    # SHARED REPORT CONFIGURATION REACTIVE
+    # ================================================================================
+    report_config <- reactive({
+        # Collect selected sections
+        sections <- character()
+        section_ids <- c("overview", "relative", "risk", "technical", "carry",
+                         "auction", "intelligence", "treasury", "recommendations")
+        for (sid in section_ids) {
+            if (isTRUE(input[[paste0("section_", sid)]])) {
+                sections <- c(sections, sid)
+            }
+        }
+
+        # Collect all 35 selected plots
+        plot_ids <- c(
+            # Overview
+            "regime_plot",
+            # Relative Value
+            "yield_curve", "relative_heatmap", "zscore_plot", "convexity",
+            # Risk
+            "var_distribution", "var_ladder", "dv01_ladder",
+            # Technical
+            "technical_plot", "signal_matrix",
+            # Carry & Roll
+            "carry_heatmap", "scenario_analysis", "butterfly_spread", "forward_curve",
+            # Auction
+            "auction_performance", "auction_patterns", "auction_forecast",
+            "demand_elasticity", "success_probability", "bid_distribution",
+            "ytd_issuance", "auction_sentiment", "auction_success_factors",
+            # Intelligence
+            "correlation", "term_structure",
+            # Treasury
+            "holdings_area", "sector_trend", "holdings_fixed", "holdings_ilb",
+            "holdings_frn", "holdings_sukuk", "ownership_changes",
+            "holdings_diverging_fixed", "holdings_diverging_ilb"
+        )
+
+        selected_plots <- setNames(
+            lapply(plot_ids, function(pid) isTRUE(input[[paste0("plot_", pid)]])),
+            plot_ids
+        )
+
+        # Build input_params for collect_report_charts
+        input_params <- list(
+            report_sections = sections,
+            selected_plots = selected_plots,
+            auction_bonds_select = input$auction_bonds_select,
+            xaxis_choice = input$xaxis_choice,
+            curve_model = input$curve_model,
+            return_type = input$return_type,
+            tech_bond_select = input$tech_bond_select,
+            tech_indicator_type = input$tech_indicator_type
+        )
+
+        list(
+            sections = sections,
+            selected_plots = selected_plots,
+            input_params = input_params,
+            report_title = input$report_title %||% paste("SA Government Bond Analysis -", format(Sys.Date(), "%B %Y")),
+            report_type = input$report_type %||% "executive",
+            client_name = input$client_name %||% "",
+            report_date = input$report_date %||% Sys.Date()
+        )
+    })
+
+    # ================================================================================
+    # SHARED REPORT DATA COLLECTOR
+    # ================================================================================
+    collect_report_data <- function() {
+        list(
+            proc_data = tryCatch(processed_data(), error = function(e) NULL),
+            filt_data = tryCatch(filtered_data(), error = function(e) NULL),
+            var_data_val = tryCatch(var_data(), error = function(e) NULL),
+            regime_data_val = tryCatch(regime_data(), error = function(e) NULL),
+            carry_data_val = tryCatch(carry_roll_data(), error = function(e) NULL),
+            filt_data_with_tech = tryCatch({
+                validate_dataframe_class(filtered_data_with_technicals(), "filtered_data_with_technicals [report]")
+            }, error = function(e) NULL),
+            treasury_ts = tryCatch({
+                if (!is.null(treasury_module_data) && !is.null(treasury_module_data$holdings_ts)) {
+                    treasury_module_data$holdings_ts()
+                } else NULL
+            }, error = function(e) NULL),
+            treasury_bonds = tryCatch({
+                if (!is.null(treasury_module_data) && !is.null(treasury_module_data$bond_holdings)) {
+                    treasury_module_data$bond_holdings()
+                } else NULL
+            }, error = function(e) NULL)
+        )
+    }
+
+    # ================================================================================
+    # EXPORT COLUMN HELPER
+    # ================================================================================
+    get_export_columns <- function(data, include_metadata = TRUE, include_calculations = TRUE) {
+        # Core columns always included
+        core_cols <- c("date", "bond")
+
+        # Approved data series
+        data_cols <- c("yield", "coupon", "convexity", "accrued_interest",
+                       "clean_price", "duration", "modified_duration",
+                       "dv01", "full_price")
+
+        # Auction columns (if present)
+        auction_cols <- c("offer_amount", "bids_received", "bid_to_cover")
+
+        # Metadata columns
+        meta_cols <- if (include_metadata) {
+            c("time_to_maturity", "maturity_date")
+        } else character(0)
+
+        # Calculation columns
+        calc_cols <- if (include_calculations) {
+            c("z_score", "spread_to_curve", "richness")
+        } else character(0)
+
+        # Only select columns that actually exist in the data
+        all_desired <- c(core_cols, data_cols, auction_cols, meta_cols, calc_cols)
+        available <- intersect(all_desired, names(data))
+
+        return(available)
+    }
+
     # Report Preview
     # Report Preview - Enhanced with individual plot selection
     output$report_preview_content <- renderUI({
-        # Collect selected sections from new checkbox inputs
-        sections <- character()
-        if(isTRUE(input$section_overview)) sections <- c(sections, "overview")
-        if(isTRUE(input$section_relative)) sections <- c(sections, "relative")
-        if(isTRUE(input$section_risk)) sections <- c(sections, "risk")
-        if(isTRUE(input$section_technical)) sections <- c(sections, "technical")
-        if(isTRUE(input$section_carry)) sections <- c(sections, "carry")
-        if(isTRUE(input$section_auction)) sections <- c(sections, "auction")
-        if(isTRUE(input$section_intelligence)) sections <- c(sections, "intelligence")
-        if(isTRUE(input$section_treasury)) sections <- c(sections, "treasury")
-        if(isTRUE(input$section_recommendations)) sections <- c(sections, "recommendations")
+        config <- report_config()
+        sections <- config$sections
+        selected_plots_flags <- config$selected_plots
 
-        # Collect ALL selected plots (including new ones)
+        # Build display names for selected plots
+        # Plot display name mapping
+        plot_display_names <- c(
+            regime_plot = "Regime Analysis",
+            yield_curve = "Yield Curve",
+            relative_heatmap = "Relative Value Heatmap",
+            zscore_plot = "Z-Score Distribution",
+            convexity = "\U2728 Enhanced Convexity",
+            var_distribution = "VaR Distribution",
+            var_ladder = "VaR Ladder",
+            dv01_ladder = "DV01 Analysis",
+            technical_plot = "Technical Indicators",
+            signal_matrix = "Signal Matrix",
+            carry_heatmap = "Carry Heatmap",
+            scenario_analysis = "Scenario Analysis",
+            butterfly_spread = "\U2728 Butterfly Spread",
+            forward_curve = "\U2728 Forward Curve",
+            auction_performance = "Auction Performance",
+            auction_patterns = "Auction Patterns",
+            auction_forecast = "\U2728 Auction Forecast",
+            demand_elasticity = "\U2728 Demand Elasticity",
+            success_probability = "\U2728 Success Probability",
+            bid_distribution = "\U2728 Bid Distribution",
+            ytd_issuance = "\U2728 YTD Issuance",
+            auction_sentiment = "\U2728 Auction Sentiment",
+            auction_success_factors = "\U2728 Success Factors",
+            correlation = "Correlation Matrix",
+            term_structure = "3D Term Structure",
+            holdings_area = "\U0001F3DB Holdings Time Series",
+            sector_trend = "\U0001F3DB Sector Trend",
+            holdings_fixed = "\U0001F3DB Fixed Rate Holdings",
+            holdings_ilb = "\U0001F3DB ILB Holdings",
+            holdings_frn = "\U0001F3DB FRN Holdings",
+            holdings_sukuk = "\U0001F3DB Sukuk Holdings",
+            ownership_changes = "\U0001F3DB Ownership Changes",
+            holdings_diverging_fixed = "\U0001F3DB Fixed Rate Changes",
+            holdings_diverging_ilb = "\U0001F3DB ILB Changes"
+        )
+
+        # Map plots to their parent sections
+        plot_section_map <- c(
+            regime_plot = "overview",
+            yield_curve = "relative", relative_heatmap = "relative", zscore_plot = "relative", convexity = "relative",
+            var_distribution = "risk", var_ladder = "risk", dv01_ladder = "risk",
+            technical_plot = "technical", signal_matrix = "technical",
+            carry_heatmap = "carry", scenario_analysis = "carry", butterfly_spread = "carry", forward_curve = "carry",
+            auction_performance = "auction", auction_patterns = "auction", auction_forecast = "auction",
+            demand_elasticity = "auction", success_probability = "auction", bid_distribution = "auction",
+            ytd_issuance = "auction", auction_sentiment = "auction", auction_success_factors = "auction",
+            correlation = "intelligence", term_structure = "intelligence",
+            holdings_area = "treasury", sector_trend = "treasury", holdings_fixed = "treasury", holdings_ilb = "treasury",
+            holdings_frn = "treasury", holdings_sukuk = "treasury", ownership_changes = "treasury",
+            holdings_diverging_fixed = "treasury", holdings_diverging_ilb = "treasury"
+        )
+
         selected_plots <- character()
-
-        # Overview
-        if(isTRUE(input$section_overview) && isTRUE(input$plot_regime_plot)) {
-            selected_plots <- c(selected_plots, "Regime Analysis")
-        }
-
-        # Relative Value
-        if(isTRUE(input$section_relative)) {
-            if(isTRUE(input$plot_yield_curve)) selected_plots <- c(selected_plots, "Yield Curve")
-            if(isTRUE(input$plot_relative_heatmap)) selected_plots <- c(selected_plots, "Relative Value Heatmap")
-            if(isTRUE(input$plot_zscore_plot)) selected_plots <- c(selected_plots, "Z-Score Distribution")
-            if(isTRUE(input$plot_convexity)) selected_plots <- c(selected_plots, "\U2728 Enhanced Convexity")
-        }
-
-        # Risk
-        if(isTRUE(input$section_risk)) {
-            if(isTRUE(input$plot_var_distribution)) selected_plots <- c(selected_plots, "VaR Distribution")
-            if(isTRUE(input$plot_var_ladder)) selected_plots <- c(selected_plots, "VaR Ladder")
-            if(isTRUE(input$plot_dv01_ladder)) selected_plots <- c(selected_plots, "DV01 Analysis")
-        }
-
-        # Technical
-        if(isTRUE(input$section_technical)) {
-            if(isTRUE(input$plot_technical_plot)) selected_plots <- c(selected_plots, "Technical Indicators")
-            if(isTRUE(input$plot_signal_matrix)) selected_plots <- c(selected_plots, "Signal Matrix")
-        }
-
-        # Carry & Roll
-        if(isTRUE(input$section_carry)) {
-            if(isTRUE(input$plot_carry_heatmap)) selected_plots <- c(selected_plots, "Carry Heatmap")
-            if(isTRUE(input$plot_scenario_analysis)) selected_plots <- c(selected_plots, "Scenario Analysis")
-            if(isTRUE(input$plot_butterfly_spread)) selected_plots <- c(selected_plots, "\U2728 Butterfly Spread")
-            if(isTRUE(input$plot_forward_curve)) selected_plots <- c(selected_plots, "\U2728 Forward Curve")
-        }
-
-        # Auction (expanded with 8 new plots)
-        if(isTRUE(input$section_auction)) {
-            if(isTRUE(input$plot_auction_performance)) selected_plots <- c(selected_plots, "Auction Performance")
-            if(isTRUE(input$plot_auction_patterns)) selected_plots <- c(selected_plots, "Auction Patterns")
-            if(isTRUE(input$plot_auction_forecast)) selected_plots <- c(selected_plots, "\U2728 Auction Forecast")
-            if(isTRUE(input$plot_demand_elasticity)) selected_plots <- c(selected_plots, "\U2728 Demand Elasticity")
-            if(isTRUE(input$plot_success_probability)) selected_plots <- c(selected_plots, "\U2728 Success Probability")
-            if(isTRUE(input$plot_bid_distribution)) selected_plots <- c(selected_plots, "\U2728 Bid Distribution")
-            if(isTRUE(input$plot_ytd_issuance)) selected_plots <- c(selected_plots, "\U2728 YTD Issuance")
-            if(isTRUE(input$plot_auction_sentiment)) selected_plots <- c(selected_plots, "\U2728 Auction Sentiment")
-            if(isTRUE(input$plot_auction_success_factors)) selected_plots <- c(selected_plots, "\U2728 Success Factors")
-        }
-
-        # Intelligence
-        if(isTRUE(input$section_intelligence)) {
-            if(isTRUE(input$plot_correlation)) selected_plots <- c(selected_plots, "Correlation Matrix")
-            if(isTRUE(input$plot_term_structure)) selected_plots <- c(selected_plots, "3D Term Structure")
-        }
-
-        # Treasury Holdings
-        if(isTRUE(input$section_treasury)) {
-            if(isTRUE(input$plot_holdings_area)) selected_plots <- c(selected_plots, "\U0001F3DB Holdings Time Series")
-            if(isTRUE(input$plot_sector_trend)) selected_plots <- c(selected_plots, "\U0001F3DB Sector Trend")
-            if(isTRUE(input$plot_holdings_fixed)) selected_plots <- c(selected_plots, "\U0001F3DB Fixed Rate Holdings")
-            if(isTRUE(input$plot_holdings_ilb)) selected_plots <- c(selected_plots, "\U0001F3DB ILB Holdings")
-            if(isTRUE(input$plot_holdings_frn)) selected_plots <- c(selected_plots, "\U0001F3DB FRN Holdings")
-            if(isTRUE(input$plot_holdings_sukuk)) selected_plots <- c(selected_plots, "\U0001F3DB Sukuk Holdings")
-            if(isTRUE(input$plot_ownership_changes)) selected_plots <- c(selected_plots, "\U0001F3DB Ownership Changes")
-            if(isTRUE(input$plot_holdings_diverging_fixed)) selected_plots <- c(selected_plots, "\U0001F3DB Fixed Rate Changes")
-            if(isTRUE(input$plot_holdings_diverging_ilb)) selected_plots <- c(selected_plots, "\U0001F3DB ILB Changes")
+        for (pid in names(selected_plots_flags)) {
+            parent_section <- plot_section_map[[pid]]
+            if (isTRUE(selected_plots_flags[[pid]]) && parent_section %in% sections) {
+                selected_plots <- c(selected_plots, plot_display_names[[pid]])
+            }
         }
 
         # Get data counts
@@ -11597,143 +11716,50 @@ server <- function(input, output, session) {
 
                 incProgress(0.1, detail = "Collecting data")
 
-                # Get reactive data ONCE here
-                proc_data <- tryCatch(processed_data(), error = function(e) NULL)
-                filt_data <- tryCatch(filtered_data(), error = function(e) NULL)
-                var_data_val <- tryCatch(var_data(), error = function(e) NULL)
-                regime_data_val <- tryCatch(regime_data(), error = function(e) NULL)
-                carry_data_val <- tryCatch(carry_roll_data(), error = function(e) NULL)
+                # Use shared report configuration and data collector
+                config <- report_config()
+                report_data <- collect_report_data()
 
-                # ✅ Calculate technical indicators for report
-                filt_data_with_tech <- tryCatch({
-                    validate_dataframe_class(filtered_data_with_technicals(), "filtered_data_with_technicals [report]")
-                }, error = function(e) {
-                    log_error(e, context = "report_technical_data")
-                    NULL
-                })
+                proc_data <- report_data$proc_data
+                filt_data <- report_data$filt_data
+                var_data_val <- report_data$var_data_val
+                regime_data_val <- report_data$regime_data_val
+                carry_data_val <- report_data$carry_data_val
+                filt_data_with_tech <- report_data$filt_data_with_tech
 
                 incProgress(0.2, detail = "Collecting charts")
 
-                # Prepare input parameters
-                # Collect selected sections
-                sections <- character()
-                if(isTRUE(input$section_overview)) sections <- c(sections, "overview")
-                if(isTRUE(input$section_relative)) sections <- c(sections, "relative")
-                if(isTRUE(input$section_risk)) sections <- c(sections, "risk")
-                if(isTRUE(input$section_technical)) sections <- c(sections, "technical")
-                if(isTRUE(input$section_carry)) sections <- c(sections, "carry")
-                if(isTRUE(input$section_auction)) sections <- c(sections, "auction")
-                if(isTRUE(input$section_intelligence)) sections <- c(sections, "intelligence")
-                if(isTRUE(input$section_treasury)) sections <- c(sections, "treasury")
-                if(isTRUE(input$section_recommendations)) sections <- c(sections, "recommendations")
-
-                # Prepare input parameters with selected plots (ALL 35 plots)
-                input_params <- list(
-                    report_sections = sections,
-                    selected_plots = list(
-                        # Overview
-                        regime_plot = isTRUE(input$plot_regime_plot),
-
-                        # Relative Value
-                        yield_curve = isTRUE(input$plot_yield_curve),
-                        relative_heatmap = isTRUE(input$plot_relative_heatmap),
-                        zscore_plot = isTRUE(input$plot_zscore_plot),
-                        convexity = isTRUE(input$plot_convexity),  # NEW
-
-                        # Risk
-                        var_distribution = isTRUE(input$plot_var_distribution),
-                        var_ladder = isTRUE(input$plot_var_ladder),
-                        dv01_ladder = isTRUE(input$plot_dv01_ladder),
-
-                        # Technical
-                        technical_plot = isTRUE(input$plot_technical_plot),
-                        signal_matrix = isTRUE(input$plot_signal_matrix),
-
-                        # Carry & Roll
-                        carry_heatmap = isTRUE(input$plot_carry_heatmap),
-                        scenario_analysis = isTRUE(input$plot_scenario_analysis),
-                        butterfly_spread = isTRUE(input$plot_butterfly_spread),  # Butterfly Spread Analyzer
-                        forward_curve = isTRUE(input$plot_forward_curve),  # NEW
-
-                        # Auction (8 new plots)
-                        auction_performance = isTRUE(input$plot_auction_performance),
-                        auction_patterns = isTRUE(input$plot_auction_patterns),
-                        auction_forecast = isTRUE(input$plot_auction_forecast),  # NEW
-                        demand_elasticity = isTRUE(input$plot_demand_elasticity),  # NEW
-                        success_probability = isTRUE(input$plot_success_probability),  # NEW
-                        bid_distribution = isTRUE(input$plot_bid_distribution),  # NEW
-                        ytd_issuance = isTRUE(input$plot_ytd_issuance),  # NEW
-                        auction_sentiment = isTRUE(input$plot_auction_sentiment),  # NEW
-                        auction_success_factors = isTRUE(input$plot_auction_success_factors),  # NEW
-
-                        # Intelligence
-                        correlation = isTRUE(input$plot_correlation),
-                        term_structure = isTRUE(input$plot_term_structure),
-
-                        # Treasury Holdings
-                        holdings_area = isTRUE(input$plot_holdings_area),
-                        sector_trend = isTRUE(input$plot_sector_trend),
-                        holdings_fixed = isTRUE(input$plot_holdings_fixed),
-                        holdings_ilb = isTRUE(input$plot_holdings_ilb),
-                        holdings_frn = isTRUE(input$plot_holdings_frn),
-                        holdings_sukuk = isTRUE(input$plot_holdings_sukuk),
-                        ownership_changes = isTRUE(input$plot_ownership_changes),
-                        holdings_diverging_fixed = isTRUE(input$plot_holdings_diverging_fixed),
-                        holdings_diverging_ilb = isTRUE(input$plot_holdings_diverging_ilb)
-                    ),
-                    # Pass other required params for auction plots
-                    auction_bonds_select = input$auction_bonds_select,
-                    xaxis_choice = input$xaxis_choice,
-                    curve_model = input$curve_model,
-                    return_type = input$return_type,
-                    tech_bond_select = input$tech_bond_select,
-                    tech_indicator_type = input$tech_indicator_type
-                )
-
-                # Get treasury data for report
-                treasury_holdings_ts_val <- tryCatch({
-                    if(!is.null(treasury_module_data) && !is.null(treasury_module_data$holdings_ts)) {
-                        treasury_module_data$holdings_ts()
-                    } else { NULL }
-                }, error = function(e) NULL)
-
-                treasury_bond_holdings_val <- tryCatch({
-                    if(!is.null(treasury_module_data) && !is.null(treasury_module_data$bond_holdings)) {
-                        treasury_module_data$bond_holdings()
-                    } else { NULL }
-                }, error = function(e) NULL)
-
-                # Collect charts with error handling - pass data directly
+                # Collect charts with error handling
                 charts <- list()
+                chart_collection <- NULL
                 tryCatch({
-                    # Generate chart collection with BOTH data objects
                     chart_collection <- collect_report_charts(
                         proc_data,
                         filt_data,
-                        filt_data_with_tech,  # ✅ NOW PASSING TECHNICAL DATA
+                        filt_data_with_tech,
                         var_data_val,
                         regime_data_val,
                         carry_data_val,
-                        treasury_holdings_ts_val,    # Treasury time series
-                        treasury_bond_holdings_val,  # Treasury bond holdings
-                        input_params
+                        report_data$treasury_ts,
+                        report_data$treasury_bonds,
+                        config$input_params
                     )
 
                     # Load charts from paths
-                    for(name in names(chart_collection)) {
-                        if(is.character(chart_collection[[name]]) && file.exists(chart_collection[[name]])) {
-                            charts[[name]] <- readRDS(chart_collection[[name]])
-                        } else if(!is.character(chart_collection[[name]])) {
-                            charts[[name]] <- chart_collection[[name]]
+                    for(name in names(chart_collection$charts)) {
+                        chart_path <- chart_collection$charts[[name]]
+                        if(is.character(chart_path) && file.exists(chart_path)) {
+                            charts[[name]] <- readRDS(chart_path)
+                        } else if(!is.character(chart_path)) {
+                            charts[[name]] <- chart_path
                         }
                     }
                 }, error = function(e) {
                     log_error(e, context = "chart_collection", session_id = session$token)
                 })
 
-                # ✅ ADD: Ensure cleanup happens when PDF generation is done
+                # Ensure cleanup happens when PDF generation is done
                 on.exit({
-                    # Clean up chart files AFTER PDF is generated
                     if(!is.null(chart_collection) && !is.null(chart_collection$cleanup)) {
                         chart_collection$cleanup()
                     }
@@ -11741,36 +11767,24 @@ server <- function(input, output, session) {
 
                 incProgress(0.3, detail = "Generating summaries")
 
-                # Generate summaries with error handling - pass data directly
+                # Generate summaries with error handling
                 summaries <- tryCatch({
                     generate_report_summaries(
                         proc_data,
                         filt_data,
                         var_data_val,
                         regime_data_val,
-                        carry_data_val
+                        carry_data_val,
+                        report_data$treasury_ts,
+                        report_data$treasury_bonds
                     )
                 }, error = function(e) {
                     log_error(e, context = "summary_generation")
                     list(executive = "Report generation in progress.")
                 })
 
-                # Load charts from paths
-                charts <- list()
-                tryCatch({
-                    for(name in names(chart_collection$charts)) {
-                        chart_path <- chart_collection$charts[[name]]
-                        if(is.character(chart_path) && file.exists(chart_path)) {
-                            charts[[name]] <- readRDS(chart_path)  # ← Now files still exist!
-                        }
-                    }
-                }, error = function(e) {
-                    log_error(e, context = "chart_loading")
-                })
-
                 # Get auction data
                 auction_data <- tryCatch({
-                    # weekly_auction_summary should also be modified to accept data
                     list(upcoming_bonds = data.frame(), summary_text = NULL)
                 }, error = function(e) {
                     list(upcoming_bonds = data.frame(), summary_text = NULL)
@@ -11920,37 +11934,98 @@ server <- function(input, output, session) {
                                    gp = gpar(col = "#E0E0E0", lwd = 0.5))
                     }
 
-                    # Add charts with headers
-                    for(chart_name in names(charts)) {
-                        if(!is.null(charts[[chart_name]])) {
-                            tryCatch({
-                                is_ggplot <- "ggplot" %in% class(charts[[chart_name]])
+                    # Section display names and chart-to-section mapping
+                    section_names <- c(
+                        overview = "Market Overview",
+                        relative = "Relative Value Analysis",
+                        risk = "Risk Analytics",
+                        technical = "Technical Analysis",
+                        carry = "Carry & Roll Analysis",
+                        auction = "Auction Intelligence",
+                        intelligence = "Market Intelligence",
+                        treasury = "Treasury Holdings",
+                        recommendations = "Trading Recommendations"
+                    )
 
-                                if(is_ggplot) {
-                                    # For ggplot objects, print first then add header
-                                    print(charts[[chart_name]])
+                    chart_sections_map <- list(
+                        overview = c("regime_plot"),
+                        relative = c("yield_curve", "relative_heatmap", "zscore_plot", "convexity"),
+                        risk = c("var_distribution", "var_ladder", "dv01_ladder"),
+                        technical = c("technical_plot", "signal_matrix"),
+                        carry = c("carry_heatmap", "scenario_analysis", "butterfly_spread", "forward_curve"),
+                        auction = c("auction_performance", "auction_patterns", "auction_forecast",
+                                     "demand_elasticity", "success_probability", "bid_distribution",
+                                     "ytd_issuance", "auction_sentiment", "auction_success_factors"),
+                        intelligence = c("correlation", "term_structure"),
+                        treasury = c("holdings_area", "sector_trend", "holdings_fixed", "holdings_ilb",
+                                      "holdings_frn", "holdings_sukuk", "ownership_changes",
+                                      "holdings_diverging_fixed", "holdings_diverging_ilb")
+                    )
 
-                                    # Add header overlay (may not work well with ggplot)
-                                    # Consider adding logo to ggplot theme instead
-                                } else {
-                                    # For grid objects
-                                    grid.newpage()
-                                    add_page_header(gsub("_", " ", tools::toTitleCase(chart_name)))
-
-                                    # Adjust viewport to account for header
-                                    pushViewport(viewport(x = 0.5, y = 0.45, width = 0.9, height = 0.85))
-                                    grid.draw(charts[[chart_name]])
-                                    popViewport()
-                                }
-                            }, error = function(e) {
+                    # Render charts organized by section with divider pages
+                    for (section in config$sections) {
+                        # Skip recommendations (text-only section)
+                        if (section == "recommendations") {
+                            # Add recommendations text page
+                            if (!is.null(summaries$recommendations)) {
                                 grid.newpage()
-                                add_page_header()
-                                grid.text(
-                                    paste("Chart", chart_name, "temporarily unavailable"),
-                                    x = 0.5, y = 0.5,
-                                    gp = gpar(fontsize = 12, col = "#666666")
-                                )
-                            })
+                                add_page_header("Trading Recommendations")
+                                wrapped_recs <- strwrap(summaries$recommendations, width = 95)
+                                grid.text(paste(wrapped_recs, collapse = "\n"),
+                                          x = 0.5, y = 0.5,
+                                          gp = gpar(fontsize = 11, col = "#333333", lineheight = 1.4))
+                            }
+                            next
+                        }
+
+                        section_title <- section_names[[section]]
+
+                        # Section divider page
+                        grid.newpage()
+                        add_page_header()
+                        grid.text(section_title,
+                                  x = 0.5, y = 0.5,
+                                  gp = gpar(fontsize = 24, fontface = "bold", col = "#1B3A6B"))
+                        grid.lines(x = c(0.2, 0.8), y = c(0.42, 0.42),
+                                   gp = gpar(col = "#1B3A6B", lwd = 2))
+
+                        # Render each chart in this section
+                        section_chart_names <- chart_sections_map[[section]]
+                        if (!is.null(section_chart_names)) {
+                            for (chart_name in section_chart_names) {
+                                if (!chart_name %in% names(charts) || is.null(charts[[chart_name]])) next
+
+                                chart_obj <- charts[[chart_name]]
+                                tryCatch({
+                                    if ("ggplot" %in% class(chart_obj)) {
+                                        # Save ggplot to temp PNG, then compose page
+                                        temp_chart_png <- tempfile(fileext = ".png")
+                                        ggsave(temp_chart_png, chart_obj, width = 10, height = 6, dpi = 150, bg = "white")
+                                        chart_img <- png::readPNG(temp_chart_png)
+                                        chart_grob <- grid::rasterGrob(chart_img, interpolate = TRUE)
+                                        unlink(temp_chart_png)
+
+                                        grid.newpage()
+                                        add_page_header(gsub("_", " ", tools::toTitleCase(chart_name)))
+                                        pushViewport(viewport(x = 0.5, y = 0.45, width = 0.92, height = 0.82))
+                                        grid.draw(chart_grob)
+                                        popViewport()
+                                    } else {
+                                        # Grid objects render directly
+                                        grid.newpage()
+                                        add_page_header(gsub("_", " ", tools::toTitleCase(chart_name)))
+                                        pushViewport(viewport(x = 0.5, y = 0.45, width = 0.9, height = 0.85))
+                                        grid.draw(chart_obj)
+                                        popViewport()
+                                    }
+                                }, error = function(e) {
+                                    grid.newpage()
+                                    add_page_header()
+                                    grid.text(paste("Chart", chart_name, "temporarily unavailable"),
+                                              x = 0.5, y = 0.5,
+                                              gp = gpar(fontsize = 12, col = "#666666"))
+                                })
+                            }
                         }
                     }
 
@@ -12007,124 +12082,33 @@ server <- function(input, output, session) {
     # HTML Report Generation
     output$generate_html_report <- downloadHandler(
         filename = function() {
-            paste0("insele_bond_report_", format(input$report_date, "%Y%m%d"), ".html")
+            paste0("insele_bond_report_", format(report_config()$report_date, "%Y%m%d"), ".html")
         },
         content = function(file) {
             withProgress(message = "Generating HTML report...", value = 0, {
 
                 incProgress(0.1, detail = "Collecting data")
 
-                # Get reactive data
-                proc_data <- tryCatch(processed_data(), error = function(e) NULL)
-                filt_data <- tryCatch(filtered_data(), error = function(e) NULL)
-                var_data_val <- tryCatch(var_data(), error = function(e) NULL)
-                regime_data_val <- tryCatch(regime_data(), error = function(e) NULL)
-                carry_data_val <- tryCatch(carry_roll_data(), error = function(e) NULL)
-                filt_data_with_tech <- tryCatch(filtered_data_with_technicals(), error = function(e) NULL)
-
-                # Collect selected sections
-                sections <- character()
-                if(isTRUE(input$section_overview)) sections <- c(sections, "overview")
-                if(isTRUE(input$section_relative)) sections <- c(sections, "relative")
-                if(isTRUE(input$section_risk)) sections <- c(sections, "risk")
-                if(isTRUE(input$section_technical)) sections <- c(sections, "technical")
-                if(isTRUE(input$section_carry)) sections <- c(sections, "carry")
-                if(isTRUE(input$section_auction)) sections <- c(sections, "auction")
-                if(isTRUE(input$section_intelligence)) sections <- c(sections, "intelligence")
-                if(isTRUE(input$section_treasury)) sections <- c(sections, "treasury")
-                if(isTRUE(input$section_recommendations)) sections <- c(sections, "recommendations")
-
-                # Prepare input parameters with selected plots (ALL 35 plots)
-                input_params <- list(
-                    report_sections = sections,
-                    selected_plots = list(
-                        # Overview
-                        regime_plot = isTRUE(input$plot_regime_plot),
-
-                        # Relative Value
-                        yield_curve = isTRUE(input$plot_yield_curve),
-                        relative_heatmap = isTRUE(input$plot_relative_heatmap),
-                        zscore_plot = isTRUE(input$plot_zscore_plot),
-                        convexity = isTRUE(input$plot_convexity),  # NEW
-
-                        # Risk
-                        var_distribution = isTRUE(input$plot_var_distribution),
-                        var_ladder = isTRUE(input$plot_var_ladder),
-                        dv01_ladder = isTRUE(input$plot_dv01_ladder),
-
-                        # Technical
-                        technical_plot = isTRUE(input$plot_technical_plot),
-                        signal_matrix = isTRUE(input$plot_signal_matrix),
-
-                        # Carry & Roll
-                        carry_heatmap = isTRUE(input$plot_carry_heatmap),
-                        scenario_analysis = isTRUE(input$plot_scenario_analysis),
-                        butterfly_spread = isTRUE(input$plot_butterfly_spread),  # Butterfly Spread Analyzer
-                        forward_curve = isTRUE(input$plot_forward_curve),  # NEW
-
-                        # Auction (8 new plots)
-                        auction_performance = isTRUE(input$plot_auction_performance),
-                        auction_patterns = isTRUE(input$plot_auction_patterns),
-                        auction_forecast = isTRUE(input$plot_auction_forecast),  # NEW
-                        demand_elasticity = isTRUE(input$plot_demand_elasticity),  # NEW
-                        success_probability = isTRUE(input$plot_success_probability),  # NEW
-                        bid_distribution = isTRUE(input$plot_bid_distribution),  # NEW
-                        ytd_issuance = isTRUE(input$plot_ytd_issuance),  # NEW
-                        auction_sentiment = isTRUE(input$plot_auction_sentiment),  # NEW
-                        auction_success_factors = isTRUE(input$plot_auction_success_factors),  # NEW
-
-                        # Intelligence
-                        correlation = isTRUE(input$plot_correlation),
-                        term_structure = isTRUE(input$plot_term_structure),
-
-                        # Treasury Holdings
-                        holdings_area = isTRUE(input$plot_holdings_area),
-                        sector_trend = isTRUE(input$plot_sector_trend),
-                        holdings_fixed = isTRUE(input$plot_holdings_fixed),
-                        holdings_ilb = isTRUE(input$plot_holdings_ilb),
-                        holdings_frn = isTRUE(input$plot_holdings_frn),
-                        holdings_sukuk = isTRUE(input$plot_holdings_sukuk),
-                        ownership_changes = isTRUE(input$plot_ownership_changes),
-                        holdings_diverging_fixed = isTRUE(input$plot_holdings_diverging_fixed),
-                        holdings_diverging_ilb = isTRUE(input$plot_holdings_diverging_ilb)
-                    ),
-                    # Pass other required params for auction plots
-                    auction_bonds_select = input$auction_bonds_select,
-                    xaxis_choice = input$xaxis_choice,
-                    curve_model = input$curve_model,
-                    return_type = input$return_type,
-                    tech_bond_select = input$tech_bond_select,
-                    tech_indicator_type = input$tech_indicator_type
-                )
+                # Use shared report configuration and data collector
+                config <- report_config()
+                report_data <- collect_report_data()
 
                 incProgress(0.2, detail = "Collecting charts")
 
-                # Get treasury data for report (Word export)
-                treasury_holdings_ts_val <- tryCatch({
-                    if(!is.null(treasury_module_data) && !is.null(treasury_module_data$holdings_ts)) {
-                        treasury_module_data$holdings_ts()
-                    } else { NULL }
-                }, error = function(e) NULL)
-
-                treasury_bond_holdings_val <- tryCatch({
-                    if(!is.null(treasury_module_data) && !is.null(treasury_module_data$bond_holdings)) {
-                        treasury_module_data$bond_holdings()
-                    } else { NULL }
-                }, error = function(e) NULL)
-
                 # Collect charts with error handling
                 charts <- list()
+                chart_collection <- NULL
                 tryCatch({
                     chart_collection <- collect_report_charts(
-                        proc_data,
-                        filt_data,
-                        filt_data_with_tech,
-                        var_data_val,
-                        regime_data_val,
-                        carry_data_val,
-                        treasury_holdings_ts_val,    # Treasury time series
-                        treasury_bond_holdings_val,  # Treasury bond holdings
-                        input_params
+                        report_data$proc_data,
+                        report_data$filt_data,
+                        report_data$filt_data_with_tech,
+                        report_data$var_data_val,
+                        report_data$regime_data_val,
+                        report_data$carry_data_val,
+                        report_data$treasury_ts,
+                        report_data$treasury_bonds,
+                        config$input_params
                     )
 
                     # Load charts from paths
@@ -12140,37 +12124,43 @@ server <- function(input, output, session) {
                     log_error(e, context = "html_chart_collection")
                 })
 
-                incProgress(0.4, detail = "Converting charts")
-
-                # Convert charts to base64
-                charts_base64 <- list()
-                for(name in names(charts)) {
-                    if(!is.null(charts[[name]])) {
-                        charts_base64[[name]] <- plot_to_base64(charts[[name]], width = 10, height = 6)
+                # Ensure cleanup happens
+                on.exit({
+                    if(!is.null(chart_collection) && !is.null(chart_collection$cleanup)) {
+                        chart_collection$cleanup()
                     }
-                }
+                }, add = TRUE)
 
-                incProgress(0.5, detail = "Generating summaries")
+                incProgress(0.4, detail = "Generating summaries")
 
-                # Generate summaries
-                summaries <- list(
-                    overview = "Market analysis shows current regime characteristics and positioning.",
-                    yield_curve = tryCatch(generate_chart_summary("yield_curve", proc_data), error = function(e) ""),
-                    risk = tryCatch(generate_chart_summary("var_analysis", var_data_val), error = function(e) ""),
-                    carry = "Carry and roll analysis identifies optimal holding periods."
-                )
+                # Generate full summaries
+                summaries <- tryCatch({
+                    generate_report_summaries(
+                        report_data$proc_data,
+                        report_data$filt_data,
+                        report_data$var_data_val,
+                        report_data$regime_data_val,
+                        report_data$carry_data_val,
+                        report_data$treasury_ts,
+                        report_data$treasury_bonds
+                    )
+                }, error = function(e) {
+                    log_error(e, context = "html_summary_generation")
+                    list(executive = "Report generation in progress.")
+                })
 
                 # Get auction data
                 auction_data <- tryCatch(weekly_auction_summary(), error = function(e) NULL)
 
                 incProgress(0.8, detail = "Creating HTML")
 
-                # Create HTML report
-                html_content <- create_email_template(
-                    charts_base64,
+                # Create full HTML report using new template with all charts
+                html_content <- create_html_report_template(
+                    charts,
                     summaries,
-                    auction_data,
-                    paste("Report prepared for:", input$client_name)
+                    config$sections,
+                    config,
+                    auction_data
                 )
 
                 # Save to file
@@ -12182,7 +12172,7 @@ server <- function(input, output, session) {
         }
     )
 
-    # Replace the existing export_excel handler
+    # Enhanced Excel Export Handler
     output$export_excel <- downloadHandler(
         filename = function() {
             paste0("insele_bond_analysis_", format(Sys.Date(), "%Y%m%d"), ".xlsx")
@@ -12194,7 +12184,7 @@ server <- function(input, output, session) {
 
                 wb <- createWorkbook()
 
-                # Define styles safely
+                # Define styles
                 header_style <- createStyle(
                     fontSize = 12, fontColour = "#FFFFFF",
                     fgFill = "#1B3A6B", halign = "center",
@@ -12212,7 +12202,7 @@ server <- function(input, output, session) {
 
                 incProgress(0.1, detail = "Executive Summary")
 
-                # 1. Executive Summary with error handling
+                # 1. Executive Summary
                 tryCatch({
                     addWorksheet(wb, "Executive Summary")
 
@@ -12223,7 +12213,6 @@ server <- function(input, output, session) {
                              createStyle(fontSize = 16, textDecoration = "bold"),
                              rows = 1, cols = 1)
 
-                    # Build summary metrics safely
                     summary_metrics <- data.frame(
                         Metric = c("Report Date", "Analysis Period", "Total Bonds Analyzed",
                                    "Average Yield (%)", "Average Duration (years)"),
@@ -12233,15 +12222,9 @@ server <- function(input, output, session) {
                                 paste(format(input$date_range[1], "%b %d"), "-",
                                       format(input$date_range[2], "%b %d, %Y"))
                             } else { "Not specified" },
-                            if(!is.null(filtered_data())) {
-                                as.character(length(unique(filtered_data()$bond)))
-                            } else { "0" },
-                            if(!is.null(processed_data()) && nrow(processed_data()) > 0) {
-                                sprintf("%.3f", mean(processed_data()$yield_to_maturity, na.rm = TRUE))
-                            } else { "N/A" },
-                            if(!is.null(processed_data()) && nrow(processed_data()) > 0) {
-                                sprintf("%.2f", mean(processed_data()$modified_duration, na.rm = TRUE))
-                            } else { "N/A" }
+                            tryCatch(as.character(length(unique(filtered_data()$bond))), error = function(e) "0"),
+                            tryCatch(sprintf("%.3f", mean(processed_data()$yield_to_maturity, na.rm = TRUE)), error = function(e) "N/A"),
+                            tryCatch(sprintf("%.2f", mean(processed_data()$modified_duration, na.rm = TRUE)), error = function(e) "N/A")
                         )
                     )
 
@@ -12253,152 +12236,98 @@ server <- function(input, output, session) {
                     log_error(e, context = "excel_summary")
                 })
 
-                incProgress(0.2, detail = "Bond Metrics")
+                incProgress(0.15, detail = "Bond Metrics")
 
-                # 2. Current Bond Metrics with validation
-                if(!is.null(processed_data()) && nrow(processed_data()) > 0) {
-                    tryCatch({
+                # 2. Bond Metrics — latest snapshot, one row per bond
+                tryCatch({
+                    if(!is.null(processed_data()) && nrow(processed_data()) > 0) {
                         addWorksheet(wb, "Bond Metrics")
 
-                        # Select only existing columns
-                        available_cols <- names(processed_data())
-                        bond_metrics <- processed_data()
+                        bond_metrics <- processed_data() %>%
+                            select(any_of(c("bond", "yield_to_maturity", "coupon", "modified_duration",
+                                            "duration", "convexity", "dv01", "clean_price", "full_price",
+                                            "accrued_interest", "time_to_maturity", "z_score",
+                                            "spread_to_curve", "richness"))) %>%
+                            arrange(bond)
 
-                        # Build metrics data frame with available columns
-                        metrics_df <- data.frame(Bond = bond_metrics$bond)
+                        writeData(wb, "Bond Metrics", bond_metrics, headerStyle = header_style)
+                        setColWidths(wb, "Bond Metrics", cols = 1:ncol(bond_metrics), widths = "auto")
 
-                        if("yield_to_maturity" %in% available_cols) {
-                            metrics_df$`Yield (%)` <- bond_metrics$yield_to_maturity
-                        }
-                        if("modified_duration" %in% available_cols) {
-                            metrics_df$`Mod Duration` <- bond_metrics$modified_duration
-                        }
-                        if("duration" %in% available_cols) {
-                            metrics_df$Duration <- bond_metrics$duration
-                        }
-                        if("convexity" %in% available_cols) {
-                            metrics_df$Convexity <- bond_metrics$convexity
-                        }
-                        if("coupon" %in% available_cols) {
-                            metrics_df$`Coupon (%)` <- bond_metrics$coupon
-                        }
-                        if("spread_to_curve" %in% available_cols) {
-                            metrics_df$`Spread (bps)` <- bond_metrics$spread_to_curve
-                        }
-                        if("z_score" %in% available_cols) {
-                            metrics_df$`Z-Score` <- bond_metrics$z_score
+                        # Alternate row highlighting
+                        if (nrow(bond_metrics) > 1) {
+                            even_rows <- seq(3, nrow(bond_metrics) + 1, by = 2)
+                            even_rows <- even_rows[even_rows <= nrow(bond_metrics) + 1]
+                            if (length(even_rows) > 0) {
+                                addStyle(wb, "Bond Metrics", highlight_style,
+                                         rows = even_rows,
+                                         cols = 1:ncol(bond_metrics), gridExpand = TRUE, stack = TRUE)
+                            }
                         }
 
-                        writeData(wb, "Bond Metrics", metrics_df, headerStyle = header_style)
-
-                        # Add conditional formatting only if Z-Score exists
-                        if("z_score" %in% available_cols) {
-                            z_col <- which(names(metrics_df) == "Z-Score")
-                            if(length(z_col) > 0 && nrow(metrics_df) > 0) {
+                        # Conditional formatting on Z-Score if present
+                        if ("z_score" %in% names(bond_metrics)) {
+                            z_col <- which(names(bond_metrics) == "z_score")
+                            if (length(z_col) > 0 && nrow(bond_metrics) > 0) {
                                 conditionalFormatting(wb, "Bond Metrics",
                                                       cols = z_col,
-                                                      rows = 2:(nrow(metrics_df)+1),
+                                                      rows = 2:(nrow(bond_metrics) + 1),
                                                       style = c("#FFCDD2", "#FFFFFF", "#C8E6C9"),
                                                       rule = c(-2, 0, 2),
                                                       type = "colourScale")
                             }
                         }
+                    }
+                }, error = function(e) log_error(e, context = "excel_bond_metrics"))
 
-                    }, error = function(e) {
-                        log_error(e, context = "excel_bond_metrics")
-                    })
-                }
+                incProgress(0.3, detail = "Historical Data")
 
-                incProgress(0.3, detail = "Risk Metrics")
+                # 3. Historical Data — time series with all approved columns
+                tryCatch({
+                    if(!is.null(filtered_data()) && nrow(filtered_data()) > 0) {
+                        addWorksheet(wb, "Historical Data")
 
-                # 3. Risk Metrics with null checks
-                if(!is.null(var_data()) && nrow(var_data()) > 0) {
-                    tryCatch({
+                        cols <- get_export_columns(
+                            filtered_data(),
+                            include_metadata = isTRUE(input$include_metadata),
+                            include_calculations = isTRUE(input$include_calculations)
+                        )
+                        historical_data <- filtered_data() %>%
+                            select(all_of(cols)) %>%
+                            arrange(date, bond)
+
+                        writeData(wb, "Historical Data", historical_data, headerStyle = header_style)
+                        setColWidths(wb, "Historical Data", cols = 1:ncol(historical_data), widths = "auto")
+                    }
+                }, error = function(e) log_error(e, context = "excel_historical_data"))
+
+                incProgress(0.4, detail = "Risk Metrics")
+
+                # 4. Risk Metrics
+                tryCatch({
+                    var_data_val <- var_data()
+                    if(!is.null(var_data_val) && nrow(var_data_val) > 0) {
                         addWorksheet(wb, "Risk Metrics")
 
-                        risk_metrics <- var_data()
-                        risk_df <- data.frame(Bond = risk_metrics$bond)
-
-                        # Add columns that exist
-                        if("VaR_95_bps" %in% names(risk_metrics)) {
-                            risk_df$`95% VaR (bps)` <- risk_metrics$VaR_95_bps
-                        }
-                        if("VaR_99_bps" %in% names(risk_metrics)) {
-                            risk_df$`99% VaR (bps)` <- risk_metrics$VaR_99_bps
-                        }
-                        if("CVaR_95" %in% names(risk_metrics)) {
-                            risk_df$`CVaR 95% (%)` <- risk_metrics$CVaR_95
-                        }
-                        if("vol" %in% names(risk_metrics)) {
-                            risk_df$`Volatility (%)` <- risk_metrics$vol
-                        }
+                        risk_df <- data.frame(Bond = var_data_val$bond)
+                        if("VaR_95_bps" %in% names(var_data_val)) risk_df$`95% VaR (bps)` <- var_data_val$VaR_95_bps
+                        if("VaR_99_bps" %in% names(var_data_val)) risk_df$`99% VaR (bps)` <- var_data_val$VaR_99_bps
+                        if("CVaR_95" %in% names(var_data_val)) risk_df$`CVaR 95% (%)` <- var_data_val$CVaR_95
+                        if("vol" %in% names(var_data_val)) risk_df$`Volatility (%)` <- var_data_val$vol
 
                         writeData(wb, "Risk Metrics", risk_df, headerStyle = header_style)
                         setColWidths(wb, "Risk Metrics", cols = 1:ncol(risk_df), widths = "auto")
-
-                    }, error = function(e) {
-                        log_error(e, context = "excel_risk_metrics")
-                    })
-                }
-
-                incProgress(0.4, detail = "Auction History")
-
-                # 4. Auction History with safe filtering
-                if(!is.null(filtered_data()) && "bid_to_cover" %in% names(filtered_data())) {
-                    tryCatch({
-                        addWorksheet(wb, "Auction History")
-
-                        auction_history <- filtered_data() %>%
-                            filter(!is.na(bid_to_cover))
-
-                        if(nrow(auction_history) > 0) {
-                            auction_df <- data.frame(
-                                Date = auction_history$date,
-                                Bond = auction_history$bond
-                            )
-
-                            if("offer" %in% names(auction_history)) {
-                                auction_df$`Offer (R bn)` <- round(auction_history$offer/1e9, 2)
-                            }
-                            if("allocation" %in% names(auction_history)) {
-                                auction_df$`Allocation (R bn)` <- round(auction_history$allocation/1e9, 2)
-                            }
-                            if("bids" %in% names(auction_history)) {
-                                auction_df$`Bids (R bn)` <- round(auction_history$bids/1e9, 2)
-                            }
-                            auction_df$`Bid-to-Cover` <- auction_history$bid_to_cover
-
-                            auction_df <- auction_df %>% arrange(desc(Date))
-
-                            writeData(wb, "Auction History", auction_df, headerStyle = header_style)
-
-                            # Highlight strong auctions
-                            if("Bid-to-Cover" %in% names(auction_df)) {
-                                strongAuctions <- which(auction_df$`Bid-to-Cover` > 3)
-                                if(length(strongAuctions) > 0) {
-                                    addStyle(wb, "Auction History", highlight_style,
-                                             rows = strongAuctions + 1, cols = 1:ncol(auction_df),
-                                             gridExpand = TRUE)
-                                }
-                            }
-                        }
-
-                    }, error = function(e) {
-                        log_error(e, context = "excel_auction_history")
-                    })
-                }
+                    }
+                }, error = function(e) log_error(e, context = "excel_risk_metrics"))
 
                 incProgress(0.5, detail = "Carry & Roll")
 
-                # 5. Carry & Roll Analysis with validation
-                if(!is.null(carry_roll_data()) && nrow(carry_roll_data()) > 0) {
-                    tryCatch({
+                # 5. Carry & Roll Analysis
+                tryCatch({
+                    carry_data_val <- carry_roll_data()
+                    if(!is.null(carry_data_val) && nrow(carry_data_val) > 0) {
                         addWorksheet(wb, "Carry & Roll")
 
-                        carry_metrics <- carry_roll_data()
-                        carry_df <- data.frame(Bond = carry_metrics$bond)
-
-                        # Add available columns
+                        carry_df <- data.frame(Bond = carry_data_val$bond)
                         col_mapping <- list(
                             "holding_period" = "Holding Period",
                             "carry_income" = "Carry Income (%)",
@@ -12407,26 +12336,73 @@ server <- function(input, output, session) {
                             "net_return" = "Net Return (%)",
                             "return_per_unit_risk" = "Return/Risk"
                         )
-
                         for(col_name in names(col_mapping)) {
-                            if(col_name %in% names(carry_metrics)) {
-                                carry_df[[col_mapping[[col_name]]]] <- carry_metrics[[col_name]]
+                            if(col_name %in% names(carry_data_val)) {
+                                carry_df[[col_mapping[[col_name]]]] <- carry_data_val[[col_name]]
                             }
                         }
-
                         carry_df <- carry_df %>% arrange(Bond)
 
                         writeData(wb, "Carry & Roll", carry_df, headerStyle = header_style)
                         setColWidths(wb, "Carry & Roll", cols = 1:ncol(carry_df), widths = "auto")
+                    }
+                }, error = function(e) log_error(e, context = "excel_carry_roll"))
 
-                    }, error = function(e) {
-                        log_error(e, context = "excel_carry_roll")
-                    })
-                }
+                incProgress(0.6, detail = "Auction Data")
+
+                # 6. Auction Data
+                tryCatch({
+                    if(!is.null(filtered_data()) && "bid_to_cover" %in% names(filtered_data())) {
+                        auction_history <- filtered_data() %>%
+                            filter(!is.na(bid_to_cover))
+
+                        if(nrow(auction_history) > 0) {
+                            addWorksheet(wb, "Auction Data")
+
+                            auction_df <- data.frame(
+                                Date = auction_history$date,
+                                Bond = auction_history$bond
+                            )
+                            if("offer_amount" %in% names(auction_history)) auction_df$`Offer Amount` <- auction_history$offer_amount
+                            if("offer" %in% names(auction_history)) auction_df$`Offer (R bn)` <- round(auction_history$offer/1e9, 2)
+                            if("bids_received" %in% names(auction_history)) auction_df$`Bids Received` <- auction_history$bids_received
+                            if("bids" %in% names(auction_history)) auction_df$`Bids (R bn)` <- round(auction_history$bids/1e9, 2)
+                            auction_df$`Bid-to-Cover` <- auction_history$bid_to_cover
+                            if("yield" %in% names(auction_history)) auction_df$`Yield (%)` <- round(auction_history$yield, 4)
+
+                            auction_df <- auction_df %>% arrange(desc(Date))
+                            writeData(wb, "Auction Data", auction_df, headerStyle = header_style)
+                            setColWidths(wb, "Auction Data", cols = 1:ncol(auction_df), widths = "auto")
+
+                            # Highlight strong auctions
+                            strongAuctions <- which(auction_df$`Bid-to-Cover` > 3)
+                            if(length(strongAuctions) > 0) {
+                                addStyle(wb, "Auction Data", highlight_style,
+                                         rows = strongAuctions + 1, cols = 1:ncol(auction_df),
+                                         gridExpand = TRUE, stack = TRUE)
+                            }
+                        }
+                    }
+                }, error = function(e) log_error(e, context = "excel_auction_data"))
+
+                incProgress(0.7, detail = "Treasury Holdings")
+
+                # 7. Treasury Holdings (if available)
+                tryCatch({
+                    treasury_ts <- NULL
+                    if (!is.null(treasury_module_data) && !is.null(treasury_module_data$holdings_ts)) {
+                        treasury_ts <- treasury_module_data$holdings_ts()
+                    }
+                    if(!is.null(treasury_ts) && nrow(treasury_ts) > 0) {
+                        addWorksheet(wb, "Treasury Holdings")
+                        writeData(wb, "Treasury Holdings", treasury_ts, headerStyle = header_style)
+                        setColWidths(wb, "Treasury Holdings", cols = 1:ncol(treasury_ts), widths = "auto")
+                    }
+                }, error = function(e) log_error(e, context = "excel_treasury_holdings"))
 
                 incProgress(0.9, detail = "Metadata")
 
-                # 6. Metadata
+                # 8. Metadata
                 tryCatch({
                     addWorksheet(wb, "Metadata")
 
@@ -12448,7 +12424,7 @@ server <- function(input, output, session) {
                     log_error(e, context = "excel_metadata")
                 })
 
-                # Save workbook with error handling
+                # Save workbook
                 tryCatch({
                     saveWorkbook(wb, file, overwrite = TRUE)
                 }, error = function(e) {
@@ -12733,9 +12709,9 @@ $$Net Return = Carry + Roll - Funding Cost$$
                     writeLines(email_html, output_file)
 
                     showNotification(
-                        paste("Email content saved to:", output_file),
-                        type = "message",
-                        duration = 10
+                        "Email sending requires the 'blastula' package with SMTP configuration. The report has been generated as HTML -- use the HTML download button instead.",
+                        type = "warning",
+                        duration = 8
                     )
                 }
 
