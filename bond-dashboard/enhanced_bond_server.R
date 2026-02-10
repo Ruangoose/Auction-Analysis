@@ -11794,9 +11794,32 @@ server <- function(input, output, session) {
                 incProgress(0.5, detail = "Creating PDF")
 
                 tryCatch({
+                    # PRE-RENDER all ggplot charts to grobs BEFORE opening PDF device
+                    message("Pre-rendering charts to grobs...")
+                    chart_grobs <- list()
+                    for (name in names(charts)) {
+                        chart_obj <- charts[[name]]
+                        if ("ggplot" %in% class(chart_obj)) {
+                            tryCatch({
+                                temp_png <- tempfile(fileext = ".png")
+                                ggsave(temp_png, chart_obj, width = 10, height = 6, dpi = 150, bg = "white")
+                                chart_img <- png::readPNG(temp_png)
+                                chart_grobs[[name]] <- grid::rasterGrob(chart_img, interpolate = TRUE)
+                                unlink(temp_png)
+                                message(sprintf("  ✓ Pre-rendered: %s", name))
+                            }, error = function(e) {
+                                message(sprintf("  ✗ Failed to pre-render: %s (%s)", name, e$message))
+                                chart_grobs[[name]] <<- NULL  # Mark as failed
+                            })
+                        } else {
+                            chart_grobs[[name]] <- chart_obj  # Already a grob, keep as-is
+                        }
+                    }
+
                     pdf(temp_pdf, width = 11, height = 8.5)
 
                     # ENHANCED TITLE PAGE WITH LOGO
+                    tryCatch({
                     grid.newpage()
 
                     # Add logo at the top if available
@@ -11862,6 +11885,12 @@ server <- function(input, output, session) {
                         )
                         grid.draw(company_grob)
                     }
+                    }, error = function(e) {
+                        message(sprintf("Title page error: %s", e$message))
+                        grid.newpage()
+                        grid.text("SA Government Bond Analysis Report", x = 0.5, y = 0.5,
+                                  gp = gpar(fontsize = 24, fontface = 2, col = "#1B3A6B"))
+                    })
 
                     # ══════════════════════════════════════════════════════════════
                     # PAGE COUNTER INITIALIZATION
@@ -11872,7 +11901,7 @@ server <- function(input, output, session) {
                         if (s == "recommendations") return(1)
                         cs <- chart_sections_map[[s]]
                         if (is.null(cs)) return(0)
-                        sum(cs %in% names(charts))
+                        sum(vapply(cs, function(cn) !is.null(chart_grobs[[cn]]), logical(1)))
                     }))
                     total_pages <- 2 + length(config$sections) + total_chart_count + 1  # title + exec + dividers + charts + footer
 
@@ -11891,6 +11920,7 @@ server <- function(input, output, session) {
                     # EXECUTIVE SUMMARY PAGE - DASHBOARD STYLE
                     page_number <- page_number + 1
                     if(!is.null(summaries$executive)) {
+                        tryCatch({
                         grid.newpage()
 
                         # Add small logo in header
@@ -11969,6 +11999,13 @@ server <- function(input, output, session) {
                         }
 
                         add_page_number(page_number, total_pages)
+                        }, error = function(e) {
+                            message(sprintf("Executive summary page error: %s", e$message))
+                            grid.newpage()
+                            grid.text("Executive Summary", x = 0.5, y = 0.5,
+                                      gp = gpar(fontsize = 18, fontface = 2, col = "#1B3A6B"))
+                            add_page_number(page_number, total_pages)
+                        })
                     }
 
                     # Function to add header with logo to each page
@@ -12102,6 +12139,7 @@ server <- function(input, output, session) {
 
                         # ENHANCED SECTION DIVIDER PAGE (Priority 7)
                         page_number <- page_number + 1
+                        tryCatch({
                         grid.newpage()
 
                         # Logo top-right
@@ -12131,37 +12169,30 @@ server <- function(input, output, session) {
                         }
 
                         add_page_number(page_number, total_pages)
+                        }, error = function(e) {
+                            message(sprintf("Section divider page error (%s): %s", section, e$message))
+                            grid.newpage()
+                            grid.text(section_title, x = 0.5, y = 0.5,
+                                      gp = gpar(fontsize = 28, fontface = 2, col = "#1B3A6B"))
+                            add_page_number(page_number, total_pages)
+                        })
 
-                        # Render each chart in this section
+                        # Render each chart in this section using pre-rendered grobs
                         section_chart_names <- chart_sections_map[[section]]
                         if (!is.null(section_chart_names)) {
                             for (chart_name in section_chart_names) {
-                                if (!chart_name %in% names(charts) || is.null(charts[[chart_name]])) next
+                                if (!chart_name %in% names(chart_grobs)) next
+
+                                chart_grob <- chart_grobs[[chart_name]]
+                                if (is.null(chart_grob)) next  # Skip failed pre-renders
 
                                 page_number <- page_number + 1
-                                chart_obj <- charts[[chart_name]]
                                 tryCatch({
-                                    if ("ggplot" %in% class(chart_obj)) {
-                                        # Save ggplot to temp PNG, then compose page
-                                        temp_chart_png <- tempfile(fileext = ".png")
-                                        ggsave(temp_chart_png, chart_obj, width = 10, height = 6, dpi = 150, bg = "white")
-                                        chart_img <- png::readPNG(temp_chart_png)
-                                        chart_grob <- grid::rasterGrob(chart_img, interpolate = TRUE)
-                                        unlink(temp_chart_png)
-
-                                        grid.newpage()
-                                        add_page_header(gsub("_", " ", tools::toTitleCase(chart_name)))
-                                        pushViewport(viewport(x = 0.5, y = 0.45, width = 0.92, height = 0.82))
-                                        grid.draw(chart_grob)
-                                        popViewport()
-                                    } else {
-                                        # Grid objects render directly
-                                        grid.newpage()
-                                        add_page_header(gsub("_", " ", tools::toTitleCase(chart_name)))
-                                        pushViewport(viewport(x = 0.5, y = 0.45, width = 0.9, height = 0.85))
-                                        grid.draw(chart_obj)
-                                        popViewport()
-                                    }
+                                    grid.newpage()
+                                    add_page_header(gsub("_", " ", tools::toTitleCase(chart_name)))
+                                    pushViewport(viewport(x = 0.5, y = 0.45, width = 0.92, height = 0.82))
+                                    grid.draw(chart_grob)
+                                    popViewport()
                                     add_page_number(page_number, total_pages)
                                 }, error = function(e) {
                                     grid.newpage()
@@ -12177,6 +12208,7 @@ server <- function(input, output, session) {
 
                     # FOOTER PAGE WITH LOGO
                     page_number <- page_number + 1
+                    tryCatch({
                     grid.newpage()
 
                     # Add logo at bottom
@@ -12197,6 +12229,12 @@ server <- function(input, output, session) {
                     )
                     grid.draw(footer_grob)
                     add_page_number(page_number, total_pages)
+                    }, error = function(e) {
+                        message(sprintf("Footer page error: %s", e$message))
+                        grid.newpage()
+                        grid.text("© Insele Capital Partners", x = 0.5, y = 0.5,
+                                  gp = gpar(fontsize = 10, col = "#666666"))
+                    })
 
                     dev.off()
 
@@ -12212,7 +12250,12 @@ server <- function(input, output, session) {
                     }
 
                 }, error = function(e) {
-                    dev.off()
+                    message("═══ PDF GENERATION ERROR ═══")
+                    message(paste("Error:", e$message))
+                    message(paste("Call:", deparse(e$call)))
+                    message("═══════════════════════════")
+                    # Close ALL open devices to reset the stack
+                    while (dev.cur() > 1) { try(dev.off(), silent = TRUE) }
                     log_error(e, context = "pdf_generation")
                     # Create minimal PDF as fallback
                     pdf(file, width = 11, height = 8.5)
