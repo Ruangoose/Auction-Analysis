@@ -94,10 +94,15 @@ validate_data_before_cache <- function(df) {
   placeholder_ytm_count <- sum(abs(df$yield_to_maturity - 1.0) < 0.01, na.rm = TRUE)
   checks$no_placeholder_ytm <- placeholder_ytm_count == 0
 
-  # Check 2: No placeholder duration values (exactly 1.0 or 0.0)
+  # Check 2: No placeholder duration values — only check active (non-matured) bonds
+  # Matured bonds legitimately have near-zero duration; short-dated bonds can have ModDur < 1.0
+  active_mask <- if ("mature_date" %in% names(df)) {
+    is.na(df$mature_date) | df$mature_date >= Sys.Date()
+  } else {
+    rep(TRUE, nrow(df))
+  }
   placeholder_dur_count <- sum(
-    abs(df$modified_duration - 1.0) < 0.01 |
-    abs(df$modified_duration) < 0.01,
+    active_mask & (abs(df$modified_duration) < 0.05),
     na.rm = TRUE
   )
   checks$no_placeholder_dur <- placeholder_dur_count == 0
@@ -137,8 +142,8 @@ validate_data_before_cache <- function(df) {
       message("    Bonds with YTM=1.0%: ", paste(bad, collapse = ", "))
     }
     if (!checks$no_placeholder_dur) {
-      bad <- unique(df$bond[abs(df$modified_duration - 1.0) < 0.01 | abs(df$modified_duration) < 0.01])
-      message("    Bonds with ModDur=0 or 1: ", paste(bad, collapse = ", "))
+      bad <- unique(df$bond[active_mask & (abs(df$modified_duration) < 0.05)])
+      message("    Active bonds with ModDur near 0: ", paste(bad, collapse = ", "))
     }
 
     stop(paste0(
