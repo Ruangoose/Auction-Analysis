@@ -578,20 +578,22 @@ generate_var_distribution_plot <- function(data, params = list()) {
     # MINIMUM VARIANCE THRESHOLD FOR DENSITY ESTIMATION
     # Bonds with near-zero return variance (ultra-short duration) produce
     # degenerate kernel density estimates that crash ggridges' findInterval().
-    # Filter these out before density estimation.
+    # Use an adaptive threshold: bonds with sd < 10% of median sd are excluded.
     # =========================================================================
-    min_variance_for_density <- 0.01  # Minimum sd of scaled_return (in %)
     bond_variance <- returns_data %>%
         group_by(bond) %>%
         summarise(ret_sd = sd(scaled_return, na.rm = TRUE), .groups = "drop")
+
+    median_sd <- median(bond_variance$ret_sd, na.rm = TRUE)
+    min_variance_for_density <- max(0.05, median_sd * 0.10)  # At least 0.05%, or 10% of median
 
     low_variance_bonds <- bond_variance %>%
         filter(is.na(ret_sd) | ret_sd < min_variance_for_density) %>%
         pull(bond)
 
     if (length(low_variance_bonds) > 0) {
-        message(sprintf("[VaR Distribution] Excluding %d bond(s) with near-zero return variance (sd < %.2f%%): %s",
-                        length(low_variance_bonds), min_variance_for_density,
+        message(sprintf("[VaR Distribution] Excluding %d bond(s) with near-zero return variance (sd < %.3f%%, median sd = %.3f%%): %s",
+                        length(low_variance_bonds), min_variance_for_density, median_sd,
                         paste(low_variance_bonds, collapse = ", ")))
         returns_data <- returns_data %>%
             filter(!bond %in% low_variance_bonds)
@@ -1226,80 +1228,83 @@ generate_var_distribution_plot <- function(data, params = list()) {
     use_ridgeline <- requireNamespace("ggridges", quietly = TRUE)
 
     if (use_ridgeline) {
-        ridgeline_failed <- FALSE
+        p <- tryCatch({
+            # Order bonds by 95% VaR (highest risk at top)
+            var_order <- var_levels %>%
+                arrange(VaR_95) %>%
+                pull(bond)
+            returns_data$bond_ridge <- factor(returns_data$bond, levels = var_order)
 
-        p <- withCallingHandlers(
-            tryCatch({
-                # Order bonds by 95% VaR (highest risk at top)
-                var_order <- var_levels %>%
-                    arrange(VaR_95) %>%
-                    pull(bond)
-                returns_data$bond_ridge <- factor(returns_data$bond, levels = var_order)
+            # Prepare VaR line data with matching factor levels
+            var_segments <- var_levels %>%
+                mutate(bond_ridge = factor(bond, levels = var_order))
 
-                # Dynamic x-axis limits based on actual return data range
-                return_range <- range(returns_data$scaled_return, na.rm = TRUE)
-                x_limit <- max(abs(return_range)) * 1.3  # 30% buffer beyond data range
-                x_limit <- max(x_limit, 0.5)  # Minimum +/-0.5% to avoid degenerate axis
+            # Dynamic x-axis limits based on actual return data range
+            return_range <- range(returns_data$scaled_return, na.rm = TRUE)
+            x_limit <- max(abs(return_range)) * 1.3  # 30% buffer beyond data range
+            x_limit <- max(x_limit, 0.5)  # Minimum +/-0.5% to avoid degenerate axis
 
-                p_ridge <- ggplot(returns_data, aes(x = scaled_return, y = bond_ridge, fill = after_stat(x))) +
-                    ggridges::geom_density_ridges_gradient(
-                        scale = 2.5,
-                        rel_min_height = 0.005,
-                        gradient_lwd = 0.3,
-                        quantile_lines = TRUE,
-                        quantiles = c(0.05, 0.01)
-                    ) +
-                    scale_fill_viridis_c(option = "C", name = "Return (%)") +
-                    geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
-                    scale_x_continuous(
-                        labels = scales::percent_format(accuracy = 0.1, scale = 1),
-                        limits = c(-x_limit, x_limit)
-                    ) +
-                    labs(
-                        title = "Value-at-Risk Distribution by Bond",
-                        subtitle = paste0("Ordered by 95% VaR | Quantile lines show 95% and 99% VaR thresholds | ",
-                                          str_to_title(method), " method | ", horizon_days, "-day horizon"),
-                        x = "Daily Return (%)",
-                        y = NULL,
-                        caption = sprintf(
-                            "Returns calculated using modified duration and convexity | %d active bonds",
-                            n_bonds
-                        )
-                    ) +
-                    create_insele_theme() +
-                    theme(
-                        axis.text.y = element_text(size = 9, face = "bold"),
-                        legend.position = "bottom",
-                        plot.title = element_text(face = "bold", color = insele_palette$primary),
-                        plot.caption = element_text(
-                            hjust = 0, size = 8, lineheight = 1.2,
-                            margin = ggplot2::margin(t = 10, r = 0, b = 0, l = 0, unit = "pt")
-                        ),
-                        panel.grid.minor = element_blank()
+            p_ridge <- ggplot(returns_data, aes(x = scaled_return, y = bond_ridge, fill = after_stat(x))) +
+                ggridges::geom_density_ridges_gradient(
+                    scale = 2.5,
+                    rel_min_height = 0.005,
+                    gradient_lwd = 0.3
+                    # quantile_lines removed: triggers findInterval() crash on low-variance bonds
+                ) +
+                # Add VaR reference lines from precomputed var_levels (no findInterval)
+                geom_segment(
+                    data = var_segments,
+                    aes(x = VaR_95, xend = VaR_95,
+                        y = as.numeric(bond_ridge) - 0.3,
+                        yend = as.numeric(bond_ridge) + 0.3),
+                    color = "#FF9800", linetype = "dashed", linewidth = 0.8,
+                    inherit.aes = FALSE
+                ) +
+                geom_segment(
+                    data = var_segments,
+                    aes(x = VaR_99, xend = VaR_99,
+                        y = as.numeric(bond_ridge) - 0.3,
+                        yend = as.numeric(bond_ridge) + 0.3),
+                    color = "#D32F2F", linetype = "solid", linewidth = 0.8,
+                    inherit.aes = FALSE
+                ) +
+                scale_fill_viridis_c(option = "C", name = "Return (%)") +
+                geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
+                scale_x_continuous(
+                    labels = scales::percent_format(accuracy = 0.1, scale = 1),
+                    limits = c(-x_limit, x_limit)
+                ) +
+                labs(
+                    title = "Value-at-Risk Distribution by Bond",
+                    subtitle = paste0("Ordered by 95% VaR | Orange dashed = 95% VaR | Red solid = 99% VaR | ",
+                                      str_to_title(method), " method | ", horizon_days, "-day horizon"),
+                    x = "Daily Return (%)",
+                    y = NULL,
+                    caption = sprintf(
+                        "Returns calculated using modified duration and convexity | %d active bonds",
+                        n_bonds
                     )
+                ) +
+                create_insele_theme() +
+                theme(
+                    axis.text.y = element_text(size = 9, face = "bold"),
+                    legend.position = "bottom",
+                    plot.title = element_text(face = "bold", color = insele_palette$primary),
+                    plot.caption = element_text(
+                        hjust = 0, size = 8, lineheight = 1.2,
+                        margin = ggplot2::margin(t = 10, r = 0, b = 0, l = 0, unit = "pt")
+                    ),
+                    panel.grid.minor = element_blank()
+                )
 
-                # Force ggplot to build the plot (triggers stat_density_ridges
-                # computation). Without this, warnings only surface at render time.
-                ggplot2::ggplot_build(p_ridge)
+            p_ridge
+        }, error = function(e) {
+            warning(sprintf("[VaR Distribution] Ridgeline construction error: %s", e$message))
+            use_ridgeline <<- FALSE
+            NULL
+        })
 
-                p_ridge  # return the successful plot
-            }, error = function(e) {
-                ridgeline_failed <<- TRUE
-                warning(sprintf("[VaR Distribution] Ridgeline error: %s", e$message))
-                NULL
-            }),
-            warning = function(w) {
-                if (grepl("stat_density_ridges|findInterval", conditionMessage(w))) {
-                    ridgeline_failed <<- TRUE
-                    invokeRestart("muffleWarning")
-                }
-            }
-        )
-
-        if (ridgeline_failed || is.null(p)) {
-            message("[VaR Distribution] Ridgeline plot failed, falling back to faceted histogram")
-            use_ridgeline <- FALSE
-        }
+        if (is.null(p)) use_ridgeline <- FALSE
     }
 
     if (!use_ridgeline) {

@@ -2544,7 +2544,24 @@ server <- function(input, output, session) {
     output$var_distribution_plot <- renderPlot({
         req(var_distribution_results())
         p <- var_distribution_results()$plot
-        if(!is.null(p)) print(p)
+        if (!is.null(p)) {
+            render_failed <- FALSE
+            withCallingHandlers(
+                print(p),
+                warning = function(w) {
+                    if (grepl("stat_density_ridges|findInterval", conditionMessage(w))) {
+                        render_failed <<- TRUE
+                        invokeRestart("muffleWarning")
+                    }
+                }
+            )
+            if (render_failed) {
+                message("[VaR Distribution] Ridgeline render failed, showing fallback message")
+                plot.new()
+                text(0.5, 0.5, "Ridgeline plot unavailable.\nPlease see the Risk Ladder for VaR data.",
+                     cex = 1.2, col = "#666666")
+            }
+        }
     })
 
     # 5. VaR Ladder Plot - uses SAME filtered data as distribution plot
