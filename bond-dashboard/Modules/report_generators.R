@@ -148,9 +148,9 @@ collect_report_charts <- function(processed_data, filtered_data, filtered_data_w
             },
             # ✨ Butterfly Spread Analyzer
             butterfly_spread = function() {
-                if(!is.null(processed_data) && nrow(processed_data) > 0) {
+                if(!is.null(filtered_data) && nrow(filtered_data) > 0) {
                     # Calculate butterfly spreads
-                    butterflies <- calculate_butterfly_spreads(processed_data, lookback_days = 365)
+                    butterflies <- calculate_butterfly_spreads(filtered_data, lookback_days = 365)
                     if(!is.null(butterflies) && length(butterflies) > 0) {
                         # Get the top butterfly by absolute Z-Score
                         top_bf_name <- names(butterflies)[which.max(sapply(butterflies, function(x) abs(x$z_score)))]
@@ -351,7 +351,10 @@ collect_report_charts <- function(processed_data, filtered_data, filtered_data_w
                     )
                 } else { NULL }
             }
-        )
+        ),
+
+        # Recommendations section (text-only, no charts)
+        recommendations = list()
     )
 
     # ══════════════════════════════════════════════════════════════════════
@@ -735,9 +738,9 @@ generate_report_summaries <- function(processed_data, filtered_data, var_data, r
 
         # Technical Analysis summary
         summaries$technical_summary <- tryCatch({
-            if (!is.null(filtered_data) && "yield" %in% names(filtered_data)) {
+            if (!is.null(filtered_data) && nrow(filtered_data) > 0) {
                 n_bonds <- length(unique(filtered_data$bond))
-                sprintf("Technical analysis covers %d bonds with RSI, MACD, and Bollinger Band indicators applied to yield time series.", n_bonds)
+                sprintf("Technical analysis across %d bonds using RSI, MACD, Bollinger Bands, and momentum indicators.", n_bonds)
             } else {
                 "Technical indicators being calculated."
             }
