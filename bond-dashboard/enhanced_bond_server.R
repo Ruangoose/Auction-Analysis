@@ -10285,6 +10285,45 @@ server <- function(input, output, session) {
 
 
     # ================================================================================
+    # PRE-AUCTION REPORT: Populate auction bond selector dynamically
+    # ================================================================================
+    observe({
+        req(filtered_data())
+        auction_bonds <- filtered_data() %>%
+            filter(!is.na(bid_to_cover)) %>%
+            pull(bond) %>%
+            unique() %>%
+            sort()
+        updateSelectizeInput(session, "auction_report_bonds", choices = auction_bonds)
+    })
+
+    # Quick-select: "Next Auction" — auto-selects top 3 bonds with most recent auction activity
+    observeEvent(input$btn_next_auction, {
+        req(filtered_data())
+        recent_bonds <- filtered_data() %>%
+            filter(!is.na(bid_to_cover)) %>%
+            group_by(bond) %>%
+            summarise(last_auction = max(date, na.rm = TRUE), .groups = "drop") %>%
+            arrange(desc(last_auction)) %>%
+            head(3) %>%
+            pull(bond)
+        updateSelectizeInput(session, "auction_report_bonds", selected = recent_bonds)
+    })
+
+    # Quick-select: "Following Auction" — selects bonds ranked 4-6 by most recent auction activity
+    observeEvent(input$btn_following_auction, {
+        req(filtered_data())
+        following_bonds <- filtered_data() %>%
+            filter(!is.na(bid_to_cover)) %>%
+            group_by(bond) %>%
+            summarise(last_auction = max(date, na.rm = TRUE), .groups = "drop") %>%
+            arrange(desc(last_auction)) %>%
+            slice(4:6) %>%
+            pull(bond)
+        updateSelectizeInput(session, "auction_report_bonds", selected = following_bonds)
+    })
+
+    # ================================================================================
     # SHARED REPORT CONFIGURATION REACTIVE
     # ================================================================================
     report_config <- reactive({
@@ -10339,14 +10378,29 @@ server <- function(input, output, session) {
             tech_indicator_type = input$tech_indicator_type
         )
 
+        # Pre-auction specific config
+        pre_auction_bonds <- if (input$report_type == "pre_auction") {
+            input$auction_report_bonds
+        } else {
+            NULL
+        }
+
+        auction_date <- if (input$report_type == "pre_auction") {
+            input$auction_report_date
+        } else {
+            NULL
+        }
+
         list(
             sections = sections,
             selected_plots = selected_plots,
             input_params = input_params,
             report_title = input$report_title %||% paste("SA Government Bond Analysis -", format(Sys.Date(), "%B %Y")),
             report_type = input$report_type %||% "executive",
-            client_name = input$client_name %||% "",
-            report_date = input$report_date %||% Sys.Date()
+            client_name = input$auction_report_client %||% input$client_name %||% "",
+            report_date = input$report_date %||% Sys.Date(),
+            pre_auction_bonds = pre_auction_bonds,
+            auction_date = auction_date
         )
     })
 
@@ -10412,6 +10466,60 @@ server <- function(input, output, session) {
     # Report Preview - Enhanced with individual plot selection
     output$report_preview_content <- renderUI({
         config <- report_config()
+
+        # Pre-Auction Report custom preview
+        if (config$report_type == "pre_auction") {
+            auction_bonds <- config$pre_auction_bonds
+            auction_date <- config$auction_date
+
+            pre_auction_sections <- c(
+                "1. Cover Page",
+                "2. Bond Snapshot",
+                "3. Auction Performance History",
+                "4. Historical Patterns",
+                "5. Supply & Demand",
+                "6. Forecast & Sentiment"
+            )
+
+            return(tagList(
+                tags$div(
+                    style = "background: white; padding: 15px; border-radius: 8px; border: 2px solid #1B3A6B;",
+                    h5(HTML("&#128203; Pre-Auction Report Preview"), style = "color: #1B3A6B; margin-top: 0;"),
+                    tags$div(
+                        style = "display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;",
+                        tags$div(
+                            tags$strong("Auction Date: "),
+                            tags$span(
+                                if (!is.null(auction_date)) format(auction_date, "%A, %B %d, %Y") else "Not set",
+                                style = "color: #1B3A6B; font-weight: bold;"
+                            )
+                        ),
+                        tags$div(
+                            tags$strong("Bonds: "),
+                            tags$span(
+                                if (!is.null(auction_bonds) && length(auction_bonds) > 0)
+                                    paste(auction_bonds, collapse = ", ")
+                                else
+                                    "None selected",
+                                style = sprintf("color: %s; font-weight: bold;",
+                                                if (!is.null(auction_bonds) && length(auction_bonds) > 0) "#28a745" else "#dc3545")
+                            )
+                        )
+                    ),
+                    tags$div(
+                        style = "background: #f8f9fa; padding: 10px; border-radius: 5px;",
+                        tags$strong("Report Structure (6 pages):"),
+                        tags$ul(
+                            style = "margin-top: 10px; margin-bottom: 0;",
+                            lapply(pre_auction_sections, function(s) {
+                                tags$li(s, style = "color: #333;")
+                            })
+                        )
+                    )
+                )
+            ))
+        }
+
         sections <- config$sections
         selected_plots_flags <- config$selected_plots
 
@@ -11703,7 +11811,11 @@ server <- function(input, output, session) {
     # Replace the existing output$generate_pdf_report with this:
     output$generate_pdf_report <- downloadHandler(
         filename = function() {
-            paste0("insele_bond_report_", format(input$report_date, "%Y%m%d"), ".pdf")
+            if (input$report_type == "pre_auction") {
+                paste0("insele_pre_auction_report_", format(input$auction_report_date %||% Sys.Date(), "%Y%m%d"), ".pdf")
+            } else {
+                paste0("insele_bond_report_", format(input$report_date, "%Y%m%d"), ".pdf")
+            }
         },
         content = function(file) {
             withProgress(message = "Generating PDF report...", value = 0, {
@@ -11733,6 +11845,31 @@ server <- function(input, output, session) {
                 # Use shared report configuration and data collector
                 config <- report_config()
                 report_data <- collect_report_data()
+
+                # Pre-Auction Report validation
+                if (config$report_type == "pre_auction") {
+                    auction_bonds <- config$pre_auction_bonds
+                    if (is.null(auction_bonds) || length(auction_bonds) == 0) {
+                        showModal(modalDialog(
+                            title = tags$div(icon("exclamation-triangle"), " Select Auction Bonds",
+                                            style = "color: #E53935;"),
+                            tags$p("Please select the bonds on offer for this week's auction before generating the Pre-Auction Report."),
+                            tags$p("Go to the report configuration panel and select bonds under 'Bonds on Auction'."),
+                            easyClose = TRUE,
+                            footer = modalButton("OK")
+                        ))
+                        return(NULL)
+                    }
+                    # Generate Pre-Auction PDF using dedicated function
+                    incProgress(0.5, detail = "Generating Pre-Auction PDF")
+                    generate_pre_auction_pdf(
+                        file, config, report_data$filt_data, report_data$proc_data,
+                        report_data$carry_data_val, logo_grob
+                    )
+                    incProgress(1, detail = "Complete")
+                    showNotification("Pre-Auction PDF report generated successfully", type = "message")
+                    return(invisible(NULL))
+                }
 
                 proc_data <- report_data$proc_data
                 filt_data <- report_data$filt_data
@@ -12317,7 +12454,12 @@ server <- function(input, output, session) {
     # HTML Report Generation
     output$generate_html_report <- downloadHandler(
         filename = function() {
-            paste0("insele_bond_report_", format(report_config()$report_date, "%Y%m%d"), ".html")
+            config <- report_config()
+            if (config$report_type == "pre_auction") {
+                paste0("insele_pre_auction_report_", format(config$auction_date %||% Sys.Date(), "%Y%m%d"), ".html")
+            } else {
+                paste0("insele_bond_report_", format(config$report_date, "%Y%m%d"), ".html")
+            }
         },
         content = function(file) {
             withProgress(message = "Generating HTML report...", value = 0, {
@@ -12327,6 +12469,31 @@ server <- function(input, output, session) {
                 # Use shared report configuration and data collector
                 config <- report_config()
                 report_data <- collect_report_data()
+
+                # Pre-Auction Report validation and branch
+                if (config$report_type == "pre_auction") {
+                    auction_bonds <- config$pre_auction_bonds
+                    if (is.null(auction_bonds) || length(auction_bonds) == 0) {
+                        showModal(modalDialog(
+                            title = tags$div(icon("exclamation-triangle"), " Select Auction Bonds",
+                                            style = "color: #E53935;"),
+                            tags$p("Please select the bonds on offer for this week's auction before generating the Pre-Auction Report."),
+                            tags$p("Go to the report configuration panel and select bonds under 'Bonds on Auction'."),
+                            easyClose = TRUE,
+                            footer = modalButton("OK")
+                        ))
+                        return(NULL)
+                    }
+                    incProgress(0.5, detail = "Generating Pre-Auction HTML")
+                    html_content <- create_pre_auction_html_report(
+                        config, report_data$filt_data, report_data$proc_data,
+                        report_data$carry_data_val
+                    )
+                    writeLines(html_content, file)
+                    incProgress(1, detail = "Complete")
+                    showNotification("Pre-Auction HTML report generated successfully", type = "message")
+                    return(invisible(NULL))
+                }
 
                 incProgress(0.2, detail = "Collecting charts")
 

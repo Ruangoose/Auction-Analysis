@@ -1578,3 +1578,706 @@ plot_to_base64 <- function(plot, width = 8, height = 6, dpi = 100) {
         return(NULL)
     })
 }
+
+
+# ================================================================================
+# PRE-AUCTION REPORT FUNCTIONS
+# ================================================================================
+
+#' @export
+#' Generate bond snapshot table for pre-auction report
+#' @param data Filtered bond data
+#' @param auction_bonds Character vector of bond names on auction
+#' @return Data frame with latest metrics for each auction bond
+generate_bond_snapshot_table <- function(data, auction_bonds) {
+    snapshot <- data %>%
+        filter(bond %in% auction_bonds) %>%
+        group_by(bond) %>%
+        filter(date == max(date, na.rm = TRUE)) %>%
+        slice_head(n = 1) %>%
+        ungroup()
+
+    # Use any_of() for safe column selection
+    col_map <- c(
+        "Bond" = "bond",
+        "Coupon (%)" = "coupon",
+        "YTM (%)" = "yield_to_maturity",
+        "Mod Duration" = "modified_duration",
+        "Convexity" = "convexity",
+        "BPV" = "dv01",
+        "Clean Price" = "clean_price",
+        "Accrued Int" = "accrued_interest",
+        "Full Price" = "full_price"
+    )
+
+    available_cols <- col_map[col_map %in% names(snapshot)]
+    snapshot <- snapshot %>%
+        select(any_of(unname(available_cols)))
+
+    # Rename to display names
+    for (display_name in names(available_cols)) {
+        col_name <- available_cols[[display_name]]
+        if (col_name %in% names(snapshot)) {
+            names(snapshot)[names(snapshot) == col_name] <- display_name
+        }
+    }
+
+    snapshot <- snapshot %>%
+        mutate(across(where(is.numeric), ~round(., 4)))
+
+    return(snapshot)
+}
+
+#' @export
+#' Generate auction forecast table using ARIMA predictions
+#' @param data Filtered bond data
+#' @param auction_bonds Character vector of bond names on auction
+#' @return Data frame with forecast metrics for each auction bond
+generate_auction_forecast_table <- function(data, auction_bonds) {
+    forecasts <- lapply(auction_bonds, function(bond_name) {
+        pred <- tryCatch(
+            predict_btc_arima(data, bond_name),
+            error = function(e) list(
+                forecast = NA, lower_80 = NA, upper_80 = NA,
+                lower_95 = NA, upper_95 = NA, confidence = "N/A"
+            )
+        )
+
+        hist_avg <- mean(data$bid_to_cover[data$bond == bond_name], na.rm = TRUE)
+        last_btc_vals <- na.omit(data$bid_to_cover[data$bond == bond_name & !is.na(data$bid_to_cover)])
+        last_btc <- if (length(last_btc_vals) > 0) tail(last_btc_vals, 1) else NA
+
+        data.frame(
+            Bond = bond_name,
+            `Predicted BTC` = round(pred$forecast %||% NA, 2),
+            `80% CI` = sprintf("[%.2f, %.2f]", pred$lower_80 %||% NA, pred$upper_80 %||% NA),
+            `95% CI` = sprintf("[%.2f, %.2f]", pred$lower_95 %||% NA, pred$upper_95 %||% NA),
+            Confidence = pred$confidence %||% "N/A",
+            `Hist Avg` = round(hist_avg, 2),
+            `Last BTC` = round(last_btc, 2),
+            check.names = FALSE,
+            stringsAsFactors = FALSE
+        )
+    })
+
+    do.call(rbind, forecasts)
+}
+
+#' @export
+#' Generate Pre-Auction PDF Report
+#' @param file Output file path
+#' @param config Report configuration list (from report_config())
+#' @param filtered_data Filtered bond data
+#' @param processed_data Processed bond data (latest snapshot per bond)
+#' @param carry_data Carry and roll return data
+#' @param logo_grob Grid graphics object for logo (or NULL)
+generate_pre_auction_pdf <- function(file, config, filtered_data, processed_data,
+                                     carry_data, logo_grob) {
+    require(gridExtra)
+    require(grid)
+
+    temp_dir <- tempdir()
+    temp_pdf <- file.path(temp_dir, paste0("pre_auction_", Sys.getpid(), ".pdf"))
+    total_pages <- 6
+    auction_bonds <- config$pre_auction_bonds
+    auction_date <- config$auction_date %||% Sys.Date()
+    client_name <- config$client_name %||% ""
+
+    # Helper: add footer to each page
+    add_footer <- function(page_num, total) {
+        grid.text(
+            sprintf("(c) %s Insele Capital Partners - Confidential", format(Sys.Date(), "%Y")),
+            x = 0.5, y = 0.02,
+            gp = gpar(fontsize = 8, col = "#999999")
+        )
+        grid.text(
+            sprintf("Page %d of %d", page_num, total),
+            x = 0.95, y = 0.02,
+            gp = gpar(fontsize = 8, col = "#999999")
+        )
+    }
+
+    # ══════════════════════════════════════════════════════════════════
+    # PRE-RENDER all plots to grobs BEFORE opening PDF device
+    # ══════════════════════════════════════════════════════════════════
+    message("[PRE-AUCTION PDF] Pre-rendering plots...")
+
+    # Helper to safely render a ggplot to a rasterGrob
+    safe_render_plot <- function(plot_expr, label = "plot") {
+        tryCatch({
+            p <- eval(plot_expr)
+            if (is.null(p)) return(NULL)
+            if ("ggplot" %in% class(p)) {
+                temp_png <- tempfile(fileext = ".png")
+                on.exit(unlink(temp_png), add = TRUE)
+                ggsave(temp_png, p, width = 10, height = 6, dpi = 150, bg = "white")
+                img <- png::readPNG(temp_png)
+                return(grid::rasterGrob(img, interpolate = TRUE))
+            } else if ("grob" %in% class(p) || "gtable" %in% class(p)) {
+                return(p)
+            } else {
+                return(NULL)
+            }
+        }, error = function(e) {
+            message(sprintf("[PRE-AUCTION PDF] Failed to render %s: %s", label, e$message))
+            return(NULL)
+        })
+    }
+
+    # Page 3: Auction Performance History
+    auction_perf_grob <- safe_render_plot(
+        quote(generate_enhanced_auction_analytics(filtered_data, list(selected_bonds = auction_bonds))),
+        "auction_performance"
+    )
+
+    # Page 4: Historical Patterns
+    auction_patterns_grob <- safe_render_plot(
+        quote(generate_auction_pattern_analysis(filtered_data, list(), selected_bonds = auction_bonds)),
+        "auction_patterns"
+    )
+
+    # Page 5: Supply & Demand - Bid Distribution
+    bid_dist_grob <- safe_render_plot(
+        quote(generate_bid_distribution_plot(filtered_data, list(), selected_bonds = auction_bonds)),
+        "bid_distribution"
+    )
+
+    # Page 5: YTD Bond Issuance
+    ytd_issuance_grob <- safe_render_plot(
+        quote(generate_ytd_bond_issuance_chart(filtered_data, list())),
+        "ytd_issuance"
+    )
+
+    # Page 6: Sentiment gauge
+    sentiment_grob <- safe_render_plot(
+        quote(generate_auction_sentiment_gauge(filtered_data, list())),
+        "sentiment_gauge"
+    )
+
+    # Page 2: Bond Snapshot Table
+    snapshot_tbl <- tryCatch({
+        # Use filtered_data primarily, fall back to processed_data
+        tbl_data <- if (!is.null(filtered_data) && nrow(filtered_data) > 0) {
+            filtered_data
+        } else if (!is.null(processed_data) && nrow(processed_data) > 0) {
+            processed_data
+        } else {
+            NULL
+        }
+
+        if (!is.null(tbl_data)) {
+            generate_bond_snapshot_table(tbl_data, auction_bonds)
+        } else {
+            NULL
+        }
+    }, error = function(e) {
+        message(sprintf("[PRE-AUCTION PDF] Snapshot table error: %s", e$message))
+        NULL
+    })
+
+    # Page 6: Forecast Table
+    forecast_tbl <- tryCatch({
+        if (!is.null(filtered_data) && nrow(filtered_data) > 0) {
+            generate_auction_forecast_table(filtered_data, auction_bonds)
+        } else {
+            NULL
+        }
+    }, error = function(e) {
+        message(sprintf("[PRE-AUCTION PDF] Forecast table error: %s", e$message))
+        NULL
+    })
+
+    message("[PRE-AUCTION PDF] Pre-rendering complete. Opening PDF device...")
+
+    # ══════════════════════════════════════════════════════════════════
+    # GENERATE PDF
+    # ══════════════════════════════════════════════════════════════════
+    tryCatch({
+        pdf(temp_pdf, width = 11, height = 8.5)
+
+        # ─── PAGE 1: COVER ─────────────────────────────────────────
+        grid.newpage()
+
+        # Background header bar
+        grid.rect(x = 0.5, y = 0.92, width = 1, height = 0.16,
+                  gp = gpar(fill = "#1B3A6B", col = NA))
+
+        # Logo
+        if (!is.null(logo_grob)) {
+            pushViewport(viewport(x = 0.5, y = 0.92, width = 0.2, height = 0.12))
+            grid.draw(logo_grob)
+            popViewport()
+        }
+
+        # Title
+        grid.text("Weekly Auction Preview",
+                  x = 0.5, y = 0.72,
+                  gp = gpar(fontsize = 28, fontface = "bold", col = "#1B3A6B"))
+
+        # Auction Date
+        grid.text(format(auction_date, "%A, %B %d, %Y"),
+                  x = 0.5, y = 0.63,
+                  gp = gpar(fontsize = 18, col = "#555555"))
+
+        # Bonds
+        grid.text(paste("Bonds on Auction:", paste(auction_bonds, collapse = ", ")),
+                  x = 0.5, y = 0.54,
+                  gp = gpar(fontsize = 14, col = "#333333"))
+
+        # Client
+        if (nchar(client_name) > 0) {
+            grid.text(paste("Prepared for:", client_name),
+                      x = 0.5, y = 0.46,
+                      gp = gpar(fontsize = 13, col = "#666666"))
+        }
+
+        # Company line
+        grid.text("Prepared by Insele Capital Partners - Broking Services",
+                  x = 0.5, y = 0.36,
+                  gp = gpar(fontsize = 12, fontface = "italic", col = "#1B3A6B"))
+
+        # Date generated
+        grid.text(paste("Generated:", format(Sys.Date(), "%B %d, %Y")),
+                  x = 0.5, y = 0.28,
+                  gp = gpar(fontsize = 11, col = "#999999"))
+
+        # Footer bar
+        grid.rect(x = 0.5, y = 0.04, width = 1, height = 0.06,
+                  gp = gpar(fill = "#1B3A6B", col = NA))
+        grid.text("INSELE CAPITAL PARTNERS",
+                  x = 0.5, y = 0.04,
+                  gp = gpar(fontsize = 10, col = "white", fontface = "bold"))
+
+        add_footer(1, total_pages)
+
+        # ─── PAGE 2: BOND SNAPSHOT TABLE ───────────────────────────
+        grid.newpage()
+
+        # Page header
+        grid.rect(x = 0.5, y = 0.96, width = 1, height = 0.06,
+                  gp = gpar(fill = "#1B3A6B", col = NA))
+        grid.text("Bond Snapshot - Current Market Data",
+                  x = 0.5, y = 0.96,
+                  gp = gpar(fontsize = 16, fontface = "bold", col = "white"))
+
+        if (!is.null(snapshot_tbl) && nrow(snapshot_tbl) > 0) {
+            tryCatch({
+                # Style the table
+                theme_tbl <- ttheme_default(
+                    core = list(
+                        bg_params = list(
+                            fill = rep(c("white", "#f0f4f8"), length.out = nrow(snapshot_tbl))
+                        ),
+                        fg_params = list(fontsize = 10)
+                    ),
+                    colhead = list(
+                        bg_params = list(fill = "#1B3A6B"),
+                        fg_params = list(col = "white", fontsize = 10, fontface = "bold")
+                    )
+                )
+                tbl_grob <- tableGrob(snapshot_tbl, rows = NULL, theme = theme_tbl)
+                pushViewport(viewport(x = 0.5, y = 0.5, width = 0.9, height = 0.8))
+                grid.draw(tbl_grob)
+                popViewport()
+            }, error = function(e) {
+                grid.text("Bond snapshot table unavailable", x = 0.5, y = 0.5,
+                          gp = gpar(fontsize = 14, col = "#999999"))
+            })
+        } else {
+            grid.text("Bond snapshot data unavailable", x = 0.5, y = 0.5,
+                      gp = gpar(fontsize = 14, col = "#999999"))
+        }
+
+        add_footer(2, total_pages)
+
+        # ─── PAGE 3: AUCTION PERFORMANCE HISTORY ───────────────────
+        grid.newpage()
+        grid.rect(x = 0.5, y = 0.96, width = 1, height = 0.06,
+                  gp = gpar(fill = "#1B3A6B", col = NA))
+        grid.text("Auction Performance History",
+                  x = 0.5, y = 0.96,
+                  gp = gpar(fontsize = 16, fontface = "bold", col = "white"))
+
+        if (!is.null(auction_perf_grob)) {
+            pushViewport(viewport(x = 0.5, y = 0.47, width = 0.92, height = 0.82))
+            grid.draw(auction_perf_grob)
+            popViewport()
+        } else {
+            grid.text("Auction performance chart unavailable", x = 0.5, y = 0.5,
+                      gp = gpar(fontsize = 14, col = "#999999"))
+        }
+
+        add_footer(3, total_pages)
+
+        # ─── PAGE 4: HISTORICAL PATTERNS ───────────────────────────
+        grid.newpage()
+        grid.rect(x = 0.5, y = 0.96, width = 1, height = 0.06,
+                  gp = gpar(fill = "#1B3A6B", col = NA))
+        grid.text("Historical Auction Patterns",
+                  x = 0.5, y = 0.96,
+                  gp = gpar(fontsize = 16, fontface = "bold", col = "white"))
+
+        if (!is.null(auction_patterns_grob)) {
+            pushViewport(viewport(x = 0.5, y = 0.47, width = 0.92, height = 0.82))
+            grid.draw(auction_patterns_grob)
+            popViewport()
+        } else {
+            grid.text("Historical patterns chart unavailable", x = 0.5, y = 0.5,
+                      gp = gpar(fontsize = 14, col = "#999999"))
+        }
+
+        add_footer(4, total_pages)
+
+        # ─── PAGE 5: SUPPLY & DEMAND ──────────────────────────────
+        grid.newpage()
+        grid.rect(x = 0.5, y = 0.96, width = 1, height = 0.06,
+                  gp = gpar(fill = "#1B3A6B", col = NA))
+        grid.text("Supply & Demand Analysis",
+                  x = 0.5, y = 0.96,
+                  gp = gpar(fontsize = 16, fontface = "bold", col = "white"))
+
+        has_bid_dist <- !is.null(bid_dist_grob)
+        has_ytd <- !is.null(ytd_issuance_grob)
+
+        if (has_bid_dist && has_ytd) {
+            # Stack both plots vertically
+            pushViewport(viewport(x = 0.5, y = 0.7, width = 0.92, height = 0.4))
+            grid.draw(bid_dist_grob)
+            popViewport()
+            pushViewport(viewport(x = 0.5, y = 0.27, width = 0.92, height = 0.4))
+            grid.draw(ytd_issuance_grob)
+            popViewport()
+        } else if (has_bid_dist) {
+            pushViewport(viewport(x = 0.5, y = 0.47, width = 0.92, height = 0.82))
+            grid.draw(bid_dist_grob)
+            popViewport()
+        } else if (has_ytd) {
+            pushViewport(viewport(x = 0.5, y = 0.47, width = 0.92, height = 0.82))
+            grid.draw(ytd_issuance_grob)
+            popViewport()
+        } else {
+            grid.text("Supply & demand charts unavailable", x = 0.5, y = 0.5,
+                      gp = gpar(fontsize = 14, col = "#999999"))
+        }
+
+        add_footer(5, total_pages)
+
+        # ─── PAGE 6: FORECAST & SENTIMENT ─────────────────────────
+        grid.newpage()
+        grid.rect(x = 0.5, y = 0.96, width = 1, height = 0.06,
+                  gp = gpar(fill = "#1B3A6B", col = NA))
+        grid.text("Forecast & Sentiment",
+                  x = 0.5, y = 0.96,
+                  gp = gpar(fontsize = 16, fontface = "bold", col = "white"))
+
+        # Top half: Forecast table
+        if (!is.null(forecast_tbl) && nrow(forecast_tbl) > 0) {
+            tryCatch({
+                theme_fc <- ttheme_default(
+                    core = list(
+                        bg_params = list(
+                            fill = rep(c("white", "#f0f4f8"), length.out = nrow(forecast_tbl))
+                        ),
+                        fg_params = list(fontsize = 9)
+                    ),
+                    colhead = list(
+                        bg_params = list(fill = "#1B3A6B"),
+                        fg_params = list(col = "white", fontsize = 9, fontface = "bold")
+                    )
+                )
+
+                # Add table title
+                grid.text("ARIMA Bid-to-Cover Forecast",
+                          x = 0.5, y = 0.87,
+                          gp = gpar(fontsize = 13, fontface = "bold", col = "#1B3A6B"))
+
+                fc_grob <- tableGrob(forecast_tbl, rows = NULL, theme = theme_fc)
+                pushViewport(viewport(x = 0.5, y = 0.7, width = 0.9, height = 0.28))
+                grid.draw(fc_grob)
+                popViewport()
+            }, error = function(e) {
+                grid.text("Forecast table unavailable", x = 0.5, y = 0.7,
+                          gp = gpar(fontsize = 12, col = "#999999"))
+            })
+        } else {
+            grid.text("Forecast data unavailable", x = 0.5, y = 0.7,
+                      gp = gpar(fontsize = 12, col = "#999999"))
+        }
+
+        # Bottom half: Sentiment gauge
+        if (!is.null(sentiment_grob)) {
+            pushViewport(viewport(x = 0.5, y = 0.25, width = 0.8, height = 0.4))
+            grid.draw(sentiment_grob)
+            popViewport()
+        } else {
+            grid.text("Sentiment gauge unavailable", x = 0.5, y = 0.25,
+                      gp = gpar(fontsize = 12, col = "#999999"))
+        }
+
+        add_footer(6, total_pages)
+
+        dev.off()
+
+        # Copy to output
+        if (file.exists(temp_pdf)) {
+            file.copy(temp_pdf, file, overwrite = TRUE)
+            unlink(temp_pdf)
+        }
+
+        message("[PRE-AUCTION PDF] Generation complete.")
+
+    }, error = function(e) {
+        message(sprintf("[PRE-AUCTION PDF] ERROR: %s", e$message))
+        while (dev.cur() > 1) { try(dev.off(), silent = TRUE) }
+        # Fallback: create minimal error PDF
+        pdf(file, width = 11, height = 8.5)
+        plot.new()
+        text(0.5, 0.5, "Pre-Auction Report generation encountered an error.\nPlease try again.",
+             cex = 1.3, col = "#E53935")
+        dev.off()
+    })
+}
+
+
+#' @export
+#' Generate Pre-Auction HTML Report
+#' @param config Report configuration list
+#' @param filtered_data Filtered bond data
+#' @param processed_data Processed bond data
+#' @param carry_data Carry and roll return data
+#' @return HTML string for the report
+create_pre_auction_html_report <- function(config, filtered_data, processed_data, carry_data) {
+    auction_bonds <- config$pre_auction_bonds
+    auction_date <- config$auction_date %||% Sys.Date()
+    client_name <- config$client_name %||% ""
+
+    # ══════════════════════════════════════════════════════════════════
+    # BOND SNAPSHOT TABLE
+    # ══════════════════════════════════════════════════════════════════
+    snapshot_html <- ""
+    tryCatch({
+        tbl_data <- if (!is.null(filtered_data) && nrow(filtered_data) > 0) filtered_data
+                    else if (!is.null(processed_data) && nrow(processed_data) > 0) processed_data
+                    else NULL
+
+        if (!is.null(tbl_data)) {
+            snapshot <- generate_bond_snapshot_table(tbl_data, auction_bonds)
+            if (nrow(snapshot) > 0) {
+                rows_html <- paste(apply(snapshot, 1, function(row) {
+                    cells <- paste(sprintf('<td style="padding: 8px 10px; border-bottom: 1px solid #ddd;">%s</td>',
+                                          row), collapse = "")
+                    sprintf("<tr>%s</tr>", cells)
+                }), collapse = "\n")
+
+                headers <- paste(sprintf('<th style="background: #1B3A6B; color: white; padding: 10px; text-align: left;">%s</th>',
+                                         names(snapshot)), collapse = "")
+
+                snapshot_html <- sprintf(
+                    '<table style="width: 100%%%%; border-collapse: collapse; margin: 20px 0;">
+                        <thead><tr>%s</tr></thead>
+                        <tbody>%s</tbody>
+                    </table>', headers, rows_html)
+            }
+        }
+    }, error = function(e) {
+        snapshot_html <<- '<p style="color: #999;">Bond snapshot data unavailable.</p>'
+    })
+
+    # ══════════════════════════════════════════════════════════════════
+    # KPI CARDS
+    # ══════════════════════════════════════════════════════════════════
+    kpi_html <- ""
+    tryCatch({
+        if (!is.null(filtered_data) && nrow(filtered_data) > 0) {
+            kpi_cards <- lapply(auction_bonds, function(b) {
+                bond_data <- filtered_data %>%
+                    filter(bond == b) %>%
+                    arrange(desc(date))
+
+                ytm_val <- if ("yield_to_maturity" %in% names(bond_data) && nrow(bond_data) > 0)
+                    sprintf("%.3f%%", bond_data$yield_to_maturity[1]) else "N/A"
+
+                btc_val <- if ("bid_to_cover" %in% names(bond_data)) {
+                    btc_data <- bond_data %>% filter(!is.na(bid_to_cover))
+                    if (nrow(btc_data) > 0) sprintf("%.2fx", btc_data$bid_to_cover[1]) else "N/A"
+                } else "N/A"
+
+                sprintf(
+                    '<div class="kpi-card">
+                        <div style="font-size: 14px; font-weight: bold; color: #1B3A6B; margin-bottom: 8px;">%s</div>
+                        <div class="kpi-value">%s</div>
+                        <div class="kpi-label">Current YTM</div>
+                        <div style="margin-top: 8px; font-size: 16px; font-weight: bold; color: #333;">%s</div>
+                        <div class="kpi-label">Last BTC</div>
+                    </div>', b, ytm_val, btc_val)
+            })
+            kpi_html <- paste(kpi_cards, collapse = "\n")
+        }
+    }, error = function(e) {
+        kpi_html <<- ""
+    })
+
+    # ══════════════════════════════════════════════════════════════════
+    # CHARTS (rendered as base64 embedded images)
+    # ══════════════════════════════════════════════════════════════════
+    render_chart_html <- function(plot_expr, title, label = "chart") {
+        tryCatch({
+            p <- eval(plot_expr)
+            if (is.null(p)) return(sprintf('<p style="color: #999;">%s chart unavailable.</p>', title))
+            b64 <- plot_to_base64(p, width = 10, height = 6, dpi = 150)
+            if (is.null(b64)) return(sprintf('<p style="color: #999;">%s chart unavailable.</p>', title))
+            sprintf('<div class="chart-container"><img src="data:image/png;base64,%s" alt="%s"/></div>',
+                    b64, title)
+        }, error = function(e) {
+            message(sprintf("[PRE-AUCTION HTML] Chart error (%s): %s", label, e$message))
+            sprintf('<p style="color: #999;">%s chart unavailable.</p>', title)
+        })
+    }
+
+    perf_chart <- render_chart_html(
+        quote(generate_enhanced_auction_analytics(filtered_data, list(selected_bonds = auction_bonds))),
+        "Auction Performance History", "auction_perf"
+    )
+
+    patterns_chart <- render_chart_html(
+        quote(generate_auction_pattern_analysis(filtered_data, list(), selected_bonds = auction_bonds)),
+        "Historical Auction Patterns", "auction_patterns"
+    )
+
+    bid_dist_chart <- render_chart_html(
+        quote(generate_bid_distribution_plot(filtered_data, list(), selected_bonds = auction_bonds)),
+        "Bid Distribution", "bid_dist"
+    )
+
+    ytd_chart <- render_chart_html(
+        quote(generate_ytd_bond_issuance_chart(filtered_data, list())),
+        "YTD Bond Issuance", "ytd_issuance"
+    )
+
+    sentiment_chart <- render_chart_html(
+        quote(generate_auction_sentiment_gauge(filtered_data, list())),
+        "Market Sentiment", "sentiment"
+    )
+
+    # ══════════════════════════════════════════════════════════════════
+    # FORECAST TABLE
+    # ══════════════════════════════════════════════════════════════════
+    forecast_html <- ""
+    tryCatch({
+        if (!is.null(filtered_data) && nrow(filtered_data) > 0) {
+            fc_tbl <- generate_auction_forecast_table(filtered_data, auction_bonds)
+            if (nrow(fc_tbl) > 0) {
+                fc_rows <- paste(apply(fc_tbl, 1, function(row) {
+                    cells <- paste(sprintf('<td style="padding: 8px 10px; border-bottom: 1px solid #ddd;">%s</td>',
+                                          row), collapse = "")
+                    sprintf("<tr>%s</tr>", cells)
+                }), collapse = "\n")
+
+                fc_headers <- paste(sprintf('<th style="background: #1B3A6B; color: white; padding: 10px; text-align: left;">%s</th>',
+                                            names(fc_tbl)), collapse = "")
+
+                forecast_html <- sprintf(
+                    '<table style="width: 100%%%%; border-collapse: collapse; margin: 20px 0;">
+                        <thead><tr>%s</tr></thead>
+                        <tbody>%s</tbody>
+                    </table>', fc_headers, fc_rows)
+            }
+        }
+    }, error = function(e) {
+        forecast_html <<- '<p style="color: #999;">Forecast data unavailable.</p>'
+    })
+
+    # ══════════════════════════════════════════════════════════════════
+    # ASSEMBLE HTML
+    # ══════════════════════════════════════════════════════════════════
+    html <- sprintf('<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; color: #333; }
+        .header { background: #1B3A6B; color: white; padding: 30px 40px; }
+        .header h1 { margin: 0; font-size: 28px; }
+        .header .subtitle { opacity: 0.85; font-size: 16px; margin-top: 8px; }
+        .section { padding: 30px 40px; }
+        .section h2 { color: #1B3A6B; border-bottom: 2px solid #1B3A6B; padding-bottom: 8px; }
+        table { width: 100%%%%; border-collapse: collapse; margin: 20px 0; }
+        th { background: #1B3A6B; color: white; padding: 10px; text-align: left; }
+        td { padding: 8px 10px; border-bottom: 1px solid #ddd; }
+        tr:nth-child(even) { background: #f8f9fa; }
+        .chart-container { margin: 20px 0; text-align: center; }
+        .chart-container img { max-width: 100%%%%; border: 1px solid #e0e0e0; border-radius: 4px; }
+        .footer { background: #f8f9fa; padding: 20px 40px; text-align: center; color: #666; font-size: 12px; border-top: 2px solid #1B3A6B; }
+        .kpi-row { display: flex; gap: 15px; margin: 20px 0; }
+        .kpi-card { flex: 1; background: white; border: 1px solid #e0e0e0; border-radius: 8px; padding: 15px; text-align: center; border-top: 3px solid #1B3A6B; }
+        .kpi-value { font-size: 24px; font-weight: bold; color: #1B3A6B; }
+        .kpi-label { font-size: 12px; color: #666; margin-top: 4px; }
+        .disclaimer { background: #fff3cd; padding: 15px; border: 1px solid #ffc107; border-radius: 5px; margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Weekly Auction Preview</h1>
+        <div class="subtitle">%s | Bonds: %s</div>
+        <div class="subtitle">%s Generated: %s</div>
+    </div>
+
+    <div class="section">
+        <div class="kpi-row">
+            %s
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Bond Snapshot</h2>
+        %s
+    </div>
+
+    <div class="section">
+        <h2>Auction Performance History</h2>
+        %s
+    </div>
+
+    <div class="section">
+        <h2>Historical Auction Patterns</h2>
+        %s
+    </div>
+
+    <div class="section">
+        <h2>Supply &amp; Demand Analysis</h2>
+        %s
+        %s
+    </div>
+
+    <div class="section">
+        <h2>Auction Forecast</h2>
+        %s
+        %s
+    </div>
+
+    <div class="disclaimer">
+        <strong>Important Notice:</strong> This report contains proprietary analysis by Insele Capital Partners and should not be forwarded without authorization.
+    </div>
+
+    <div class="footer">
+        &copy; %s Insele Capital Partners - Broking Services | Confidential
+    </div>
+</body>
+</html>',
+        format(auction_date, "%%A, %%B %%d, %%Y"),
+        paste(auction_bonds, collapse = ", "),
+        if (nchar(client_name) > 0) sprintf("Prepared for: %s |", client_name) else "",
+        format(Sys.Date(), "%%B %%d, %%Y"),
+        kpi_html,
+        snapshot_html,
+        perf_chart,
+        patterns_chart,
+        bid_dist_chart,
+        ytd_chart,
+        forecast_html,
+        sentiment_chart,
+        format(Sys.Date(), "%%Y")
+    )
+
+    return(html)
+}
