@@ -2287,7 +2287,7 @@ generate_pre_auction_pdf <- function(file, config, filtered_data, processed_data
 
     temp_dir <- tempdir()
     temp_pdf <- file.path(temp_dir, paste0("pre_auction_", Sys.getpid(), ".pdf"))
-    total_pages <- 8
+    total_pages <- 9
     auction_bonds <- config$pre_auction_bonds
     auction_date <- config$auction_date %||% Sys.Date()
     client_name <- config$client_name %||% ""
@@ -2397,112 +2397,44 @@ generate_pre_auction_pdf <- function(file, config, filtered_data, processed_data
         "auction_performance"
     )
 
-    # 8. Historical patterns + supply/demand combined (Page 6)
+    # 8. Historical auction patterns (Page 6 - full page)
     auction_patterns_grob <- safe_render_plot(
         quote(generate_auction_pattern_analysis(filtered_data, list(), selected_bonds = auction_bonds)),
-        "auction_patterns", width = 10, height = 4
+        "auction_patterns", width = 10, height = 7
     )
+
+    # 8b. Supply & demand bid distribution (Page 7 - full page)
     bid_dist_grob <- safe_render_plot(
         quote(generate_bid_distribution_plot(filtered_data, list(), selected_bonds = auction_bonds)),
-        "bid_distribution", width = 10, height = 4
+        "bid_distribution", width = 10, height = 7
     )
 
-    # 8b. Cumulative issuance comparison (NEW — replaces bid distribution on Page 6)
-    issuance_compare_grob <- safe_render_plot(
-        quote(generate_issuance_comparison_chart(filtered_data)),
-        "issuance_comparison", width = 10, height = 5
-    )
-
-    # 9. BTC history line chart (Page 7)
+    # 9. BTC history line chart (Page 8)
     btc_history_grob <- safe_render_plot(
         quote(generate_auction_btc_history_chart(filtered_data, auction_bonds)),
         "btc_history", width = 10, height = 4
     )
 
-    # 10. Sentiment — bypass safe_render_plot to detect the "no data" case
-    sentiment_grob <- NULL
-    sentiment_fallback_grob <- NULL
-
-    tryCatch({
-        # Check if there's enough recent auction data for the gauge
-        # The gauge function uses today() - 90 days internally
-        # But our data might not extend to today, so check the ACTUAL data range
-        auction_rows <- filtered_data %>%
-            filter(!is.na(bid_to_cover), bid_to_cover > 0)
-
-        latest_auction_date <- max(auction_rows$date, na.rm = TRUE)
-        cutoff_date <- latest_auction_date - 90  # Use data's own latest date, not today()
-        recent_count <- sum(auction_rows$date >= cutoff_date, na.rm = TRUE)
-
-        if (recent_count >= 5) {
-            # Enough data — try the real gauge
-            p <- generate_auction_sentiment_gauge(filtered_data, list())
-            if (!is.null(p)) {
-                temp_png <- tempfile(fileext = ".png")
-                ggsave(temp_png, p, width = 8, height = 4, dpi = 150, bg = "white")
-                img <- png::readPNG(temp_png)
-                sentiment_grob <- grid::rasterGrob(img, interpolate = TRUE)
-                unlink(temp_png)
-            }
-        }
-    }, error = function(e) {
-        message(sprintf("[PRE-AUCTION PDF] Sentiment gauge error: %s", e$message))
-    })
-
-    # ALWAYS build the fallback (it will be used if sentiment_grob is still NULL)
-    sentiment_fallback_grob <- tryCatch({
-        recent_auctions <- filtered_data %>%
-            filter(!is.na(bid_to_cover), bid_to_cover > 0) %>%
-            arrange(desc(date)) %>%
-            head(30)
-
-        if (nrow(recent_auctions) > 0) {
-            avg_btc <- mean(recent_auctions$bid_to_cover, na.rm = TRUE)
-            pct_strong <- mean(recent_auctions$bid_to_cover > 3, na.rm = TRUE) * 100
-            pct_weak <- mean(recent_auctions$bid_to_cover < 2, na.rm = TRUE) * 100
-            latest_date <- max(recent_auctions$date, na.rm = TRUE)
-            n_used <- nrow(recent_auctions)
-
-            sentiment_label <- if (avg_btc >= 3.5) "STRONG DEMAND"
-                              else if (avg_btc >= 3.0) "POSITIVE"
-                              else if (avg_btc >= 2.5) "NEUTRAL"
-                              else "CAUTIOUS"
-
-            sentiment_color <- if (avg_btc >= 3.5) "#2E7D32"
-                              else if (avg_btc >= 3.0) "#43A047"
-                              else if (avg_btc >= 2.5) "#F57F17"
-                              else "#C62828"
-
-            gTree(children = gList(
-                rectGrob(gp = gpar(fill = "#F5F7FA", col = "#D0D0D0", lwd = 0.8)),
-                textGrob("Market Auction Sentiment", x = 0.5, y = 0.85,
-                         gp = gpar(fontsize = 13, fontface = "bold", col = "#1B3A6B")),
-                textGrob(sentiment_label, x = 0.5, y = 0.65,
-                         gp = gpar(fontsize = 24, fontface = "bold", col = sentiment_color)),
-                textGrob(sprintf("Average BTC: %.2fx  (last %d auctions)", avg_btc, n_used),
-                         x = 0.5, y = 0.45,
-                         gp = gpar(fontsize = 11, col = "#333333")),
-                textGrob(sprintf("Strong >3x: %.0f%%   |   Weak <2x: %.0f%%", pct_strong, pct_weak),
-                         x = 0.5, y = 0.32,
-                         gp = gpar(fontsize = 10, col = "#555555")),
-                textGrob(sprintf("Based on auctions through %s", format(latest_date, "%b %d, %Y")),
-                         x = 0.5, y = 0.18,
-                         gp = gpar(fontsize = 9, col = "#999999", fontface = "italic"))
-            ))
+    # 10. Dual Issuance charts — YTD + Last 12 Months (Page 9)
+    ytd_issuance_grob <- tryCatch({
+        g <- generate_dual_issuance_charts(filtered_data)
+        if (!is.null(g)) {
+            # generate_dual_issuance_charts returns an arrangeGrob (gtable/grob)
+            # Render it to a rasterGrob via PNG for consistent PDF output
+            temp_png <- tempfile(fileext = ".png")
+            on.exit(unlink(temp_png), add = TRUE)
+            png(temp_png, width = 10 * 150, height = 7 * 150, res = 150, bg = "white")
+            grid::grid.draw(g)
+            dev.off()
+            img <- png::readPNG(temp_png)
+            grid::rasterGrob(img, interpolate = TRUE)
         } else {
-            textGrob("No auction sentiment data available",
-                     gp = gpar(fontsize = 12, col = "#999999"))
+            NULL
         }
     }, error = function(e) {
-        textGrob("Sentiment analysis unavailable",
-                 gp = gpar(fontsize = 12, col = "#999999"))
+        message(sprintf("[PRE-AUCTION PDF] Failed to render dual_issuance: %s", e$message))
+        NULL
     })
-
-    # 11. YTD vs Previous Year Issuance chart (Page 8)
-    ytd_issuance_grob <- safe_render_plot(
-        quote(generate_ytd_vs_prev_year_issuance_chart(filtered_data, list())),
-        "ytd_issuance", width = 10, height = 6
-    )
 
     message("[PRE-AUCTION PDF] Pre-rendering complete. Opening PDF device...")
 
@@ -2677,50 +2609,45 @@ generate_pre_auction_pdf <- function(file, config, filtered_data, processed_data
 
         add_footer(5, total_pages)
 
-        # ─── PAGE 6: PATTERNS & ISSUANCE (Combined) ──────────
+        # ─── PAGE 6: HISTORICAL AUCTION PATTERNS (Full Page) ──────────
         grid.newpage()
-        draw_page_header("Historical Patterns & Issuance")
+        draw_page_header("Historical Auction Patterns")
 
-        has_patterns <- !is.null(auction_patterns_grob)
-        has_issuance <- !is.null(issuance_compare_grob)
-
-        if (has_patterns && has_issuance) {
-            pushViewport(viewport(x = 0.5, y = 0.7, width = 0.92, height = 0.40))
-            grid.draw(auction_patterns_grob)
-            popViewport()
-            pushViewport(viewport(x = 0.5, y = 0.27, width = 0.92, height = 0.40))
-            grid.draw(issuance_compare_grob)
-            popViewport()
-        } else if (has_patterns) {
+        if (!is.null(auction_patterns_grob)) {
             pushViewport(viewport(x = 0.5, y = 0.47, width = 0.92, height = 0.82))
             grid.draw(auction_patterns_grob)
-            popViewport()
-        } else if (has_issuance) {
-            pushViewport(viewport(x = 0.5, y = 0.47, width = 0.92, height = 0.82))
-            grid.draw(issuance_compare_grob)
-            popViewport()
-        } else if (!is.null(bid_dist_grob)) {
-            # Fallback to bid distribution if issuance chart also fails
-            pushViewport(viewport(x = 0.5, y = 0.47, width = 0.92, height = 0.82))
-            grid.draw(bid_dist_grob)
             popViewport()
         } else {
-            draw_placeholder("Historical patterns & issuance charts unavailable")
+            draw_placeholder("Historical auction patterns chart unavailable")
         }
 
         add_footer(6, total_pages)
 
-        # ─── PAGE 7: FORECAST & SENTIMENT (Fixes 2/3, Enhancements 2/3) ─
+        # ─── PAGE 7: SUPPLY & DEMAND (Full Page) ──────────
         grid.newpage()
-        draw_page_header("Forecast & Sentiment")
+        draw_page_header("Supply & Demand")
 
-        # Top third: Enhanced forecast table with signals
+        if (!is.null(bid_dist_grob)) {
+            pushViewport(viewport(x = 0.5, y = 0.47, width = 0.92, height = 0.82))
+            grid.draw(bid_dist_grob)
+            popViewport()
+        } else {
+            draw_placeholder("Supply & demand chart unavailable")
+        }
+
+        add_footer(7, total_pages)
+
+        # ─── PAGE 8: FORECAST ─
+        grid.newpage()
+        draw_page_header("Forecast")
+
+        # Top section: Enhanced forecast table with signals
         if (!is.null(forecast_grob)) {
             tryCatch({
                 grid.text("ARIMA Bid-to-Cover Forecast",
-                          x = 0.5, y = 0.87,
+                          x = 0.5, y = 0.90,
                           gp = gpar(fontsize = 13, fontface = "bold", col = "#1B3A6B"))
-                pushViewport(viewport(x = 0.5, y = 0.74, width = 0.92, height = 0.20))
+                pushViewport(viewport(x = 0.5, y = 0.78, width = 0.92, height = 0.22))
                 grid.draw(forecast_grob)
                 popViewport()
             }, error = function(e) {
@@ -2730,31 +2657,18 @@ generate_pre_auction_pdf <- function(file, config, filtered_data, processed_data
             draw_placeholder("Forecast data unavailable", y = 0.78)
         }
 
-        # Middle third: BTC history line chart
+        # Bottom section: BTC history line chart (expanded)
         if (!is.null(btc_history_grob)) {
-            pushViewport(viewport(x = 0.5, y = 0.45, width = 0.88, height = 0.28))
+            pushViewport(viewport(x = 0.5, y = 0.40, width = 0.92, height = 0.55))
             grid.draw(btc_history_grob)
             popViewport()
         } else {
-            draw_placeholder("BTC history chart unavailable", y = 0.45)
+            draw_placeholder("BTC history chart unavailable", y = 0.40)
         }
 
-        # Bottom third: Sentiment gauge OR fallback text summary
-        if (!is.null(sentiment_grob)) {
-            pushViewport(viewport(x = 0.5, y = 0.14, width = 0.7, height = 0.22))
-            grid.draw(sentiment_grob)
-            popViewport()
-        } else if (!is.null(sentiment_fallback_grob)) {
-            pushViewport(viewport(x = 0.5, y = 0.14, width = 0.7, height = 0.22))
-            grid.draw(sentiment_fallback_grob)
-            popViewport()
-        } else {
-            draw_placeholder("Sentiment analysis unavailable", y = 0.14)
-        }
+        add_footer(8, total_pages)
 
-        add_footer(7, total_pages)
-
-        # ─── PAGE 8: CUMULATIVE ISSUANCE ──────────────────────────────
+        # ─── PAGE 9: CUMULATIVE ISSUANCE ──────────────────────────────
         grid.newpage()
         draw_page_header("Cumulative Government Bond Issuance")
 
@@ -2763,10 +2677,10 @@ generate_pre_auction_pdf <- function(file, config, filtered_data, processed_data
             grid.draw(ytd_issuance_grob)
             popViewport()
         } else {
-            draw_placeholder("Issuance chart unavailable")
+            draw_placeholder("Issuance charts unavailable")
         }
 
-        add_footer(8, total_pages)
+        add_footer(9, total_pages)
 
         dev.off()
 
@@ -2936,29 +2850,31 @@ create_pre_auction_html_report <- function(config, filtered_data, processed_data
         "Bid Distribution", "bid_dist"
     )
 
-    # Issuance comparison (NEW — replaces bid distribution)
-    issuance_chart <- render_chart_html(
-        quote(generate_issuance_comparison_chart(filtered_data)),
-        "Cumulative Issuance Comparison", "issuance_comparison", width = 11, height = 6
-    )
-
     # BTC history line chart
     btc_history_chart <- render_chart_html(
         quote(generate_auction_btc_history_chart(filtered_data, auction_bonds)),
         "BTC Historical Performance", "btc_history"
     )
 
-    # Sentiment gauge (uses FULL data - Fix 2)
-    sentiment_chart <- render_chart_html(
-        quote(generate_auction_sentiment_gauge(filtered_data, list())),
-        "Market Sentiment", "sentiment"
-    )
-
-    # YTD vs Previous Year Issuance comparison
-    ytd_issuance_chart <- render_chart_html(
-        quote(generate_ytd_vs_prev_year_issuance_chart(filtered_data, list())),
-        "Cumulative Issuance YTD Comparison", "ytd_issuance", width = 10, height = 6
-    )
+    # Dual Issuance charts (YTD + Last 12 Months)
+    ytd_issuance_chart <- tryCatch({
+        g <- generate_dual_issuance_charts(filtered_data)
+        if (!is.null(g)) {
+            # Render arrangeGrob to base64 PNG
+            temp_png <- tempfile(fileext = ".png")
+            on.exit(unlink(temp_png), add = TRUE)
+            png(temp_png, width = 10 * 150, height = 7 * 150, res = 150, bg = "white")
+            grid::grid.draw(g)
+            dev.off()
+            b64 <- base64enc::base64encode(temp_png)
+            sprintf('<div class="chart-container"><img src="data:image/png;base64,%s" alt="Cumulative Issuance"/></div>', b64)
+        } else {
+            '<p style="color: #999;">Cumulative issuance charts unavailable.</p>'
+        }
+    }, error = function(e) {
+        message(sprintf("[PRE-AUCTION HTML] Dual issuance chart error: %s", e$message))
+        '<p style="color: #999;">Cumulative issuance charts unavailable.</p>'
+    })
 
     # ══════════════════════════════════════════════════════════════════
     # BUILD TABLE HTML
@@ -2976,7 +2892,7 @@ create_pre_auction_html_report <- function(config, filtered_data, processed_data
     )
 
     # ══════════════════════════════════════════════════════════════════
-    # ASSEMBLE HTML (8-section structure matching PDF)
+    # ASSEMBLE HTML (9-section structure matching PDF)
     # ══════════════════════════════════════════════════════════════════
     html <- sprintf('<!DOCTYPE html>
 <html>
@@ -3043,23 +2959,27 @@ create_pre_auction_html_report <- function(config, filtered_data, processed_data
         %s
     </div>
 
-    <!-- Section 5: Historical Patterns & Issuance -->
+    <!-- Section 5: Historical Auction Patterns -->
     <div class="section">
-        <h2>Historical Patterns &amp; Issuance</h2>
-        %s
+        <h2>Historical Auction Patterns</h2>
         %s
     </div>
 
-    <!-- Section 6: Forecast & Sentiment -->
+    <!-- Section 6: Supply & Demand -->
     <div class="section">
-        <h2>Forecast &amp; Sentiment</h2>
+        <h2>Supply &amp; Demand</h2>
+        %s
+    </div>
+
+    <!-- Section 7: Forecast -->
+    <div class="section">
+        <h2>Forecast</h2>
         <h3 style="color: #1B3A6B;">ARIMA Bid-to-Cover Forecast</h3>
         %s
         %s
-        %s
     </div>
 
-    <!-- Section 7: Cumulative Issuance -->
+    <!-- Section 8: Cumulative Issuance -->
     <div class="section">
         <h2>Cumulative Government Bond Issuance</h2>
         %s
@@ -3085,10 +3005,9 @@ create_pre_auction_html_report <- function(config, filtered_data, processed_data
         yield_curve_chart,
         perf_chart,
         patterns_chart,
-        issuance_chart,
+        bid_dist_chart,
         forecast_html,
         btc_history_chart,
-        sentiment_chart,
         ytd_issuance_chart,
         format(Sys.Date(), "%%Y")
     )

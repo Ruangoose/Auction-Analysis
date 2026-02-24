@@ -10474,12 +10474,14 @@ server <- function(input, output, session) {
 
             pre_auction_sections <- c(
                 "1. Cover Page",
-                "2. Bond Snapshot",
-                "3. Auction Performance History",
-                "4. Historical Patterns",
-                "5. Supply & Demand",
-                "6. Forecast & Sentiment",
-                "7. Cumulative Issuance (YTD vs Previous Year)"
+                "2. Auction Outlook",
+                "3. Bond Snapshot",
+                "4. Relative Value Context",
+                "5. Auction Performance History",
+                "6. Historical Auction Patterns",
+                "7. Supply & Demand",
+                "8. Forecast",
+                "9. Cumulative Issuance (YTD + Last 12 Months)"
             )
 
             return(tagList(
@@ -10509,7 +10511,7 @@ server <- function(input, output, session) {
                     ),
                     tags$div(
                         style = "background: #f8f9fa; padding: 10px; border-radius: 5px;",
-                        tags$strong("Report Structure (6 pages):"),
+                        tags$strong("Report Structure (9 pages):"),
                         tags$ul(
                             style = "margin-top: 10px; margin-bottom: 0;",
                             lapply(pre_auction_sections, function(s) {

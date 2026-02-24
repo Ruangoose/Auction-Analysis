@@ -551,3 +551,168 @@ generate_ytd_issuance_table <- function(data, full_data = NULL) {
 
     return(display_table)
 }
+
+#' @export
+#' @title Dual Cumulative Issuance Charts (YTD + Last 12 Months)
+#' @description Creates two stacked horizontal bar charts for the PDF report:
+#'   Top: Year-to-date issuance. Bottom: Last 12 months issuance.
+#'   Date reference is always Sys.Date() (today), NOT data max date.
+#' @param data Full unfiltered bond auction data
+#' @return A grob (gridExtra::arrangeGrob) combining both charts
+generate_dual_issuance_charts <- function(data) {
+    tryCatch({
+        require(gridExtra)
+
+        data <- ensure_date_columns(data)
+
+        # Date logic — CRITICAL: Use Sys.Date(), NOT max(data$date)
+        today <- Sys.Date()
+        current_year <- lubridate::year(today)
+
+        # YTD period
+        ytd_start <- as.Date(paste0(current_year, "-01-01"))
+        ytd_end <- today
+
+        # Last 12 months period
+        l12m_start <- today - lubridate::years(1)
+        l12m_end <- today
+
+        # Helper to build a horizontal bar chart for a given period
+        build_issuance_chart <- function(period_data, title, subtitle, no_data_msg) {
+            if (is.null(period_data) || nrow(period_data) == 0) {
+                # Return a clean placeholder plot
+                return(
+                    ggplot() +
+                        annotate("text", x = 0.5, y = 0.5,
+                                 label = no_data_msg,
+                                 size = 5, color = "#666666", hjust = 0.5, vjust = 0.5) +
+                        labs(title = title, subtitle = subtitle) +
+                        theme_void() +
+                        theme(
+                            plot.title = element_text(size = 13, face = "bold",
+                                                      color = "#1B3A6B",
+                                                      margin = ggplot2::margin(b = 5)),
+                            plot.subtitle = element_text(size = 10,
+                                                         color = "grey50",
+                                                         margin = ggplot2::margin(b = 10)),
+                            plot.background = element_rect(fill = "white", color = NA),
+                            plot.margin = ggplot2::margin(10, 10, 10, 10)
+                        )
+                )
+            }
+
+            # Summarize by bond
+            summary_data <- period_data %>%
+                dplyr::filter(!is.na(offer_amount), offer_amount > 0) %>%
+                dplyr::group_by(bond) %>%
+                dplyr::summarise(
+                    total_issuance = sum(offer_amount, na.rm = TRUE),
+                    n_auctions = dplyr::n(),
+                    .groups = "drop"
+                ) %>%
+                dplyr::arrange(dplyr::desc(total_issuance)) %>%
+                dplyr::mutate(
+                    total_issuance_mil = total_issuance / 1e6,
+                    bond_label = paste0(bond, " (n=", n_auctions, ")")
+                )
+
+            if (nrow(summary_data) == 0) {
+                return(
+                    ggplot() +
+                        annotate("text", x = 0.5, y = 0.5,
+                                 label = no_data_msg,
+                                 size = 5, color = "#666666", hjust = 0.5, vjust = 0.5) +
+                        labs(title = title, subtitle = subtitle) +
+                        theme_void() +
+                        theme(
+                            plot.title = element_text(size = 13, face = "bold",
+                                                      color = "#1B3A6B",
+                                                      margin = ggplot2::margin(b = 5)),
+                            plot.subtitle = element_text(size = 10,
+                                                         color = "grey50",
+                                                         margin = ggplot2::margin(b = 10)),
+                            plot.background = element_rect(fill = "white", color = NA),
+                            plot.margin = ggplot2::margin(10, 10, 10, 10)
+                        )
+                )
+            }
+
+            # Total for caption
+            total_bn <- sum(summary_data$total_issuance, na.rm = TRUE) / 1e9
+
+            ggplot(summary_data, aes(x = reorder(bond_label, total_issuance_mil),
+                                     y = total_issuance_mil)) +
+                geom_col(fill = "#1B3A6B", alpha = 0.9, width = 0.7) +
+                geom_text(aes(label = paste0("R", format(round(total_issuance_mil, 0),
+                                                          big.mark = ","), "m")),
+                          hjust = -0.05, size = 3, fontface = "bold",
+                          color = "#333333") +
+                scale_y_continuous(
+                    labels = function(x) paste0("R", format(x, big.mark = ","), "m"),
+                    expand = expansion(mult = c(0, 0.18))
+                ) +
+                coord_flip() +
+                labs(
+                    title = title,
+                    subtitle = paste0(subtitle, "  |  Total: R", sprintf("%.2f", total_bn), " bn"),
+                    x = NULL,
+                    y = "Total Issuance (R millions)"
+                ) +
+                theme_minimal(base_size = 9) +
+                theme(
+                    panel.grid.major.y = element_blank(),
+                    panel.grid.major.x = element_line(color = "#E0E0E0",
+                                                      linewidth = 0.5,
+                                                      linetype = "dashed"),
+                    panel.grid.minor = element_blank(),
+                    axis.text.y = element_text(size = 9, face = "bold", color = "#333333"),
+                    axis.text.x = element_text(size = 8, color = "#666666"),
+                    plot.title = element_text(size = 13, face = "bold",
+                                              color = "#1B3A6B",
+                                              margin = ggplot2::margin(b = 3)),
+                    plot.subtitle = element_text(size = 10,
+                                                 color = "grey50",
+                                                 margin = ggplot2::margin(b = 10)),
+                    legend.position = "none",
+                    plot.background = element_rect(fill = "white", color = NA),
+                    plot.margin = ggplot2::margin(10, 15, 5, 10)
+                )
+        }
+
+        # --- YTD chart (top) ---
+        ytd_data <- data %>%
+            dplyr::filter(date >= ytd_start, date <= ytd_end)
+
+        ytd_chart <- build_issuance_chart(
+            ytd_data,
+            title = "Year-to-Date Government Bond Issuance",
+            subtitle = paste0(format(ytd_start, "%b %d, %Y"), " to ", format(ytd_end, "%b %d, %Y")),
+            no_data_msg = paste0("No auction data for YTD ", current_year, " period")
+        )
+
+        # --- Last 12 months chart (bottom) ---
+        l12m_data <- data %>%
+            dplyr::filter(date >= l12m_start, date <= l12m_end)
+
+        l12m_chart <- build_issuance_chart(
+            l12m_data,
+            title = "Last 12 Months Government Bond Issuance",
+            subtitle = paste0(format(l12m_start, "%b %d, %Y"), " to ", format(l12m_end, "%b %d, %Y")),
+            no_data_msg = "No auction data for last 12 months period"
+        )
+
+        # Combine both charts
+        combined <- gridExtra::arrangeGrob(
+            ytd_chart,   # Top
+            l12m_chart,  # Bottom
+            ncol = 1,
+            heights = c(1, 1)
+        )
+
+        return(combined)
+
+    }, error = function(e) {
+        message(sprintf("[Dual Issuance Charts] Error: %s", e$message))
+        return(NULL)
+    })
+}
