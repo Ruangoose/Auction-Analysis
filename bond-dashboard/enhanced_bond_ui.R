@@ -2792,6 +2792,7 @@ ui <- dashboardPage(
 
                                                   selectInput("report_type", "Report Type:",
                                                               choices = list(
+                                                                  "Pre-Auction Report" = "pre_auction",
                                                                   "Executive Summary" = "executive",
                                                                   "Trading Desk Report" = "trading",
                                                                   "Risk Committee Report" = "risk",
@@ -2799,7 +2800,7 @@ ui <- dashboardPage(
                                                                   "Treasury Holdings Report" = "treasury",
                                                                   "Custom Report" = "custom"
                                                               ),
-                                                              selected = "executive"),
+                                                              selected = "pre_auction"),
 
                                                   textInput("report_title", "Report Title:",
                                                             value = paste("SA Government Bond Analysis -",
@@ -2811,9 +2812,57 @@ ui <- dashboardPage(
                                                   dateInput("report_date", "Report Date:",
                                                             value = today()),
 
+                                                  # ═══════════════════════════════════════════════════════════
+                                                  # PRE-AUCTION REPORT CONFIGURATION PANEL
+                                                  # ═══════════════════════════════════════════════════════════
+                                                  conditionalPanel(
+                                                      condition = "input.report_type == 'pre_auction'",
+                                                      tags$div(
+                                                          style = "background: #e8f4f8; border-radius: 8px; padding: 15px; margin-top: 15px; border-left: 4px solid #1B3A6B;",
+                                                          tags$div(
+                                                              style = "display: flex; align-items: center; margin-bottom: 10px;",
+                                                              icon("info-circle", style = "color: #1B3A6B; font-size: 18px; margin-right: 8px;"),
+                                                              tags$span("This report provides auction-focused analytics for the upcoming weekly bond auction. Select the bonds on offer this week below.",
+                                                                        style = "color: #1B3A6B; font-size: 13px;")
+                                                          ),
+                                                          selectizeInput("auction_report_bonds",
+                                                                         "Bonds on Auction:",
+                                                                         choices = NULL,
+                                                                         multiple = TRUE,
+                                                                         options = list(placeholder = "Select bonds on offer this week...")),
+                                                          fluidRow(
+                                                              column(6,
+                                                                     actionButton("btn_next_auction", "Next Auction",
+                                                                                  class = "btn-sm btn-primary btn-block",
+                                                                                  icon = icon("forward"))
+                                                              ),
+                                                              column(6,
+                                                                     actionButton("btn_following_auction", "Following Auction",
+                                                                                  class = "btn-sm btn-default btn-block",
+                                                                                  icon = icon("forward-fast"))
+                                                              )
+                                                          ),
+                                                          tags$div(style = "margin-top: 10px;"),
+                                                          dateInput("auction_report_date", "Auction Date:",
+                                                                    value = {
+                                                                        # Default to next Tuesday
+                                                                        d <- Sys.Date()
+                                                                        days_until_tue <- (3 - as.integer(format(d, "%u"))) %% 7
+                                                                        if (days_until_tue == 0) days_until_tue <- 7
+                                                                        d + days_until_tue
+                                                                    }),
+                                                          textInput("auction_report_client", "Prepared For:",
+                                                                    value = "",
+                                                                    placeholder = "Enter client name")
+                                                      )
+                                                  ),
+
                                                   tags$hr(),
 
                                                   # Enhanced section/plot selector with nested checkboxes
+                                                  # Hidden when pre_auction report type is selected
+                                                  conditionalPanel(
+                                                      condition = "input.report_type != 'pre_auction'",
                                                   tags$div(
                                                       id = "section_plot_selector",
                                                       style = "max-height: 600px; overflow-y: auto; background: #f8f9fa; padding: 10px; border-radius: 5px;",
@@ -3007,6 +3056,7 @@ ui <- dashboardPage(
                                                           tags$small(style = "color: #666;", HTML("&#127974; = Treasury Holdings section"))
                                                       )
                                                   )
+                                                  ) # End conditionalPanel for non-pre_auction section checkboxes
                                               )
                                        ),
                                        column(6,
