@@ -10478,7 +10478,8 @@ server <- function(input, output, session) {
                 "3. Auction Performance History",
                 "4. Historical Patterns",
                 "5. Supply & Demand",
-                "6. Forecast & Sentiment"
+                "6. Forecast & Sentiment",
+                "7. Cumulative Issuance (YTD vs Previous Year)"
             )
 
             return(tagList(

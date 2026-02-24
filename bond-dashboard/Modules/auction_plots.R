@@ -1308,15 +1308,19 @@ generate_auction_sentiment_gauge <- function(data, params) {
         return(create_no_auction_data_plot(data_check$message))
     }
 
+    # Use data's max date as reference instead of today()
+    # This ensures sentiment analysis works relative to the most recent data available
+    data_max_date <- max(data$date[!is.na(data$bid_to_cover)], na.rm = TRUE)
+
     # Calculate comprehensive sentiment indicators
     sentiment_metrics <- data %>%
         filter(!is.na(bid_to_cover),
-               date >= today() - days(90)) %>%
+               date >= data_max_date - days(90)) %>%
         arrange(date) %>%
         mutate(
             period = case_when(
-                date >= today() - days(30) ~ "30d",
-                date >= today() - days(60) ~ "60d",
+                date >= data_max_date - days(30) ~ "30d",
+                date >= data_max_date - days(60) ~ "60d",
                 TRUE ~ "90d"
             )
         )
