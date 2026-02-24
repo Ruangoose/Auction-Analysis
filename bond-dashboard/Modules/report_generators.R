@@ -1633,34 +1633,30 @@ generate_bond_snapshot_table <- function(data, auction_bonds) {
 #' @return A tableGrob suitable for grid.draw()
 generate_bond_snapshot_grob <- function(data, auction_bonds) {
     display_df <- generate_bond_snapshot_table(data, auction_bonds)
-
     if (is.null(display_df) || nrow(display_df) == 0) return(NULL)
 
-    n_rows <- nrow(display_df)
-    n_cols <- ncol(display_df)
+    # CRITICAL: Convert everything to character and plain data.frame
+    display_df <- as.data.frame(lapply(display_df, as.character), stringsAsFactors = FALSE)
 
-    header_theme <- ttheme_minimal(
+    n_rows <- nrow(display_df)
+
+    tt <- ttheme_default(
+        base_size = 10,
         core = list(
             bg_params = list(
-                fill = rep(c("white", "#f8f9fa"), length.out = n_rows),
-                col = "#dddddd"
+                fill = rep_len(c("white", "#F0F4F8"), n_rows),
+                col = "#CCCCCC"
             ),
-            fg_params = list(
-                fontsize = 10,
-                fontface = "plain",
-                hjust = c(rep(0, n_rows), rep(1, n_rows * (n_cols - 1))),
-                x = c(rep(0.05, n_rows), rep(0.95, n_rows * (n_cols - 1)))
-            ),
-            padding = unit(c(8, 6), "pt")
+            padding = unit(c(5, 4), "mm")
         ),
         colhead = list(
+            fg_params = list(col = "white", fontface = "bold"),
             bg_params = list(fill = "#1B3A6B", col = "#1B3A6B"),
-            fg_params = list(col = "white", fontface = "bold", fontsize = 10),
-            padding = unit(c(8, 8), "pt")
+            padding = unit(c(5, 5), "mm")
         )
     )
 
-    tg <- tableGrob(display_df, rows = NULL, theme = header_theme)
+    tg <- tableGrob(display_df, rows = NULL, theme = tt)
     return(tg)
 }
 
@@ -1722,12 +1718,15 @@ generate_auction_outlook_text <- function(data, auction_bonds, forecasts_df) {
     lines <- c(lines, "")
 
     for (o in outlook_parts) {
-        pred_txt <- if (!is.na(o$pred)) sprintf("%.2fx", o$pred) else "N/A"
-        avg_txt <- if (!is.na(o$avg)) sprintf("%.2fx", o$avg) else "N/A"
-        last_txt <- if (!is.na(o$last)) sprintf("%.2fx", o$last) else "N/A"
         lines <- c(lines, sprintf(
-            "%s (Yield: %s, Duration: %s) - Signal: %s. Historical average BTC of %s across %d auctions. Last auction: %s. Recent trend: %s. ARIMA forecast: %s.",
-            o$bond, o$yield, o$duration, o$signal, avg_txt, o$n, last_txt, o$trend, pred_txt
+            "%s  |  YTM: %s  |  Dur: %s  |  Signal: %s",
+            o$bond, o$yield, o$duration, o$signal
+        ))
+        lines <- c(lines, sprintf(
+            "    Hist Avg: %.2fx (%d auctions)  |  Last: %.2fx  |  Trend: %s  |  Forecast: %.2fx",
+            if (!is.na(o$avg)) o$avg else 0, o$n,
+            if (!is.na(o$last)) o$last else 0, o$trend,
+            if (!is.na(o$pred)) o$pred else 0
         ))
         lines <- c(lines, "")
     }
@@ -1831,32 +1830,50 @@ generate_recent_auction_history <- function(data, auction_bonds, n_recent = 5) {
 #' @param n_recent Number of recent auctions per bond
 #' @return A tableGrob suitable for grid.draw()
 generate_recent_auction_history_grob <- function(data, auction_bonds, n_recent = 5) {
-    display_df <- generate_recent_auction_history(data, auction_bonds, n_recent)
-    if (is.null(display_df) || nrow(display_df) == 0) return(NULL)
+    recent <- data %>%
+        filter(bond %in% auction_bonds, !is.na(bid_to_cover)) %>%
+        group_by(bond) %>%
+        arrange(desc(date)) %>%
+        slice_head(n = n_recent) %>%
+        ungroup() %>%
+        arrange(bond, desc(date))
+
+    if (nrow(recent) == 0) return(NULL)
+
+    display_df <- data.frame(
+        Date = format(recent$date, "%b %d, %y"),
+        Bond = recent$bond,
+        stringsAsFactors = FALSE
+    )
+
+    if ("offer_amount" %in% names(recent))
+        display_df$`Offer(Rbn)` <- sprintf("%.2f", recent$offer_amount / 1e9)
+    if ("bids_received" %in% names(recent))
+        display_df$`Bids(Rbn)` <- sprintf("%.2f", recent$bids_received / 1e9)
+
+    display_df$BTC <- sprintf("%.2fx", recent$bid_to_cover)
+    display_df$Rating <- ifelse(recent$bid_to_cover >= 3, "Strong",
+                          ifelse(recent$bid_to_cover >= 2.5, "Good",
+                          ifelse(recent$bid_to_cover >= 2, "Normal", "Weak")))
+
+    # Convert ALL to character
+    display_df <- as.data.frame(lapply(display_df, as.character), stringsAsFactors = FALSE)
 
     n_rows <- nrow(display_df)
 
-    # Color rows by Performance
-    perf_col <- display_df$Performance
-    row_fills <- sapply(perf_col, function(p) {
-        switch(p,
-               "Strong" = "#E8F5E9",
-               "Good" = "#E3F2FD",
-               "Normal" = "#FFF3E0",
-               "Weak" = "#FFEBEE",
-               "white")
-    })
-
-    tt <- ttheme_minimal(
+    tt <- ttheme_default(
+        base_size = 8,
         core = list(
-            bg_params = list(fill = row_fills, col = "#dddddd"),
-            fg_params = list(fontsize = 9),
-            padding = unit(c(6, 4), "pt")
+            bg_params = list(
+                fill = rep_len(c("white", "#F0F4F8"), n_rows),
+                col = "#CCCCCC"
+            ),
+            padding = unit(c(3, 2), "mm")
         ),
         colhead = list(
+            fg_params = list(col = "white", fontface = "bold"),
             bg_params = list(fill = "#1B3A6B", col = "#1B3A6B"),
-            fg_params = list(col = "white", fontface = "bold", fontsize = 9),
-            padding = unit(c(6, 6), "pt")
+            padding = unit(c(3, 3), "mm")
         )
     )
 
@@ -2023,35 +2040,48 @@ generate_enhanced_forecast_table <- function(data, auction_bonds) {
 #' @param auction_bonds Character vector of bond names on auction
 #' @return A tableGrob suitable for grid.draw()
 generate_enhanced_forecast_grob <- function(data, auction_bonds) {
-    fc_tbl <- generate_enhanced_forecast_table(data, auction_bonds)
-    if (is.null(fc_tbl) || nrow(fc_tbl) == 0) return(NULL)
+    forecast_df <- generate_enhanced_forecast_table(data, auction_bonds)
+    if (is.null(forecast_df) || nrow(forecast_df) == 0) return(NULL)
 
-    # Build row fill colors based on Signal
-    signals <- fc_tbl$Signal
-    row_fills <- sapply(signals, function(s) {
-        switch(s,
-               "STRONG BUY" = "#E8F5E9",
-               "BUY" = "#E3F2FD",
-               "HOLD" = "#FFF3E0",
-               "CAUTION" = "#FFEBEE",
-               "WEAK" = "#FFEBEE",
-               "white")
-    })
+    # Add Signal column if not present
+    if (!"Signal" %in% names(forecast_df) && "Predicted BTC" %in% names(forecast_df)) {
+        pred <- as.numeric(forecast_df$`Predicted BTC`)
+        forecast_df$Signal <- ifelse(pred >= 4.0, "STRONG BUY",
+                              ifelse(pred >= 3.0, "BUY",
+                              ifelse(pred >= 2.5, "HOLD",
+                              ifelse(pred >= 2.0, "CAUTION", "WEAK"))))
+        # Reorder columns to put Signal after 95% CI
+        ci95_pos <- which(names(forecast_df) == "95% CI")
+        if (length(ci95_pos) > 0) {
+            sig_pos <- which(names(forecast_df) == "Signal")
+            other_cols <- setdiff(seq_along(forecast_df), sig_pos)
+            new_order <- append(other_cols, sig_pos, after = ci95_pos)
+            forecast_df <- forecast_df[, new_order]
+        }
+    }
 
-    tt <- ttheme_minimal(
+    # Convert ALL to character
+    display_df <- as.data.frame(lapply(forecast_df, as.character), stringsAsFactors = FALSE)
+
+    n_rows <- nrow(display_df)
+
+    tt <- ttheme_default(
+        base_size = 10,
         core = list(
-            bg_params = list(fill = row_fills, col = "#dddddd"),
-            fg_params = list(fontsize = 10),
-            padding = unit(c(8, 6), "pt")
+            bg_params = list(
+                fill = rep_len(c("white", "#F0F4F8"), n_rows),
+                col = "#CCCCCC"
+            ),
+            padding = unit(c(5, 4), "mm")
         ),
         colhead = list(
+            fg_params = list(col = "white", fontface = "bold"),
             bg_params = list(fill = "#1B3A6B", col = "#1B3A6B"),
-            fg_params = list(col = "white", fontface = "bold", fontsize = 10),
-            padding = unit(c(8, 8), "pt")
+            padding = unit(c(5, 5), "mm")
         )
     )
 
-    tg <- tableGrob(fc_tbl, rows = NULL, theme = tt)
+    tg <- tableGrob(display_df, rows = NULL, theme = tt)
     return(tg)
 }
 
@@ -2140,6 +2170,106 @@ generate_auction_forecast_table <- function(data, auction_bonds) {
     })
 
     do.call(rbind, forecasts)
+}
+
+#' @export
+#' Generate YTD vs Prior Year Issuance Comparison Chart
+#' @param data Full bond data with offer_amount column
+#' @return ggplot object
+generate_issuance_comparison_chart <- function(data) {
+    if (!"offer_amount" %in% names(data) || all(is.na(data$offer_amount))) return(NULL)
+    if (!"date" %in% names(data)) return(NULL)
+
+    data <- ensure_date_columns(data)
+
+    # Determine date ranges
+    latest_date <- max(data$date, na.rm = TRUE)
+    current_year <- as.numeric(format(latest_date, "%Y"))
+    prior_year <- current_year - 1
+
+    # Current YTD: Jan 1 of latest year to latest date
+    ytd_start <- as.Date(paste0(current_year, "-01-01"))
+    ytd_data <- data %>%
+        filter(date >= ytd_start, date <= latest_date,
+               !is.na(offer_amount), offer_amount > 0)
+
+    # Prior year same period
+    prior_start <- as.Date(paste0(prior_year, "-01-01"))
+    # Same month-day in prior year
+    prior_end_str <- paste0(prior_year, format(latest_date, "-%m-%d"))
+    prior_end <- tryCatch(as.Date(prior_end_str), error = function(e) as.Date(paste0(prior_year, "-12-31")))
+    prior_data <- data %>%
+        filter(date >= prior_start, date <= prior_end,
+               !is.na(offer_amount), offer_amount > 0)
+
+    # Summarize each period
+    summarize_period <- function(d, label) {
+        if (nrow(d) == 0) return(data.frame())
+        d %>%
+            group_by(bond) %>%
+            summarise(total = sum(offer_amount, na.rm = TRUE),
+                      n = n(), .groups = "drop") %>%
+            mutate(period = label,
+                   total_mil = total / 1e6)
+    }
+
+    ytd_label <- paste0(current_year, " YTD")
+    prior_label <- paste0(prior_year, " YTD (to ", format(prior_end, "%b %d"), ")")
+
+    ytd_summary <- summarize_period(ytd_data, ytd_label)
+    prior_summary <- summarize_period(prior_data, prior_label)
+
+    combined <- bind_rows(ytd_summary, prior_summary)
+    if (nrow(combined) == 0) return(NULL)
+
+    # Order bonds by current YTD total
+    bond_order <- ytd_summary %>% arrange(total) %>% pull(bond)
+    extra_bonds <- setdiff(prior_summary$bond, bond_order)
+    bond_order <- c(extra_bonds, bond_order)
+    combined$bond <- factor(combined$bond, levels = bond_order)
+
+    # Totals for subtitle
+    ytd_total_bn <- sum(ytd_summary$total, na.rm = TRUE) / 1e9
+    prior_total_bn <- sum(prior_summary$total, na.rm = TRUE) / 1e9
+
+    p <- ggplot(combined, aes(x = bond, y = total_mil, fill = period)) +
+        geom_col(position = position_dodge(width = 0.7), width = 0.6, alpha = 0.9) +
+        geom_text(
+            aes(label = paste0("R", format(round(total_mil), big.mark = ","), "m")),
+            position = position_dodge(width = 0.7),
+            hjust = -0.05, size = 2.5, fontface = "bold", color = "#333333"
+        ) +
+        scale_fill_manual(values = setNames(
+            c("#1B3A6B", "#8BADD4"),
+            c(ytd_label, prior_label)
+        )) +
+        scale_y_continuous(
+            labels = function(x) paste0("R", format(x, big.mark = ","), "m"),
+            expand = expansion(mult = c(0, 0.22))
+        ) +
+        coord_flip() +
+        labs(
+            title = "Cumulative Government Bond Issuance",
+            subtitle = sprintf("%s: R%.1fbn  |  %s: R%.1fbn",
+                               ytd_label, ytd_total_bn, prior_label, prior_total_bn),
+            x = NULL, y = "Total Issuance (R millions)",
+            caption = "Source: Insele Capital Partners Bond Analytics"
+        ) +
+        theme_minimal(base_size = 9) +
+        theme(
+            plot.title = element_text(face = "bold", size = 12, color = "#1B3A6B"),
+            plot.subtitle = element_text(size = 8, color = "grey50"),
+            plot.caption = element_text(size = 7, color = "#999", hjust = 1),
+            legend.position = "bottom",
+            legend.title = element_blank(),
+            legend.text = element_text(size = 8),
+            panel.grid.major.y = element_blank(),
+            panel.grid.minor = element_blank(),
+            axis.text.y = element_text(size = 8, face = "bold"),
+            plot.background = element_rect(fill = "white", color = NA)
+        )
+
+    return(p)
 }
 
 #' @export
@@ -2277,22 +2407,96 @@ generate_pre_auction_pdf <- function(file, config, filtered_data, processed_data
         "bid_distribution", width = 10, height = 4
     )
 
+    # 8b. Cumulative issuance comparison (NEW — replaces bid distribution on Page 6)
+    issuance_compare_grob <- safe_render_plot(
+        quote(generate_issuance_comparison_chart(filtered_data)),
+        "issuance_comparison", width = 10, height = 5
+    )
+
     # 9. BTC history line chart (Page 7)
     btc_history_grob <- safe_render_plot(
         quote(generate_auction_btc_history_chart(filtered_data, auction_bonds)),
         "btc_history", width = 10, height = 4
     )
 
-    # 10. Sentiment gauge - uses FULL data (Fix 2: market-wide, not filtered to auction bonds)
-    sentiment_grob <- safe_render_plot(
-        quote(generate_auction_sentiment_gauge(filtered_data, list())),
-        "sentiment_gauge", width = 8, height = 4
-    )
+    # 10. Sentiment — bypass safe_render_plot to detect the "no data" case
+    sentiment_grob <- NULL
+    sentiment_fallback_grob <- NULL
 
-    # Fallback sentiment if gauge failed
-    sentiment_fallback_grob <- if (is.null(sentiment_grob)) {
-        tryCatch(generate_sentiment_fallback_grob(filtered_data), error = function(e) NULL)
-    } else NULL
+    tryCatch({
+        # Check if there's enough recent auction data for the gauge
+        # The gauge function uses today() - 90 days internally
+        # But our data might not extend to today, so check the ACTUAL data range
+        auction_rows <- filtered_data %>%
+            filter(!is.na(bid_to_cover), bid_to_cover > 0)
+
+        latest_auction_date <- max(auction_rows$date, na.rm = TRUE)
+        cutoff_date <- latest_auction_date - 90  # Use data's own latest date, not today()
+        recent_count <- sum(auction_rows$date >= cutoff_date, na.rm = TRUE)
+
+        if (recent_count >= 5) {
+            # Enough data — try the real gauge
+            p <- generate_auction_sentiment_gauge(filtered_data, list())
+            if (!is.null(p)) {
+                temp_png <- tempfile(fileext = ".png")
+                ggsave(temp_png, p, width = 8, height = 4, dpi = 150, bg = "white")
+                img <- png::readPNG(temp_png)
+                sentiment_grob <- grid::rasterGrob(img, interpolate = TRUE)
+                unlink(temp_png)
+            }
+        }
+    }, error = function(e) {
+        message(sprintf("[PRE-AUCTION PDF] Sentiment gauge error: %s", e$message))
+    })
+
+    # ALWAYS build the fallback (it will be used if sentiment_grob is still NULL)
+    sentiment_fallback_grob <- tryCatch({
+        recent_auctions <- filtered_data %>%
+            filter(!is.na(bid_to_cover), bid_to_cover > 0) %>%
+            arrange(desc(date)) %>%
+            head(30)
+
+        if (nrow(recent_auctions) > 0) {
+            avg_btc <- mean(recent_auctions$bid_to_cover, na.rm = TRUE)
+            pct_strong <- mean(recent_auctions$bid_to_cover > 3, na.rm = TRUE) * 100
+            pct_weak <- mean(recent_auctions$bid_to_cover < 2, na.rm = TRUE) * 100
+            latest_date <- max(recent_auctions$date, na.rm = TRUE)
+            n_used <- nrow(recent_auctions)
+
+            sentiment_label <- if (avg_btc >= 3.5) "STRONG DEMAND"
+                              else if (avg_btc >= 3.0) "POSITIVE"
+                              else if (avg_btc >= 2.5) "NEUTRAL"
+                              else "CAUTIOUS"
+
+            sentiment_color <- if (avg_btc >= 3.5) "#2E7D32"
+                              else if (avg_btc >= 3.0) "#43A047"
+                              else if (avg_btc >= 2.5) "#F57F17"
+                              else "#C62828"
+
+            gTree(children = gList(
+                rectGrob(gp = gpar(fill = "#F5F7FA", col = "#D0D0D0", lwd = 0.8)),
+                textGrob("Market Auction Sentiment", x = 0.5, y = 0.85,
+                         gp = gpar(fontsize = 13, fontface = "bold", col = "#1B3A6B")),
+                textGrob(sentiment_label, x = 0.5, y = 0.65,
+                         gp = gpar(fontsize = 24, fontface = "bold", col = sentiment_color)),
+                textGrob(sprintf("Average BTC: %.2fx  (last %d auctions)", avg_btc, n_used),
+                         x = 0.5, y = 0.45,
+                         gp = gpar(fontsize = 11, col = "#333333")),
+                textGrob(sprintf("Strong >3x: %.0f%%   |   Weak <2x: %.0f%%", pct_strong, pct_weak),
+                         x = 0.5, y = 0.32,
+                         gp = gpar(fontsize = 10, col = "#555555")),
+                textGrob(sprintf("Based on auctions through %s", format(latest_date, "%b %d, %Y")),
+                         x = 0.5, y = 0.18,
+                         gp = gpar(fontsize = 9, col = "#999999", fontface = "italic"))
+            ))
+        } else {
+            textGrob("No auction sentiment data available",
+                     gp = gpar(fontsize = 12, col = "#999999"))
+        }
+    }, error = function(e) {
+        textGrob("Sentiment analysis unavailable",
+                 gp = gpar(fontsize = 12, col = "#999999"))
+    })
 
     message("[PRE-AUCTION PDF] Pre-rendering complete. Opening PDF device...")
 
@@ -2394,10 +2598,21 @@ generate_pre_auction_pdf <- function(file, config, filtered_data, processed_data
             }
         }
 
-        # Outlook narrative text
-        grid.text(outlook_text,
-                  x = 0.08, y = 0.68, hjust = 0, vjust = 1,
-                  gp = gpar(fontsize = 10, lineheight = 1.5, col = "#333333"))
+        # Outlook narrative text — wrap each line to fit the page width
+        outlook_lines <- strsplit(outlook_text, "\n")[[1]]
+        wrapped_lines <- sapply(outlook_lines, function(line) {
+            if (nchar(trimws(line)) > 0) {
+                paste(strwrap(line, width = 105), collapse = "\n")
+            } else {
+                ""
+            }
+        }, USE.NAMES = FALSE)
+        wrapped_outlook <- paste(wrapped_lines, collapse = "\n")
+
+        grid.text(wrapped_outlook,
+                  x = 0.06, y = 0.68, hjust = 0, vjust = 1,
+                  gp = gpar(fontsize = 9, lineheight = 1.4, col = "#333333",
+                            fontfamily = "mono"))
 
         # Recent auction history table (bottom of page)
         if (!is.null(recent_history_grob)) {
@@ -2456,30 +2671,35 @@ generate_pre_auction_pdf <- function(file, config, filtered_data, processed_data
 
         add_footer(5, total_pages)
 
-        # ─── PAGE 6: PATTERNS & SUPPLY/DEMAND (Combined) ──────────
+        # ─── PAGE 6: PATTERNS & ISSUANCE (Combined) ──────────
         grid.newpage()
-        draw_page_header("Historical Patterns & Supply/Demand")
+        draw_page_header("Historical Patterns & Issuance")
 
         has_patterns <- !is.null(auction_patterns_grob)
-        has_bid_dist <- !is.null(bid_dist_grob)
+        has_issuance <- !is.null(issuance_compare_grob)
 
-        if (has_patterns && has_bid_dist) {
+        if (has_patterns && has_issuance) {
             pushViewport(viewport(x = 0.5, y = 0.7, width = 0.92, height = 0.40))
             grid.draw(auction_patterns_grob)
             popViewport()
             pushViewport(viewport(x = 0.5, y = 0.27, width = 0.92, height = 0.40))
-            grid.draw(bid_dist_grob)
+            grid.draw(issuance_compare_grob)
             popViewport()
         } else if (has_patterns) {
             pushViewport(viewport(x = 0.5, y = 0.47, width = 0.92, height = 0.82))
             grid.draw(auction_patterns_grob)
             popViewport()
-        } else if (has_bid_dist) {
+        } else if (has_issuance) {
+            pushViewport(viewport(x = 0.5, y = 0.47, width = 0.92, height = 0.82))
+            grid.draw(issuance_compare_grob)
+            popViewport()
+        } else if (!is.null(bid_dist_grob)) {
+            # Fallback to bid distribution if issuance chart also fails
             pushViewport(viewport(x = 0.5, y = 0.47, width = 0.92, height = 0.82))
             grid.draw(bid_dist_grob)
             popViewport()
         } else {
-            draw_placeholder("Historical patterns & supply/demand charts unavailable")
+            draw_placeholder("Historical patterns & issuance charts unavailable")
         }
 
         add_footer(6, total_pages)
@@ -2690,10 +2910,16 @@ create_pre_auction_html_report <- function(config, filtered_data, processed_data
         "Historical Auction Patterns", "auction_patterns"
     )
 
-    # Bid distribution
+    # Bid distribution (kept as fallback)
     bid_dist_chart <- render_chart_html(
         quote(generate_bid_distribution_plot(filtered_data, list(), selected_bonds = auction_bonds)),
         "Bid Distribution", "bid_dist"
+    )
+
+    # Issuance comparison (NEW — replaces bid distribution)
+    issuance_chart <- render_chart_html(
+        quote(generate_issuance_comparison_chart(filtered_data)),
+        "Cumulative Issuance Comparison", "issuance_comparison", width = 11, height = 6
     )
 
     # BTC history line chart
@@ -2791,9 +3017,9 @@ create_pre_auction_html_report <- function(config, filtered_data, processed_data
         %s
     </div>
 
-    <!-- Section 5: Historical Patterns & Supply/Demand -->
+    <!-- Section 5: Historical Patterns & Issuance -->
     <div class="section">
-        <h2>Historical Patterns &amp; Supply/Demand</h2>
+        <h2>Historical Patterns &amp; Issuance</h2>
         %s
         %s
     </div>
@@ -2827,7 +3053,7 @@ create_pre_auction_html_report <- function(config, filtered_data, processed_data
         yield_curve_chart,
         perf_chart,
         patterns_chart,
-        bid_dist_chart,
+        issuance_chart,
         forecast_html,
         btc_history_chart,
         sentiment_chart,
