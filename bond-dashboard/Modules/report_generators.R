@@ -2287,7 +2287,7 @@ generate_pre_auction_pdf <- function(file, config, filtered_data, processed_data
 
     temp_dir <- tempdir()
     temp_pdf <- file.path(temp_dir, paste0("pre_auction_", Sys.getpid(), ".pdf"))
-    total_pages <- 7
+    total_pages <- 8
     auction_bonds <- config$pre_auction_bonds
     auction_date <- config$auction_date %||% Sys.Date()
     client_name <- config$client_name %||% ""
@@ -2497,6 +2497,12 @@ generate_pre_auction_pdf <- function(file, config, filtered_data, processed_data
         textGrob("Sentiment analysis unavailable",
                  gp = gpar(fontsize = 12, col = "#999999"))
     })
+
+    # 11. YTD vs Previous Year Issuance chart (Page 8)
+    ytd_issuance_grob <- safe_render_plot(
+        quote(generate_ytd_vs_prev_year_issuance_chart(filtered_data, list())),
+        "ytd_issuance", width = 10, height = 6
+    )
 
     message("[PRE-AUCTION PDF] Pre-rendering complete. Opening PDF device...")
 
@@ -2748,6 +2754,20 @@ generate_pre_auction_pdf <- function(file, config, filtered_data, processed_data
 
         add_footer(7, total_pages)
 
+        # ─── PAGE 8: CUMULATIVE ISSUANCE ──────────────────────────────
+        grid.newpage()
+        draw_page_header("Cumulative Government Bond Issuance")
+
+        if (!is.null(ytd_issuance_grob)) {
+            pushViewport(viewport(x = 0.5, y = 0.47, width = 0.92, height = 0.82))
+            grid.draw(ytd_issuance_grob)
+            popViewport()
+        } else {
+            draw_placeholder("Issuance chart unavailable")
+        }
+
+        add_footer(8, total_pages)
+
         dev.off()
 
         # Copy to output
@@ -2934,6 +2954,12 @@ create_pre_auction_html_report <- function(config, filtered_data, processed_data
         "Market Sentiment", "sentiment"
     )
 
+    # YTD vs Previous Year Issuance comparison
+    ytd_issuance_chart <- render_chart_html(
+        quote(generate_ytd_vs_prev_year_issuance_chart(filtered_data, list())),
+        "Cumulative Issuance YTD Comparison", "ytd_issuance", width = 10, height = 6
+    )
+
     # ══════════════════════════════════════════════════════════════════
     # BUILD TABLE HTML
     # ══════════════════════════════════════════════════════════════════
@@ -2950,7 +2976,7 @@ create_pre_auction_html_report <- function(config, filtered_data, processed_data
     )
 
     # ══════════════════════════════════════════════════════════════════
-    # ASSEMBLE HTML (7-section structure matching PDF)
+    # ASSEMBLE HTML (8-section structure matching PDF)
     # ══════════════════════════════════════════════════════════════════
     html <- sprintf('<!DOCTYPE html>
 <html>
@@ -3033,6 +3059,12 @@ create_pre_auction_html_report <- function(config, filtered_data, processed_data
         %s
     </div>
 
+    <!-- Section 7: Cumulative Issuance -->
+    <div class="section">
+        <h2>Cumulative Government Bond Issuance</h2>
+        %s
+    </div>
+
     <div class="disclaimer">
         <strong>Important Notice:</strong> This report contains proprietary analysis by Insele Capital Partners and should not be forwarded without authorization.
     </div>
@@ -3057,6 +3089,7 @@ create_pre_auction_html_report <- function(config, filtered_data, processed_data
         forecast_html,
         btc_history_chart,
         sentiment_chart,
+        ytd_issuance_chart,
         format(Sys.Date(), "%%Y")
     )
 

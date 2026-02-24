@@ -186,6 +186,159 @@ generate_ytd_bond_issuance_chart <- function(data, params = list()) {
     return(p)
 }
 
+#' @export
+#' @title YTD vs Previous Year Issuance Comparison Chart
+#' @description Horizontal grouped bar chart comparing cumulative bond issuance
+#'   for current YTD period vs the equivalent period in the prior year
+#' @param data Full unfiltered bond auction data
+#' @param params Optional parameters
+#' @return ggplot object
+generate_ytd_vs_prev_year_issuance_chart <- function(data, params = list()) {
+    tryCatch({
+        # Ensure date columns are Date objects
+        data <- ensure_date_columns(data)
+
+        # Validate issuance data
+        data_check <- check_issuance_data(data, required_cols = c("date"))
+        if (!data_check$has_data) {
+            return(create_no_issuance_data_plot(data_check$message))
+        }
+
+        # Determine the latest data date
+        max_date <- max(data$date[!is.na(data$offer_amount) & data$offer_amount > 0], na.rm = TRUE)
+
+        # Define periods
+        current_year <- lubridate::year(max_date)
+        current_ytd_start <- as.Date(paste0(current_year, "-01-01"))
+        prev_year_start <- as.Date(paste0(current_year - 1, "-01-01"))
+        prev_year_end <- max_date - lubridate::years(1)
+
+        # Current YTD data
+        current_data <- data %>%
+            dplyr::filter(!is.na(offer_amount), offer_amount > 0,
+                          date >= current_ytd_start, date <= max_date) %>%
+            dplyr::group_by(bond) %>%
+            dplyr::summarise(
+                total_issuance = sum(offer_amount, na.rm = TRUE),
+                n_auctions = dplyr::n(),
+                .groups = "drop"
+            ) %>%
+            dplyr::mutate(period = paste0("Current (", current_year, ")"))
+
+        # Previous year equivalent period data
+        prev_data <- data %>%
+            dplyr::filter(!is.na(offer_amount), offer_amount > 0,
+                          date >= prev_year_start, date <= prev_year_end) %>%
+            dplyr::group_by(bond) %>%
+            dplyr::summarise(
+                total_issuance = sum(offer_amount, na.rm = TRUE),
+                n_auctions = dplyr::n(),
+                .groups = "drop"
+            ) %>%
+            dplyr::mutate(period = paste0("Previous (", current_year - 1, ")"))
+
+        # Combine and handle bonds in either period
+        combined <- dplyr::bind_rows(current_data, prev_data)
+
+        if (nrow(combined) == 0) {
+            return(create_no_issuance_data_plot("No issuance data available for comparison periods"))
+        }
+
+        # Convert to millions
+        combined <- combined %>%
+            dplyr::mutate(total_issuance_mil = total_issuance / 1e6)
+
+        # Order bonds by current YTD total issuance (descending)
+        bond_order <- current_data %>%
+            dplyr::arrange(dplyr::desc(total_issuance)) %>%
+            dplyr::pull(bond)
+        # Add any bonds only in previous period
+        prev_only <- setdiff(prev_data$bond, current_data$bond)
+        bond_order <- c(bond_order, prev_only)
+
+        combined <- combined %>%
+            dplyr::mutate(bond = factor(bond, levels = rev(bond_order)))
+
+        # Define period labels and colors
+        current_label <- paste0("Current (", current_year, ")")
+        prev_label <- paste0("Previous (", current_year - 1, ")")
+        period_colors <- c("#1B3A6B", "#90A4AE")
+        names(period_colors) <- c(current_label, prev_label)
+
+        combined$period <- factor(combined$period, levels = c(current_label, prev_label))
+
+        # Build subtitle
+        subtitle_text <- sprintf(
+            "Current: Jan 1, %d to %s  |  Previous: Jan 1, %d to %s",
+            current_year, format(max_date, "%b %d, %Y"),
+            current_year - 1, format(prev_year_end, "%b %d, %Y")
+        )
+
+        # Create the grouped bar chart
+        p <- ggplot(combined, aes(x = bond, y = total_issuance_mil, fill = period)) +
+            geom_col(position = position_dodge(width = 0.8),
+                     width = 0.7, alpha = 0.9) +
+
+            # Value labels on bars
+            geom_text(aes(label = paste0("R", format(round(total_issuance_mil, 0), big.mark = ","), "m")),
+                      position = position_dodge(width = 0.8),
+                      hjust = -0.05, size = 3, fontface = "bold",
+                      color = insele_palette$text_primary) +
+
+            scale_fill_manual(values = period_colors,
+                              name = NULL) +
+
+            scale_y_continuous(
+                labels = function(x) paste0("R", format(x, big.mark = ","), "m"),
+                expand = expansion(mult = c(0, 0.20))
+            ) +
+
+            coord_flip() +
+
+            labs(
+                title = "Cumulative Government Bond Issuance \u2014 YTD Comparison",
+                subtitle = subtitle_text,
+                x = NULL,
+                y = "Total Issuance (R millions)",
+                caption = paste("Source: Insele Capital Partners Bond Analytics | Generated:",
+                                format(Sys.Date(), "%b %d, %Y"))
+            ) +
+
+            theme_minimal() +
+
+            theme(
+                panel.grid.major.y = element_blank(),
+                panel.grid.major.x = element_line(color = "#E0E0E0",
+                                                  linewidth = 0.5,
+                                                  linetype = "dashed"),
+                axis.text.y = element_text(size = 10, face = "bold",
+                                           color = insele_palette$text_primary),
+                axis.text.x = element_text(size = 9, color = insele_palette$text_secondary),
+                plot.title = element_text(size = 16, face = "bold",
+                                          color = "#1B3A6B",
+                                          margin = ggplot2::margin(b = 5)),
+                plot.subtitle = element_text(size = 11,
+                                             color = insele_palette$text_secondary,
+                                             margin = ggplot2::margin(b = 15)),
+                plot.caption = element_text(size = 8,
+                                            color = insele_palette$text_secondary,
+                                            hjust = 1,
+                                            margin = ggplot2::margin(t = 10)),
+                legend.position = "bottom",
+                legend.text = element_text(size = 10),
+                plot.margin = ggplot2::margin(15, 15, 15, 15)
+            )
+
+        return(p)
+
+    }, error = function(e) {
+        message(sprintf("[YTD vs Prev Year Issuance] Error: %s", e$message))
+        return(create_no_issuance_data_plot(
+            paste("Issuance comparison chart error:", e$message)
+        ))
+    })
+}
+
 #' @title Generate Cumulative Issuance Data Table
 #' @description Creates a formatted data table with cumulative issuance statistics for the selected date range.
 #'              First/Last Auction columns show HISTORICAL dates (from full_data), independent of the date filter.
