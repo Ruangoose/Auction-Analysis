@@ -13441,6 +13441,9 @@ $$Net Return = Carry + Roll - Funding Cost$$
         cat("\n", rep("=", 60), "\n", sep = "")
         cat("Session cleanup completed\n")
         cat(rep("=", 60), "\n\n", sep = "")
+
+        # Auto-close when launched from desktop shortcut
+        stopApp()
     })
 
     # End of session cleanup handler
