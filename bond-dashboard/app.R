@@ -15,6 +15,7 @@ source("bond-dashboard/R/data_processing.R")
 source("bond-dashboard/R/plotting.R")
 source("bond-dashboard/R/analytics.R")
 source("bond-dashboard/Modules/data_loader.R")
+source("bond-dashboard/Modules/archive_loader.R")
 
 # Initialize shinyjs for dynamic UI
 shinyjs::useShinyjs()
@@ -619,8 +620,14 @@ server <- function(input, output, session) {
             showNotification("Loading bond data...", type = "message", duration = 2)
 
             # Use the robust data loading function (dynamic bond detection, #N/A handling, maturity filtering)
+            # Supports hybrid loading: archive (.rds) + current Excel data
+            excel_file <- if (file.exists("bond-dashboard/data/Insele_Bonds_Data_File.xlsm")) {
+                "bond-dashboard/data/Insele_Bonds_Data_File.xlsm"
+            } else {
+                "bond-dashboard/data/Siyanda Bonds.xlsx"
+            }
             bond_data <- load_bond_data_robust(
-                file_path = "bond-dashboard/data/Siyanda Bonds.xlsx",
+                file_path = excel_file,
                 reference_date = Sys.Date()
             )
 

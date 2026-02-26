@@ -84,6 +84,7 @@ source_module <- function(module_name) {
 # Load all required modules
 required_modules <- c(
     "data_loader.R",                 # Dynamic Excel data loader with caching
+    "archive_loader.R",              # Archive CSV ingestion + hybrid data loading
     "theme_config.R",
     "ui_helpers.R",
     "data_processors.R",
@@ -173,10 +174,16 @@ server <- function(input, output, session) {
 
             # Try multiple possible Excel file locations
             excel_paths <- c(
-                "data/Insele Bonds Data File.xlsx",                 # Standard location
-                "Insele Bonds Data File.xlsx",                      # Same directory
-                "../data/Insele Bonds Data File.xlsx",              # Parent data directory
-                "bond-dashboard/data/Insele Bonds Data File.xlsx"   # Old structure
+                "data/Insele_Bonds_Data_File.xlsm",                 # New .xlsm file
+                "data/Insele Bonds Data File.xlsx",                  # Standard location
+                "data/Siyanda Bonds.xlsx",                           # Legacy name
+                "Insele_Bonds_Data_File.xlsm",                      # Same directory
+                "Insele Bonds Data File.xlsx",                       # Same directory
+                "../data/Insele_Bonds_Data_File.xlsm",              # Parent data directory
+                "../data/Insele Bonds Data File.xlsx",               # Parent data directory
+                "bond-dashboard/data/Insele_Bonds_Data_File.xlsm",  # Old structure
+                "bond-dashboard/data/Insele Bonds Data File.xlsx",   # Old structure
+                "bond-dashboard/data/Siyanda Bonds.xlsx"             # Legacy name in old structure
             )
 
             # Try multiple possible cache file locations
