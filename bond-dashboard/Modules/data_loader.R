@@ -363,7 +363,7 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
   archive_path <- file.path(data_dir, "bond_archive.rds")
 
   has_staged_csvs <- dir.exists(staging_dir) &&
-    length(list.files(staging_dir, pattern = "\\.csv$")) > 0
+    length(list.files(staging_dir, pattern = "_archive_\\d+(\\.csv)?$", ignore.case = TRUE)) > 0
   has_archive     <- file.exists(archive_path)
 
   if (has_staged_csvs || has_archive) {
@@ -1634,6 +1634,31 @@ load_bond_data <- function(
     message(sprintf("  Cache file:    %s", cache_path))
     message(sprintf("  Force refresh: %s", force_refresh))
     message(sprintf("  Verify quality: %s", verify_quality))
+
+    # =========================================================================
+    # CHECK FOR HYBRID LOADING PATH
+    # If archive_staging/ has files or bond_archive.rds exists, delegate to
+    # load_bond_data_hybrid() which seamlessly combines archive + Excel data.
+    # =========================================================================
+    data_dir     <- dirname(excel_path)
+    staging_dir  <- file.path(data_dir, "archive_staging")
+    archive_path <- file.path(data_dir, "bond_archive.rds")
+
+    has_staged_files <- dir.exists(staging_dir) &&
+        length(list.files(staging_dir, pattern = "_archive_\\d+(\\.csv)?$", ignore.case = TRUE)) > 0
+    has_archive      <- file.exists(archive_path)
+
+    if (has_staged_files || has_archive) {
+        message("\n  [Hybrid] Archive data detected — using hybrid loader")
+        hybrid_result <- load_bond_data_hybrid(
+            excel_path     = excel_path,
+            data_dir       = data_dir,
+            reference_date = Sys.Date()
+        )
+        # load_bond_data_hybrid returns a list; this function returns a flat df
+        # Return the full_df for backward compatibility with callers that expect a tibble
+        return(hybrid_result$full_df)
+    }
 
     # =========================================================================
     # CRITICAL FIX: Check for cache corruption BEFORE deciding to use it

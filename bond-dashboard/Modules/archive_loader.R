@@ -44,9 +44,14 @@ process_archive_staging <- function(data_dir = "data") {
     message("[Archive] Created archive_staging/ directory")
   }
 
-  # List CSV files in the staging directory
+  # List archive files in the staging directory
+  # Match files with or without .csv extension (Excel VBA may export without extension)
+  # Pattern matches: ytm_archive_20260226.csv OR ytm_archive_20260226 (no extension)
+  archive_prefixes <- paste(names(ARCHIVE_SERIES_MAP), collapse = "|")
+  file_pattern <- sprintf("^(%s)_archive_\\d+(\\.csv)?$", archive_prefixes)
 
-  csv_files <- list.files(staging_dir, pattern = "\\.csv$", full.names = TRUE)
+  csv_files <- list.files(staging_dir, pattern = file_pattern, full.names = TRUE,
+                          ignore.case = TRUE)
 
   if (length(csv_files) == 0) {
     message("[Archive] No staged CSVs found — nothing to process")
@@ -369,96 +374,28 @@ load_bond_data_hybrid <- function(excel_path,
   }
 
   # ---- Step 5: Load non-archived sheets from Excel ----
+  # Re-use existing data_loader.R functions for full compatibility
   message("\n[Hybrid] Loading non-archived sheets from Excel...")
 
-  # Maturity lookup (STEP 1 from load_bond_data_robust)
-  maturity_lookup <- NULL
-  auction_raw     <- NULL
-  cpn_df          <- NULL
+  cpn_df     <- NULL
+  auction_df <- NULL
 
   if (excel_available) {
-    # Auction data
-    auction_raw <- tryCatch({
-      readxl::read_excel(excel_path, sheet = "auctions",
-                         na = c("", "NA", "#N/A", "N/A", "#VALUE!", "#REF!"),
-                         guess_max = 21474836) %>%
-        dplyr::mutate(
-          mat_date   = lubridate::as_date(mat_date),
-          offer_date = lubridate::as_date(offer_date)
-        )
-    }, error = function(e) {
-      warning("[Hybrid] Failed to read auctions sheet: ", e$message)
-      NULL
-    })
-
-    # Maturity dates (primary: maturity_date sheet, fallback: auctions)
-    maturity_from_sheet <- load_maturity_dates(excel_path)
-    if (!is.null(maturity_from_sheet) && nrow(maturity_from_sheet) > 0) {
-      message("[Hybrid] Using maturity dates from maturity_date sheet")
-      maturity_lookup <- maturity_from_sheet %>%
-        dplyr::mutate(
-          is_matured      = maturity_date < reference_date,
-          days_to_maturity = as.numeric(maturity_date - reference_date)
-        )
-      if (!is.null(auction_raw)) {
-        auction_info <- auction_raw %>%
-          dplyr::group_by(bond) %>%
-          dplyr::summarise(
-            first_auction  = min(offer_date, na.rm = TRUE),
-            last_auction   = max(offer_date, na.rm = TRUE),
-            total_auctions = dplyr::n(),
-            .groups = "drop"
-          )
-        maturity_lookup <- maturity_lookup %>%
-          dplyr::left_join(auction_info, by = "bond")
+    # Detect available bonds from the combined time series (union of archive + Excel)
+    all_bonds_seen <- character()
+    for (ts_name in names(combined_ts)) {
+      df <- combined_ts[[ts_name]]
+      if (!is.null(df) && nrow(df) > 0) {
+        all_bonds_seen <- union(all_bonds_seen, unique(df$bond))
       }
-    } else if (!is.null(auction_raw)) {
-      message("[Hybrid] Falling back to auction data for maturity inference")
-      maturity_lookup <- auction_raw %>%
-        dplyr::filter(!is.na(mat_date)) %>%
-        dplyr::group_by(bond) %>%
-        dplyr::summarise(
-          maturity_date  = dplyr::first(mat_date),
-          first_auction  = min(offer_date, na.rm = TRUE),
-          last_auction   = max(offer_date, na.rm = TRUE),
-          total_auctions = dplyr::n(),
-          .groups = "drop"
-        ) %>%
-        dplyr::mutate(
-          is_matured       = maturity_date < reference_date,
-          days_to_maturity = as.numeric(maturity_date - reference_date)
-        )
     }
+    message(sprintf("[Hybrid] Bond universe (union of archive + Excel): %d bonds", length(all_bonds_seen)))
 
-    # Coupon data
-    cpn_df <- tryCatch({
-      df <- readxl::read_excel(excel_path, sheet = "cpn",
-                               na = c("", "NA", "#N/A", "N/A", "#VALUE!", "#REF!"),
-                               guess_max = 21474836)
-      df %>%
-        dplyr::select(-dplyr::any_of("date")) %>%
-        tidyr::pivot_longer(
-          cols      = dplyr::everything(),
-          names_to  = "bond",
-          values_to = "coupon"
-        ) %>%
-        dplyr::mutate(coupon = as.numeric(coupon)) %>%
-        dplyr::filter(!is.na(coupon)) %>%
-        dplyr::distinct(bond, .keep_all = TRUE)
-    }, error = function(e) {
-      warning("[Hybrid] Failed to load coupon data: ", e$message)
-      NULL
-    })
-  }
+    # Load coupon data using existing function
+    cpn_df <- load_coupon_data(excel_path, all_bonds_seen)
 
-  # Empty maturity_lookup fallback
-  if (is.null(maturity_lookup)) {
-    maturity_lookup <- tibble::tibble(
-      bond             = character(),
-      maturity_date    = as.Date(character()),
-      is_matured       = logical(),
-      days_to_maturity = numeric()
-    )
+    # Load auction data using existing function (full columns)
+    auction_df <- load_auction_data(excel_path)
   }
 
   # ---- Step 6: Join all series into master full_df ----
@@ -471,8 +408,8 @@ load_bond_data_hybrid <- function(excel_path,
   if (is.null(mod_dur_df) || nrow(mod_dur_df) == 0) stop("[Hybrid] No modified duration data available")
 
   # Inner join for critical fields
-  full_df <- ytm_df %>%
-    dplyr::inner_join(mod_dur_df, by = c("date", "bond"))
+  full_df <- mod_dur_df %>%
+    dplyr::inner_join(ytm_df, by = c("date", "bond"))
 
   message(sprintf("[Hybrid]   After YTM+ModDur inner join: %s rows",
                   format(nrow(full_df), big.mark = ",")))
@@ -511,56 +448,63 @@ load_bond_data_hybrid <- function(excel_path,
       dplyr::left_join(cpn_df, by = "bond")
   }
 
-  # Join maturity info (by bond only)
-  full_df <- full_df %>%
-    dplyr::left_join(
-      maturity_lookup %>% dplyr::select(bond, maturity_date, is_matured, days_to_maturity),
-      by = "bond"
-    )
+  # ---- Maturity and auction handling (matches load_from_excel exactly) ----
+  bond_maturity_lookup <- NULL
 
-  # Join auction metrics (by date AND bond)
-  if (!is.null(auction_raw)) {
-    auction_metrics <- auction_raw %>%
-      dplyr::select(bond, date = offer_date, offer, bids, bid_to_cover, allocation) %>%
-      dplyr::filter(!is.na(date))
+  if (!is.null(auction_df)) {
+    message("\n[Hybrid] Applying maturity date fix (join by bond only)...")
+
+    # Create maturity lookup (uses maturity_date sheet as PRIMARY source)
+    bond_maturity_lookup <- create_bond_maturity_lookup(auction_df, excel_path)
+
+    # Join MATURITY DATES by BOND ONLY (propagates to all dates)
+    full_df <- full_df %>%
+      dplyr::left_join(
+        bond_maturity_lookup %>% dplyr::select(bond, mature_date),
+        by = "bond"
+      )
+
+    # Join AUCTION METRICS by date+bond (for date-specific data)
+    auction_metrics <- auction_df %>%
+      dplyr::select(
+        date, bond,
+        dplyr::any_of(c(
+          "offer_amount", "allocation", "bids_received", "bid_to_cover",
+          "offer_date", "announcement_date", "settle_date",
+          "bond_coupon", "clearing_yield", "non_comps",
+          "number_bids_received", "best_bid", "worst_bid", "auction_tail"
+        ))
+      ) %>%
+      dplyr::select(-dplyr::any_of("mature_date"))
+
     full_df <- full_df %>%
       dplyr::left_join(auction_metrics, by = c("date", "bond"))
+
+    message("[Hybrid]   Maturity + auction metrics joined")
+  } else {
+    message("[Hybrid]   No auction data available")
   }
 
-  # ---- Step 7: Add calculated fields & filter matured bonds ----
+  # ---- Step 7: Add calculated fields (matches load_from_excel exactly) ----
   message("\n[Hybrid] Adding calculated fields...")
 
+  # Calculate time_to_maturity and maturity_bucket (same as load_from_excel)
   full_df <- full_df %>%
     dplyr::mutate(
-      year    = lubridate::year(date),
-      quarter = lubridate::quarter(date),
-      month   = lubridate::month(date),
-      week    = lubridate::week(date),
-
-      dv01 = dplyr::case_when(
-        !is.na(basis_point_value)                      ~ basis_point_value,
-        !is.na(modified_duration) & !is.na(full_price) ~ modified_duration * full_price / 10000,
-        !is.na(modified_duration)                      ~ modified_duration * 100 / 10000,
+      time_to_maturity = dplyr::case_when(
+        !is.na(mature_date) ~ as.numeric(difftime(mature_date, date, units = "days")) / 365.25,
         TRUE ~ NA_real_
       ),
-
       maturity_bucket = dplyr::case_when(
-        days_to_maturity <= 3 * 365  ~ "Short (0-3Y)",
-        days_to_maturity <= 7 * 365  ~ "Medium (3-7Y)",
-        days_to_maturity <= 12 * 365 ~ "Long (7-12Y)",
-        days_to_maturity > 12 * 365  ~ "Ultra-Long (12Y+)",
+        is.na(time_to_maturity) ~ "Unknown",
+        time_to_maturity <= 0   ~ "Matured",
+        time_to_maturity <= 3   ~ "Short (0-3y)",
+        time_to_maturity <= 7   ~ "Medium (3-7y)",
+        time_to_maturity <= 12  ~ "Long (7-12y)",
+        time_to_maturity > 12   ~ "Ultra-Long (12y+)",
         TRUE ~ "Unknown"
-      ),
-
-      auction_success = dplyr::case_when(
-        is.na(bid_to_cover)   ~ NA_character_,
-        bid_to_cover >= 3     ~ "Strong",
-        bid_to_cover >= 2     ~ "Adequate",
-        TRUE                  ~ "Weak"
       )
     ) %>%
-    dplyr::filter(!is_matured | is.na(is_matured)) %>%
-    dplyr::filter(!is.na(yield_to_maturity) & !is.na(modified_duration)) %>%
     dplyr::arrange(date, bond)
 
   message(sprintf("[Hybrid]   Final rows: %s", format(nrow(full_df), big.mark = ",")))
@@ -572,7 +516,7 @@ load_bond_data_hybrid <- function(excel_path,
     dplyr::group_by(bond) %>%
     dplyr::summarise(
       coupon             = dplyr::first(stats::na.omit(coupon)),
-      maturity_date      = dplyr::first(maturity_date),
+      maturity_date      = if ("mature_date" %in% names(full_df)) dplyr::first(mature_date) else NA_real_,
       avg_duration       = mean(modified_duration, na.rm = TRUE),
       avg_convexity      = mean(convexity, na.rm = TRUE),
       latest_ytm         = dplyr::last(stats::na.omit(yield_to_maturity)),
@@ -585,14 +529,31 @@ load_bond_data_hybrid <- function(excel_path,
     ) %>%
     dplyr::arrange(avg_duration)
 
-  auction_summary <- if (!is.null(auction_raw)) {
-    auction_raw %>%
+  # Build maturity_lookup for the return value (matches load_bond_data_robust output)
+  maturity_lookup <- if (!is.null(bond_maturity_lookup) && nrow(bond_maturity_lookup) > 0) {
+    bond_maturity_lookup %>%
+      dplyr::rename(maturity_date = mature_date) %>%
+      dplyr::mutate(
+        is_matured       = maturity_date < reference_date,
+        days_to_maturity = as.numeric(maturity_date - reference_date)
+      )
+  } else {
+    tibble::tibble(
+      bond             = character(),
+      maturity_date    = as.Date(character()),
+      is_matured       = logical(),
+      days_to_maturity = numeric()
+    )
+  }
+
+  auction_summary <- if (!is.null(auction_df)) {
+    auction_df %>%
       dplyr::filter(bond %in% unique(full_df$bond)) %>%
       dplyr::filter(!is.na(bid_to_cover)) %>%
       dplyr::group_by(bond) %>%
       dplyr::summarise(
         total_auctions = dplyr::n(),
-        total_offered  = sum(offer, na.rm = TRUE) / 1e9,
+        total_offered  = sum(offer_amount, na.rm = TRUE) / 1e9,
         avg_bid_cover  = mean(bid_to_cover, na.rm = TRUE),
         min_bid_cover  = min(bid_to_cover, na.rm = TRUE),
         max_bid_cover  = max(bid_to_cover, na.rm = TRUE),
@@ -621,7 +582,7 @@ load_bond_data_hybrid <- function(excel_path,
     bond_metadata   = bond_metadata,
     auction_summary = auction_summary,
     maturity_lookup = maturity_lookup,
-    auction_raw     = auction_raw
+    auction_raw     = auction_df
   ))
 }
 
