@@ -340,6 +340,10 @@ load_maturity_dates <- function(excel_path) {
 #' 3. Excel #N/A values not being properly converted to NA
 #' 4. Missing data rows showing fallback values
 #'
+#' Now supports hybrid loading: if archive_staging/ CSVs or bond_archive.rds
+#' exist, delegates to load_bond_data_hybrid() which seamlessly combines
+#' archived historical data with current Excel data.
+#'
 #' @param file_path Path to the Excel file
 #' @param reference_date Date to filter matured bonds (default: today)
 #' @return List containing full_df, bond_metadata, auction_summary, maturity_lookup
@@ -349,6 +353,29 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
   message("=== LOADING BOND DATA (ROBUST) ===")
   message("File: ", file_path)
   message("Reference date: ", reference_date)
+
+  # --------------------------------------------------------------------------
+  # CHECK FOR HYBRID LOADING PATH
+  # If archive_staging/ has CSVs or bond_archive.rds exists, use hybrid loader
+  # --------------------------------------------------------------------------
+  data_dir     <- dirname(file_path)
+  staging_dir  <- file.path(data_dir, "archive_staging")
+  archive_path <- file.path(data_dir, "bond_archive.rds")
+
+  has_staged_csvs <- dir.exists(staging_dir) &&
+    length(list.files(staging_dir, pattern = "\\.csv$")) > 0
+  has_archive     <- file.exists(archive_path)
+
+  if (has_staged_csvs || has_archive) {
+    message("[Robust] Archive data detected — delegating to hybrid loader")
+    return(load_bond_data_hybrid(
+      excel_path     = file_path,
+      data_dir       = data_dir,
+      reference_date = reference_date
+    ))
+  }
+
+  message("[Robust] No archive data — using Excel-only loading path")
 
   # --------------------------------------------------------------------------
   # STEP 1: Build Maturity Lookup (PRIMARY: maturity_date sheet, FALLBACK: auctions)
