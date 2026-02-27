@@ -167,7 +167,11 @@ standardize_column_names <- function(data) {
 
         # Price columns
         dirty_price = "full_price",
-        price = "clean_price"
+        price = "clean_price",
+
+        # Maturity columns (hybrid archive loader uses maturity_date,
+        # Excel-only loader and downstream code expect mature_date)
+        maturity_date = "mature_date"
     )
 
     # Apply mappings (case-insensitive)

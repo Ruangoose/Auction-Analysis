@@ -1651,6 +1651,81 @@ load_bond_data <- function(
     message(sprintf("  Verify quality: %s", verify_quality))
 
     # =========================================================================
+    # CHECK FOR HYBRID LOADING PATH (archive staging CSVs or bond_archive.rds)
+    # If the VBA archiving macro has exported CSVs, or a previous run already
+    # built bond_archive.rds, delegate to the hybrid loader which seamlessly
+    # combines archived historical data with current Excel data.
+    # =========================================================================
+    data_dir     <- dirname(excel_path)
+    staging_dir  <- file.path(data_dir, "archive_staging")
+    archive_rds  <- file.path(data_dir, "bond_archive.rds")
+
+    has_staged_csvs <- dir.exists(staging_dir) &&
+        length(list.files(staging_dir, pattern = "\\.csv$")) > 0
+    has_archive     <- file.exists(archive_rds)
+
+    if (has_staged_csvs || has_archive) {
+        message("\n[load_bond_data] Archive data detected \u2014 switching to hybrid loader")
+        if (has_staged_csvs) {
+            message(sprintf("[load_bond_data]   Staged CSVs: %d file(s) in %s",
+                            length(list.files(staging_dir, pattern = "\\.csv$")),
+                            staging_dir))
+        }
+        if (has_archive) {
+            message(sprintf("[load_bond_data]   Existing archive: %s (%s bytes)",
+                            archive_rds,
+                            format(file.size(archive_rds), big.mark = ",")))
+        }
+
+        # Remove stale Excel-only cache (hybrid data supersedes it)
+        if (file.exists(cache_path)) {
+            message("[load_bond_data]   Removing stale Excel-only cache: ", cache_path)
+            file.remove(cache_path)
+        }
+
+        hybrid_result <- tryCatch({
+            load_bond_data_hybrid(
+                excel_path     = excel_path,
+                data_dir       = data_dir,
+                reference_date = Sys.Date()
+            )
+        }, error = function(e) {
+            warning(sprintf("[load_bond_data] Hybrid loader failed: %s \u2014 falling back to Excel-only",
+                            e$message))
+            NULL
+        })
+
+        if (!is.null(hybrid_result)) {
+            full_df <- hybrid_result$full_df
+
+            # Compatibility: rename maturity_date -> mature_date if needed
+            # (enhanced_bond_server.R checks for "mature_date" at lines 435, 1268, 10035)
+            if ("maturity_date" %in% names(full_df) && !"mature_date" %in% names(full_df)) {
+                full_df <- dplyr::rename(full_df, mature_date = maturity_date)
+            }
+
+            # Ensure time_to_maturity exists (expected by downstream code)
+            if (!"time_to_maturity" %in% names(full_df) && "mature_date" %in% names(full_df)) {
+                full_df <- full_df %>%
+                    dplyr::mutate(
+                        time_to_maturity = dplyr::case_when(
+                            !is.na(mature_date) ~ as.numeric(
+                                difftime(mature_date, date, units = "days")
+                            ) / 365.25,
+                            TRUE ~ NA_real_
+                        )
+                    )
+            }
+
+            return(tibble::as_tibble(full_df))
+        }
+
+        message("[load_bond_data] Hybrid loader failed \u2014 continuing with Excel-only path")
+    } else {
+        message("\n[load_bond_data] No archive data found \u2014 using Excel-only path")
+    }
+
+    # =========================================================================
     # CRITICAL FIX: Check for cache corruption BEFORE deciding to use it
     # =========================================================================
     cache_is_corrupted <- FALSE
