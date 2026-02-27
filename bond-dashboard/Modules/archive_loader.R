@@ -519,9 +519,34 @@ load_bond_data_hybrid <- function(excel_path,
     )
 
   # Join auction metrics (by date AND bond)
+  # Must match the column set from load_auction_data() in data_loader.R
+  # so enhanced_bond_server.R has offer_date, offer_amount, etc.
   if (!is.null(auction_raw)) {
     auction_metrics <- auction_raw %>%
-      dplyr::select(bond, date = offer_date, offer, bids, bid_to_cover, allocation) %>%
+      dplyr::mutate(
+        date              = offer_date,
+        offer_amount      = offer,
+        bids_received     = bids,
+        announcement_date = if ("announce_date" %in% names(.))
+                              lubridate::as_date(announce_date) else as.Date(NA),
+        settle_date       = if ("sett_date" %in% names(.))
+                              lubridate::as_date(sett_date) else as.Date(NA),
+        auction_tail      = dplyr::if_else(
+          !is.na(worst_bid) & !is.na(best_bid),
+          worst_bid - best_bid,
+          NA_real_
+        )
+      ) %>%
+      dplyr::select(
+        date, bond,
+        dplyr::any_of(c(
+          "offer_amount", "allocation", "bids_received", "bid_to_cover",
+          "offer_date", "announcement_date", "settle_date",
+          "bond_coupon", "clearing_yield", "non_comps",
+          "number_bids_received", "best_bid", "worst_bid", "auction_tail"
+        ))
+      ) %>%
+      dplyr::select(-dplyr::any_of("mature_date")) %>%
       dplyr::filter(!is.na(date))
     full_df <- full_df %>%
       dplyr::left_join(auction_metrics, by = c("date", "bond"))
