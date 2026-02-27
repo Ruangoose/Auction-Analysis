@@ -1717,15 +1717,21 @@ server <- function(input, output, session) {
         })
 
         # ═══════════════════════════════════════════════════════════════════════
-        # CRITICAL FIX: Explicitly filter out known matured bonds from dropdown
-        # This ensures R186 and other matured bonds never appear in Technical Analysis
+        # Filter out matured bonds from dropdown using dynamic metadata
+        # Uses bond_metadata() which reads maturity dates from the maturity_date sheet
         # ═══════════════════════════════════════════════════════════════════════
-        known_matured_bonds <- c("R157", "R186", "R197", "R203", "R204", "R207", "R208", "R212", "R2023")
-        found_matured <- intersect(active, known_matured_bonds)
+        matured_bonds_list <- tryCatch({
+            bond_metadata() %>%
+                dplyr::filter(is_matured == TRUE) %>%
+                dplyr::pull(bond)
+        }, error = function(e) {
+            character(0)
+        })
+        found_matured <- intersect(active, matured_bonds_list)
         if (length(found_matured) > 0) {
             message(sprintf("[Bond Selection] Excluding matured bonds from dropdown: %s",
                            paste(found_matured, collapse = ", ")))
-            active <- setdiff(active, known_matured_bonds)
+            active <- setdiff(active, matured_bonds_list)
         }
         message(sprintf("[Bond Selection] Active bonds for dropdown: %d (%s)",
                        length(active), paste(sort(active), collapse = ", ")))

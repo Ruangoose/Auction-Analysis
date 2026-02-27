@@ -33,21 +33,26 @@ is_cache_corrupted <- function(cache_data) {
     return(TRUE)  # Empty data is considered corrupted
   }
 
-  # Check for corruption signatures
+  # Matured bonds legitimately have ModDur near 0.0 or passing through 1.0
+  # Only check active bonds for ModDur corruption signatures
+  if ("mature_date" %in% names(cache_data)) {
+    active_data <- cache_data[is.na(cache_data$mature_date) | cache_data$mature_date >= Sys.Date(), ]
+  } else {
+    # Old cache format without mature_date — fall back to checking all data
+    message("  WARNING: Cache missing mature_date column - using strict corruption check")
+    active_data <- cache_data
+  }
+
+  # Check for YTM corruption (all bonds — YTM=1.0% is never valid for SA bonds)
   has_placeholder_ytm <- any(
     abs(cache_data$yield_to_maturity - 1.0) < 0.01,
     na.rm = TRUE
   )
 
-  has_placeholder_dur <- any(
-    abs(cache_data$modified_duration - 1.0) < 0.01 |
-    abs(cache_data$modified_duration) < 0.01,
-    na.rm = TRUE
-  )
-
-  # Check for unrealistic YTM range (valid bonds should have YTM > 1.5%)
-  ytm_out_of_range <- any(
-    cache_data$yield_to_maturity < 1.5 | cache_data$yield_to_maturity > 20,
+  # Check for ModDur corruption (active bonds only — matured bonds can have ModDur near 0/1)
+  has_placeholder_dur <- nrow(active_data) > 0 && any(
+    abs(active_data$modified_duration - 1.0) < 0.01 |
+    abs(active_data$modified_duration) < 0.01,
     na.rm = TRUE
   )
 
@@ -60,11 +65,11 @@ is_cache_corrupted <- function(cache_data) {
       message("    - Placeholder YTM (1.0%): ", paste(bad_bonds, collapse = ", "))
     }
     if (has_placeholder_dur) {
-      bad_bonds_dur <- unique(cache_data$bond[
-        abs(cache_data$modified_duration - 1.0) < 0.01 |
-        abs(cache_data$modified_duration) < 0.01
+      bad_bonds_dur <- unique(active_data$bond[
+        abs(active_data$modified_duration - 1.0) < 0.01 |
+        abs(active_data$modified_duration) < 0.01
       ])
-      message("    - Placeholder ModDur (0.0 or 1.0): ", paste(bad_bonds_dur, collapse = ", "))
+      message("    - Placeholder ModDur (0.0 or 1.0) in ACTIVE bonds: ", paste(bad_bonds_dur, collapse = ", "))
     }
   }
 
@@ -171,7 +176,16 @@ debug_bond_values <- function(df, stage_name) {
     return(invisible(NULL))
   }
 
-  suspect_bonds <- df %>%
+  check_df <- df
+
+  # If maturity information is available, only check active bonds
+  # Matured bonds legitimately have ModDur near 0.0 or passing through 1.0
+  if ("mature_date" %in% names(df)) {
+    check_df <- df %>%
+      dplyr::filter(is.na(mature_date) | mature_date >= Sys.Date())
+  }
+
+  suspect_bonds <- check_df %>%
     dplyr::filter(
       (abs(yield_to_maturity - 1.0) < 0.01) |
       (abs(modified_duration - 1.0) < 0.01) |
@@ -181,8 +195,9 @@ debug_bond_values <- function(df, stage_name) {
     dplyr::pull(bond)
 
   if (length(suspect_bonds) > 0) {
-    message(sprintf("  [%s] SUSPICIOUS VALUES DETECTED in bonds: %s",
-                    stage_name,
+    maturity_note <- if ("mature_date" %in% names(df)) " (active bonds only)" else ""
+    message(sprintf("  [%s] SUSPICIOUS VALUES DETECTED%s in bonds: %s",
+                    stage_name, maturity_note,
                     paste(suspect_bonds, collapse = ", ")))
   } else {
     message(sprintf("  [%s] All bonds have valid values", stage_name))
