@@ -3539,19 +3539,19 @@ server <- function(input, output, session) {
     # Track if butterflies have been calculated this session (to avoid recalculating on tab re-navigation)
     butterfly_calculated <- reactiveVal(FALSE)
 
-    # Lazy loading: Only trigger butterfly calculation when user navigates to Market Intelligence tab
+    # Lazy loading: Only trigger butterfly calculation when user navigates to Carry & Roll Analytics tab
     # This prevents expensive calculations on app startup (fixes 3-5 second delay on load)
     observeEvent(input$main_tabs, {
         # Only trigger when:
-        # 1. User navigates to Market Intelligence tab
+        # 1. User navigates to Carry & Roll Analytics tab (where butterfly UI lives)
         # 2. Data is ready (filtered_data available)
         # 3. Butterflies haven't been calculated yet in this session
-        if (input$main_tabs == "Market Intelligence" &&
+        if (input$main_tabs == "Carry & Roll Analytics" &&
             !butterfly_calculated() &&
             !is.null(tryCatch(filtered_data(), error = function(e) NULL))) {
 
             message("=== BUTTERFLY CALCULATION TRIGGERED BY USER NAVIGATION ===")
-            message("User clicked on Market Intelligence tab - initiating butterfly calculations")
+            message("User clicked on Carry & Roll Analytics tab - initiating butterfly calculations")
 
             # Small delay to allow tab UI to render first, then trigger calculation
             shinyjs::delay(500, {
