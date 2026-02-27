@@ -381,7 +381,7 @@ load_bond_data_hybrid <- function(excel_path,
     auction_raw <- tryCatch({
       readxl::read_excel(excel_path, sheet = "auctions",
                          na = c("", "NA", "#N/A", "N/A", "#VALUE!", "#REF!"),
-                         guess_max = 21474836) %>%
+                         guess_max = 10000) %>%
         dplyr::mutate(
           mat_date   = lubridate::as_date(mat_date),
           offer_date = lubridate::as_date(offer_date)
@@ -434,7 +434,7 @@ load_bond_data_hybrid <- function(excel_path,
     cpn_df <- tryCatch({
       df <- readxl::read_excel(excel_path, sheet = "cpn",
                                na = c("", "NA", "#N/A", "N/A", "#VALUE!", "#REF!"),
-                               guess_max = 21474836)
+                               guess_max = 10000)
       df %>%
         dplyr::select(-dplyr::any_of("date")) %>%
         tidyr::pivot_longer(
@@ -671,7 +671,7 @@ load_ts_sheet_for_hybrid <- function(excel_path, sheet_name, value_col) {
   df <- readxl::read_excel(
     excel_path, sheet = sheet_name,
     na = c("", "NA", "#N/A", "N/A", "#VALUE!", "#REF!", "#DIV/0!"),
-    guess_max = 21474836
+    guess_max = 10000
   )
 
   if (!"date" %in% names(df)) {

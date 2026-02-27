@@ -724,7 +724,7 @@ process_bond_data_advanced <- function(file_path = "data/Siyanda Bonds.xlsx") {
                 update_progress(0.05, detail = paste("Loading", sheet, "sheet..."))
 
                 # CRITICAL: guess_max scans all rows to correctly type columns with late-starting data
-                df <- read_excel(file_path, sheet = sheet, guess_max = 21474836)
+                df <- read_excel(file_path, sheet = sheet, guess_max = 10000)
 
                 if (sheet == "mod_dur") {
                     available_bonds <- detect_available_bonds(df)

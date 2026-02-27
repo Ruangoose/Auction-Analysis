@@ -80,88 +80,60 @@ calculate_relative_value <- function(data, lookback = NULL) {
         data <- calculate_fair_value(data, method = "smooth.spline")
     }
 
-    # Calculate metrics for each bond separately
-    result_list <- list()
+    # Calculate metrics per bond using vectorized group_modify
+    # (Replaces slow for-loop + filter + list accumulation)
+    window_size_param <- lookback  # Capture for use inside group_modify
 
-    for(bond_name in unique(data$bond)) {
-        bond_data <- data %>%
-            filter(bond == bond_name) %>%
-            arrange(date)
+    result <- data %>%
+        group_by(bond) %>%
+        arrange(date, .by_group = TRUE) %>%
+        group_modify(function(bond_data, key) {
+            n_obs <- nrow(bond_data)
+            window_size <- min(window_size_param, n_obs)
 
-        n_obs <- nrow(bond_data)
+            if(n_obs >= 5) {
+                bond_data$hist_mean_spread <- zoo::rollmean(
+                    bond_data$spread_to_curve,
+                    k = window_size,
+                    fill = mean(bond_data$spread_to_curve, na.rm = TRUE),
+                    align = "right",
+                    partial = TRUE
+                )
+                bond_data$hist_sd_spread <- zoo::rollapply(
+                    bond_data$spread_to_curve,
+                    width = window_size,
+                    FUN = function(x) {
+                        s <- sd(x, na.rm = TRUE)
+                        if(is.na(s) || s < 0.01) return(NA_real_)
+                        return(max(s, 0.1))
+                    },
+                    fill = NA_real_,
+                    align = "right",
+                    partial = TRUE
+                )
+                bond_data$rv_data_quality <- "Good"
+            } else if(n_obs >= 2) {
+                bond_data$hist_mean_spread <- mean(bond_data$spread_to_curve, na.rm = TRUE)
+                overall_sd <- sd(bond_data$spread_to_curve, na.rm = TRUE)
+                bond_data$hist_sd_spread <- if(!is.na(overall_sd) && overall_sd >= 0.1) overall_sd else NA_real_
+                bond_data$rv_data_quality <- "Low"
+            } else {
+                bond_data$hist_mean_spread <- bond_data$spread_to_curve
+                bond_data$hist_sd_spread <- NA_real_
+                bond_data$rv_data_quality <- "Insufficient"
+            }
 
-        # ═══════════════════════════════════════════════════════════════════════
-        # FIX: Use actual standard deviation, don't mask with placeholder values
-        # Minimum SD is set to 0.1 bps (not 1 bp) to allow meaningful z-scores
-        # ═══════════════════════════════════════════════════════════════════════
-
-        if(n_obs >= 5) {  # Need at least 5 observations for meaningful statistics
-            window_size <- min(lookback, n_obs)
-
-            bond_data$hist_mean_spread <- zoo::rollmean(
-                bond_data$spread_to_curve,
-                k = window_size,
-                fill = mean(bond_data$spread_to_curve, na.rm = TRUE),
-                align = "right",
-                partial = TRUE
+            bond_data$z_score <- dplyr::case_when(
+                is.na(bond_data$hist_sd_spread) ~ NA_real_,
+                bond_data$hist_sd_spread < 0.1 ~ NA_real_,
+                TRUE ~ (bond_data$spread_to_curve - bond_data$hist_mean_spread) / bond_data$hist_sd_spread
             )
+            bond_data$z_score <- pmin(pmax(bond_data$z_score, -5), 5)
+            bond_data$percentile_rank <- percent_rank(bond_data$spread_to_curve)
 
-            # FIX: Use 0.1 bps minimum, not 1 bp - allows meaningful z-scores
-            bond_data$hist_sd_spread <- zoo::rollapply(
-                bond_data$spread_to_curve,
-                width = window_size,
-                FUN = function(x) {
-                    s <- sd(x, na.rm = TRUE)
-                    # Use NA if truly no variation, otherwise use actual SD (min 0.1 bps)
-                    if(is.na(s) || s < 0.01) {
-                        return(NA_real_)
-                    }
-                    return(max(s, 0.1))  # 0.1 bps minimum, not 1 bp
-                },
-                fill = NA_real_,
-                align = "right",
-                partial = TRUE
-            )
-
-            # Add data quality flag
-            bond_data$rv_data_quality <- "Good"
-
-        } else if(n_obs >= 2) {
-            # Limited data - calculate but flag as low quality
-            bond_data$hist_mean_spread <- mean(bond_data$spread_to_curve, na.rm = TRUE)
-            overall_sd <- sd(bond_data$spread_to_curve, na.rm = TRUE)
-            # Use actual SD if meaningful, NA otherwise
-            bond_data$hist_sd_spread <- if(!is.na(overall_sd) && overall_sd >= 0.1) overall_sd else NA_real_
-            bond_data$rv_data_quality <- "Low"
-
-        } else {
-            # Single observation - cannot calculate meaningful z-score
-            bond_data$hist_mean_spread <- bond_data$spread_to_curve
-            bond_data$hist_sd_spread <- NA_real_  # FIX: NA instead of 10
-            bond_data$rv_data_quality <- "Insufficient"
-        }
-
-        # ═══════════════════════════════════════════════════════════════════════
-        # Calculate z-score - only when we have valid SD
-        # FIX: Don't floor SD at 1, use actual value or NA
-        # ═══════════════════════════════════════════════════════════════════════
-        bond_data$z_score <- dplyr::case_when(
-            is.na(bond_data$hist_sd_spread) ~ NA_real_,
-            bond_data$hist_sd_spread < 0.1 ~ NA_real_,  # SD too small for meaningful z-score
-            TRUE ~ (bond_data$spread_to_curve - bond_data$hist_mean_spread) / bond_data$hist_sd_spread
-        )
-
-        # Cap z-scores at reasonable levels (if not NA)
-        bond_data$z_score <- pmin(pmax(bond_data$z_score, -5), 5)
-
-        # Calculate percentile rank
-        bond_data$percentile_rank <- percent_rank(bond_data$spread_to_curve)
-
-        result_list[[bond_name]] <- bond_data
-    }
-
-    # Combine results
-    result <- bind_rows(result_list)
+            bond_data
+        }) %>%
+        ungroup()
 
     # ═══════════════════════════════════════════════════════════════════════════
     # FIX: Do NOT fill NA z-scores with 0 - this masks missing data!

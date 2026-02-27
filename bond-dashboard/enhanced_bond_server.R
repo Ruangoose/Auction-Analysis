@@ -147,6 +147,13 @@ server <- function(input, output, session) {
     # Reactive value for forward rate chart-table interactivity
     selected_forward_period <- reactiveVal(NULL)
 
+    # ════════════════════════════════════════════════════════════════════════
+    # DEBOUNCED INPUTS - Prevent rapid-fire recalculation on slider/input changes
+    # ════════════════════════════════════════════════════════════════════════
+    lookback_days_d <- reactive({ input$lookback_days }) %>% debounce(500)
+    date_range_d <- reactive({ input$date_range }) %>% debounce(300)
+    selected_bonds_d <- reactive({ input$selected_bonds }) %>% debounce(300)
+
     # ================================================================================
     # TREASURY HOLDINGS MODULE
     # ================================================================================
@@ -469,11 +476,11 @@ server <- function(input, output, session) {
 
     # ✅ FILTERED DATA - With validation and maturity filtering
     filtered_data <- reactive({
-        req(input$selected_bonds, input$date_range, bond_data())
+        req(selected_bonds_d(), date_range_d(), bond_data())
 
-        # Validate date range
-        start_date <- input$date_range[1]
-        end_date <- input$date_range[2]
+        # Validate date range (using debounced inputs)
+        start_date <- date_range_d()[1]
+        end_date <- date_range_d()[2]
 
         # Auto-swap if dates are reversed
         if(start_date > end_date) {
@@ -513,11 +520,11 @@ server <- function(input, output, session) {
             unique(bond_data()$bond)
         })
 
-        # Intersect user selection with active bonds
-        valid_bonds <- intersect(input$selected_bonds, active)
+        # Intersect user selection with active bonds (using debounced input)
+        valid_bonds <- intersect(selected_bonds_d(), active)
 
         # Notify user if any selected bonds were filtered out due to maturity
-        matured_selection <- setdiff(input$selected_bonds, active)
+        matured_selection <- setdiff(selected_bonds_d(), active)
         if (length(matured_selection) > 0) {
             showNotification(
                 sprintf("Excluded %d matured bond(s) from analysis: %s",
@@ -1050,34 +1057,8 @@ server <- function(input, output, session) {
         }
     })
 
-    # Add this as a new reactive for historical calculations
-    historical_metrics <- reactive({
-        req(filtered_data())
-
-        data <- filtered_data()
-
-        # Calculate spreads for all dates
-        data_with_spreads <- data %>%
-            group_by(date) %>%
-            group_modify(~ calculate_fair_value(.x, method = input$curve_model)) %>%
-            ungroup()
-
-        # Calculate historical statistics
-        data_with_spreads %>%
-            group_by(bond) %>%
-            arrange(date) %>%
-            mutate(
-                hist_mean = zoo::rollmean(spread_to_curve,
-                                          k = min(input$lookback_days, n()),
-                                          fill = NA, align = "right", partial = TRUE),
-                hist_sd = zoo::rollapply(spread_to_curve,
-                                         width = min(input$lookback_days, n()),
-                                         FUN = function(x) sd(x, na.rm = TRUE),
-                                         fill = NA, align = "right", partial = TRUE),
-                z_score = (spread_to_curve - hist_mean) / pmax(hist_sd, 0.1)
-            ) %>%
-            ungroup()
-    })
+    # NOTE: historical_metrics reactive removed — it duplicated the expensive
+    # calculate_fair_value() work from processed_data() and was never consumed.
 
     # ════════════════════════════════════════════════════════════════════════
     # PROCESSED DATA - BULLETPROOF VERSION
@@ -1089,8 +1070,8 @@ server <- function(input, output, session) {
         # ✅ NEW: Sanitize input
         data <- sanitize_pipeline_data(filtered_data(), "processed_data [input]")
 
-        # Get lookback value with default
-        lookback_value <- input$lookback_days
+        # Get lookback value with default (using debounced input)
+        lookback_value <- lookback_days_d()
         if(is.null(lookback_value)) {
             lookback_value <- 60
         }
@@ -1098,49 +1079,26 @@ server <- function(input, output, session) {
         # Process all data at once with comprehensive error handling
         tryCatch({
 
-            # Step 1: Calculate fair value for each date separately
-            dates <- unique(data$date)
-            processed_list <- list()
-
-            for(d in dates) {
-                date_data <- data[data$date == d, ]
-                date_data <- calculate_fair_value(date_data, method = input$curve_model)
-                processed_list[[as.character(d)]] <- date_data
-            }
-
-            # Combine all dates
-            if(length(processed_list) > 0) {
-                data_with_spreads <- do.call(rbind, processed_list)
-                rownames(data_with_spreads) <- NULL
-            } else {
-                data_with_spreads <- data
-                data_with_spreads$fitted_yield <- data_with_spreads$yield_to_maturity
-                data_with_spreads$spread_to_curve <- 0
-            }
-
-            # ✅ NEW: Sanitize after fair value calculation
-            data_with_spreads <- sanitize_pipeline_data(
-                data_with_spreads,
-                "processed_data [post-fair-value]"
-            )
+            # Step 1: Calculate fair value using vectorized group_modify
+            # (Replaces slow date-by-date for-loop + do.call(rbind))
+            curve_model <- input$curve_model
+            data_with_spreads <- tryCatch({
+                data %>%
+                    group_by(date) %>%
+                    group_modify(~ calculate_fair_value(.x, method = curve_model)) %>%
+                    ungroup() %>%
+                    as.data.frame()
+            }, error = function(e) {
+                warning(paste("group_modify fair value failed, using fallback:", e$message))
+                data %>%
+                    mutate(fitted_yield = yield_to_maturity, spread_to_curve = 0)
+            })
 
             # Step 2: Add technical indicators
             data_with_technicals <- calculate_advanced_technicals(data_with_spreads)
 
-            # ✅ NEW: Sanitize after technicals
-            data_with_technicals <- sanitize_pipeline_data(
-                data_with_technicals,
-                "processed_data [post-technicals]"
-            )
-
             # Step 3: Calculate relative value
             data_with_metrics <- calculate_relative_value(data_with_technicals, lookback = lookback_value)
-
-            # ✅ NEW: Sanitize after relative value
-            data_with_metrics <- sanitize_pipeline_data(
-                data_with_metrics,
-                "processed_data [post-relative-value]"
-            )
 
             # Step 4: Get latest data using SAFE approach
             latest_data <- data_with_metrics %>%
@@ -1222,7 +1180,7 @@ server <- function(input, output, session) {
         # These inputs trigger recalculation
         x_var <- input$xaxis_choice %||% "modified_duration"
         model_type <- input$curve_model %||% "nss"
-        lookback_value <- input$lookback_days %||% 60
+        lookback_value <- lookback_days_d() %||% 60
         confidence_level <- input$confidence_level %||% 95
 
         # Log for debugging
@@ -1522,34 +1480,8 @@ server <- function(input, output, session) {
     })
 
 
-    # DEBUG: Log when fitted_curve_data recalculates
-    observe({
-        data <- fitted_curve_data()
-        if(!is.null(data)) {
-            message(sprintf(
-                "[DEBUG] fitted_curve_data updated: x_var=%s, model=%s, n_bonds=%d, avg_spread=%.2f bps",
-                data$x_var,
-                data$model_type,
-                nrow(data$bonds),
-                mean(abs(data$bonds$spread_bps), na.rm = TRUE)
-            ))
-        }
-    })
-
-    # DEBUG: Confirm table data is reading fresh values
-    observe({
-        req(fitted_curve_data())
-        bonds <- fitted_curve_data()$bonds
-        if(nrow(bonds) > 0) {
-            message(sprintf(
-                "[DEBUG] Table data: cheapest=%s (%.1f bps), richest=%s (%.1f bps)",
-                bonds$bond[which.max(bonds$spread_bps)],
-                max(bonds$spread_bps, na.rm = TRUE),
-                bonds$bond[which.min(bonds$spread_bps)],
-                min(bonds$spread_bps, na.rm = TRUE)
-            ))
-        }
-    })
+    # NOTE: Debug observers for fitted_curve_data removed — they triggered
+    # on every reactive update, adding I/O overhead with no user benefit.
 
 
     # Calculate VaR - CRITICAL: Uses active bonds filter for consistency
@@ -1612,75 +1544,11 @@ server <- function(input, output, session) {
             8.25
         }
 
-        # ═══════════════════════════════════════════════════════════════════════
-        # PRE-CALCULATION: Check raw coupon values per bond
-        # ═══════════════════════════════════════════════════════════════════════
-        if("coupon" %in% names(processed_data())) {
-            coupon_check <- processed_data() %>%
-                select(bond, coupon) %>%
-                distinct() %>%
-                arrange(bond)
-
-            message("=== COUPON VALUES PER BOND (PRE-CALCULATION) ===")
-            message(sprintf("Unique coupons: %d for %d bonds", n_distinct(coupon_check$coupon), nrow(coupon_check)))
-            print(coupon_check)
-            message("=================================================")
-        }
-
         result <- calculate_advanced_carry_roll(
             processed_data(),
             holding_periods = c(30, 90, 180, 360),
             funding_rate = funding_rate_value
         )
-
-        # ═══════════════════════════════════════════════════════════════════════
-        # POST-CALCULATION: Verify carry income differentiation
-        # ═══════════════════════════════════════════════════════════════════════
-        if(nrow(result) > 0) {
-            # Check 360-day returns (most visible in heatmap)
-            returns_360 <- result %>%
-                filter(holding_period == "360d") %>%
-                select(bond, any_of(c("coupon_standardized", "carry_income",
-                                      "roll_return", "gross_return", "net_return"))) %>%
-                arrange(desc(net_return))
-
-            n_unique_net <- n_distinct(round(returns_360$net_return, 2))
-            n_unique_carry <- n_distinct(round(returns_360$carry_income, 2))
-            n_bonds <- nrow(returns_360)
-
-            message("=== CARRY & ROLL DIAGNOSTIC (360-DAY) ===")
-            message(sprintf("Total bonds: %d", n_bonds))
-            message(sprintf("Unique net returns: %d (should equal bonds)", n_unique_net))
-            message(sprintf("Unique carry incomes: %d (should match unique coupons)", n_unique_carry))
-
-            # Show net return range
-            if(n_bonds > 0) {
-                message(sprintf("Net return range: %.2f%% to %.2f%%",
-                                min(returns_360$net_return, na.rm = TRUE),
-                                max(returns_360$net_return, na.rm = TRUE)))
-
-                # Log all bonds with their returns (sorted by net return)
-                message("\n--- ALL BONDS (sorted by net return) ---")
-                for(i in 1:nrow(returns_360)) {
-                    message(sprintf("  %s: coupon=%.2f%%, carry=%.2f%%, roll=%.2f%%, net=%.2f%%",
-                                    returns_360$bond[i],
-                                    if("coupon_standardized" %in% names(returns_360)) returns_360$coupon_standardized[i] else NA,
-                                    returns_360$carry_income[i],
-                                    returns_360$roll_return[i],
-                                    returns_360$net_return[i]))
-                }
-                message("-----------------------------------------")
-            }
-
-            # Warn if returns are suspiciously uniform
-            if(n_unique_net < min(5, n_bonds) && n_bonds > 1) {
-                warning(sprintf("⚠ LOW VARIATION: Only %d unique net returns for %d bonds - check coupon data!",
-                                n_unique_net, n_bonds))
-            } else {
-                message(sprintf("✓ Return variation check PASSED: %d unique returns for %d bonds", n_unique_net, n_bonds))
-            }
-            message("==========================================")
-        }
 
         return(result)
     })
@@ -2288,7 +2156,7 @@ server <- function(input, output, session) {
             list(
                 xaxis_choice = input$xaxis_choice,
                 curve_model = input$curve_model,
-                lookback = input$lookback_days %||% 60,
+                lookback = lookback_days_d() %||% 60,
                 show_labels = show_labels,
                 show_confidence_band = show_conf_band,
                 point_size_metric = point_size_metric,

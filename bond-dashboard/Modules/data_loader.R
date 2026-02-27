@@ -274,7 +274,7 @@ load_maturity_dates <- function(excel_path) {
 
     mat_df <- readxl::read_excel(excel_path, sheet = "maturity_date",
                                   na = c("", "NA", "#N/A", "N/A", "#VALUE!", "#REF!"),
-                                  guess_max = 21474836)
+                                  guess_max = 10000)
 
     if (is.null(mat_df) || nrow(mat_df) == 0) {
       message("  WARNING: maturity_date sheet is empty")
@@ -401,7 +401,7 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
   auction_raw <- tryCatch({
     readxl::read_excel(file_path, sheet = "auctions",
                        na = c("", "NA", "#N/A", "N/A", "#VALUE!", "#REF!"),
-                       guess_max = 21474836) %>%
+                       guess_max = 10000) %>%
       dplyr::mutate(
         mat_date = lubridate::as_date(mat_date),
         offer_date = lubridate::as_date(offer_date)
@@ -497,7 +497,7 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
       # CRITICAL: guess_max scans all rows to correctly type columns with late-starting data
       df <- readxl::read_excel(file_path, sheet = sheet_name,
                                na = c("", "NA", "#N/A", "N/A", "#VALUE!", "#REF!", "#DIV/0!"),
-                               guess_max = 21474836)
+                               guess_max = 10000)
 
       # Ensure date column exists and is proper format
       if (!"date" %in% names(df)) {
@@ -570,7 +570,7 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
   cpn_df <- tryCatch({
     df <- readxl::read_excel(file_path, sheet = "cpn",
                              na = c("", "NA", "#N/A", "N/A", "#VALUE!", "#REF!"),
-                             guess_max = 21474836)
+                             guess_max = 10000)
     bond_cols <- setdiff(names(df), "date")
 
     df %>%
@@ -901,7 +901,7 @@ load_time_series_sheet <- function(excel_path, sheet_name, value_name, available
         # CRITICAL: guess_max scans all rows to correctly type columns with late-starting data
         df <- readxl::read_excel(excel_path, sheet = sheet_name,
                                  na = c("", "NA", "#N/A", "N/A", "#VALUE!", "#REF!", "#DIV/0!"),
-                                 guess_max = 21474836)
+                                 guess_max = 10000)
 
         # Get columns that exist in this sheet and are in available_bonds (or date)
         valid_cols <- intersect(names(df), c("date", available_bonds))
@@ -1015,7 +1015,7 @@ load_coupon_data <- function(excel_path, available_bonds) {
 
     tryCatch({
         df <- readxl::read_excel(excel_path, sheet = "cpn",
-                                 guess_max = 21474836)
+                                 guess_max = 10000)
 
         # Get columns that exist and are in available_bonds
         valid_cols <- intersect(names(df), available_bonds)
@@ -1054,7 +1054,7 @@ load_auction_data <- function(excel_path) {
 
     tryCatch({
         df <- readxl::read_excel(excel_path, sheet = "auctions",
-                                 guess_max = 21474836)
+                                 guess_max = 10000)
 
         message(sprintf("    Raw auction columns: %s", paste(names(df), collapse = ", ")))
 
@@ -1299,7 +1299,7 @@ load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
         # Fallback to original method if common detection fails
         message("  WARNING: Common bond detection failed, falling back to mod_dur only")
         mod_dur_raw <- readxl::read_excel(excel_path, sheet = "mod_dur",
-                                           guess_max = 21474836)
+                                           guess_max = 10000)
         available_bonds <- detect_available_bonds(mod_dur_raw)
     }
 
@@ -1859,7 +1859,7 @@ check_column_alignment <- function(excel_path) {
     for (sheet in sheets) {
         tryCatch({
             df <- readxl::read_excel(excel_path, sheet = sheet,
-                                     guess_max = 21474836)
+                                     guess_max = 10000)
             cols <- names(df)[tolower(names(df)) != "date"]
             all_cols[[sheet]] <- cols
             message(sprintf("  %s: %d bond columns", sheet, length(cols)))
@@ -1913,7 +1913,7 @@ detect_common_bonds <- function(excel_path) {
     bond_lists <- lapply(required_sheets, function(sheet) {
         tryCatch({
             df <- readxl::read_excel(excel_path, sheet = sheet,
-                                     guess_max = 21474836)
+                                     guess_max = 10000)
             names(df)[tolower(names(df)) != "date"]
         }, error = function(e) {
             character(0)
@@ -2023,7 +2023,7 @@ diagnose_bond_data_loading <- function(excel_path) {
     # CHECKPOINT 1: Raw YTM values
     message("\n[CHECKPOINT 1] Raw YTM Sheet")
     ytm_raw <- readxl::read_excel(excel_path, sheet = "ytm",
-                                   guess_max = 21474836)
+                                   guess_max = 10000)
     latest_row <- ytm_raw %>% dplyr::slice_tail(n = 1)
 
     message(sprintf("  Columns: %s", paste(names(ytm_raw), collapse = ", ")))
@@ -2041,7 +2041,7 @@ diagnose_bond_data_loading <- function(excel_path) {
     # CHECKPOINT 2: Raw mod_dur values
     message("\n[CHECKPOINT 2] Raw mod_dur Sheet")
     dur_raw <- readxl::read_excel(excel_path, sheet = "mod_dur",
-                                   guess_max = 21474836)
+                                   guess_max = 10000)
     latest_dur <- dur_raw %>% dplyr::slice_tail(n = 1)
 
     message(sprintf("  Latest date: %s", latest_dur$date))
