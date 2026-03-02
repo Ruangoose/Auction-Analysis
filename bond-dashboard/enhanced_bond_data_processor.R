@@ -910,15 +910,16 @@ process_bond_data_advanced <- function(file_path = "data/Siyanda Bonds.xlsx") {
         # Step 10: Save all processed data
         update_progress(0.05, detail = "Saving enhanced datasets...")
 
-        saveRDS(full_df, "data/processed_bond_data_advanced.rds")
-        saveRDS(bond_metadata, "data/bond_metadata_advanced.rds")
-        saveRDS(latest_data, "data/latest_data_nss.rds")
-        saveRDS(pca_results, "data/pca_results.rds")
-        saveRDS(list(regime = current_regime, timestamp = Sys.time()), "data/market_regime.rds")
-        saveRDS(quality_report, "data/data_quality_report.rds")
+        data_dir <- dirname(file_path)
+        saveRDS(full_df, file.path(data_dir, "processed_bond_data_advanced.rds"))
+        saveRDS(bond_metadata, file.path(data_dir, "bond_metadata_advanced.rds"))
+        saveRDS(latest_data, file.path(data_dir, "latest_data_nss.rds"))
+        saveRDS(pca_results, file.path(data_dir, "pca_results.rds"))
+        saveRDS(list(regime = current_regime, timestamp = Sys.time()), file.path(data_dir, "market_regime.rds"))
+        saveRDS(quality_report, file.path(data_dir, "data_quality_report.rds"))
 
         # Create timestamped backup
-        backup_dir <- "data/backups"
+        backup_dir <- file.path(data_dir, "backups")
         if (!dir.exists(backup_dir)) dir.create(backup_dir)
         saveRDS(full_df, file.path(backup_dir,
                                    paste0("bond_data_advanced_", format(Sys.Date(), "%Y%m%d_%H%M%S"), ".rds")))

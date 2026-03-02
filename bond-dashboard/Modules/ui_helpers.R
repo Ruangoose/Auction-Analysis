@@ -500,8 +500,8 @@ smart_label <- function(data, label_col, priority_col = NULL, max_labels = 12,
 #' @export
 # Initialize logging
 init_logging <- function() {
-    log_dir <- file.path(getwd(), "logs")
-    if (!dir.exists(log_dir)) dir.create(log_dir)
+    log_dir <- "logs"
+    if (!dir.exists(log_dir)) dir.create(log_dir, recursive = TRUE)
 
     log_file <- file.path(log_dir, paste0("report_", format(Sys.Date(), "%Y%m%d"), ".log"))
 
@@ -560,11 +560,13 @@ load_logo_for_pdf <- function(logo_path = "bond-dashboard/www/Insele_logo_2.webp
     tryCatch({
         # Check if file exists
         if(!file.exists(logo_path)) {
-            # Try alternative paths
+            # Try alternative paths (relative to various possible working directories)
             alt_paths <- c(
                 "www/Insele_logo_2.webp",
-                "Modules/report_generators/www/Insele_logo_2.webp",
-                file.path(getwd(), "bond-dashboard/Modules/report_generators/www/Insele_logo_2.webp")
+                "bond-dashboard/www/insele_logo.webp",
+                "www/insele_logo.webp",
+                "bond-dashboard/www/logo.png",
+                "www/logo.png"
             )
 
             for(path in alt_paths) {

@@ -13,8 +13,12 @@ pacman::p_load(
     future, promises                                    # Async processing
 )
 
-# Source the advanced processing functions
-source("bond-dashboard/enhanced_bond_data_processor.R")
+# Source the advanced processing functions (flexible path resolution)
+for (.p in c("bond-dashboard/enhanced_bond_data_processor.R",
+             "enhanced_bond_data_processor.R")) {
+    if (file.exists(.p)) { source(.p); break }
+}
+rm(.p)
 
 # Enable asynchronous processing
 plan(multiprocess)

@@ -21,9 +21,9 @@ suppressPackageStartupMessages({
 
       # Change to project root if needed
       if (file.exists("bond-dashboard/enhanced_bond_server.R")) {
-        setwd(getwd())  # Already at root
+        # Already at project root — no change needed
       } else if (file.exists("enhanced_bond_server.R")) {
-        setwd("..")  # In bond-dashboard folder
+        setwd("..")  # In bond-dashboard folder, move up to project root
       }
 
       # Source the main app with all messages suppressed
@@ -41,7 +41,7 @@ cat("\n🚀 Starting Bond Analytics Dashboard...\n\n")
 shiny::runApp(
   shinyApp(ui = ui, server = server),
   port = 3838,
-  host = "0.0.0.0",
+  host = "127.0.0.1",
   launch.browser = TRUE,
   quiet = TRUE  # Suppresses Shiny's own startup messages
 )

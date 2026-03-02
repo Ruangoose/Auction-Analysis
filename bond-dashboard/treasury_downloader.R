@@ -34,23 +34,40 @@ if (script_dir == "") {
     script_dir <- getwd()
 }
 
+# Helper: source a script trying multiple path patterns (portable across working directories)
+source_download_script <- function(script_name) {
+    candidates <- c(
+        file.path(script_dir, "bond-dashboard", "Modules", "download", script_name),
+        file.path("bond-dashboard", "Modules", "download", script_name),
+        file.path("Modules", "download", script_name),
+        file.path("..", "Modules", "download", script_name),
+        file.path(script_dir, "Modules", "download", script_name)
+    )
+    for (path in candidates) {
+        if (file.exists(path)) {
+            source(path)
+            return(invisible(TRUE))
+        }
+    }
+    stop(sprintf("Could not find download script '%s' in any expected location.", script_name))
+}
+
 # Source all component scripts
 message("Loading SA Bond Holdings processing functions...")
 
-source(file.path(script_dir, "/bond-dashboard/Modules/download/process_bond_holdings.R"))
+source_download_script("process_bond_holdings.R")
 message("  ✓ Basic processing functions loaded")
 
-source(file.path(script_dir, "/bond-dashboard/Modules/download/download_sa_bond_holdings.R"))
-message("  ✓ Basic processing functions loaded")
+source_download_script("download_sa_bond_holdings.R")
+message("  ✓ Download functions loaded")
 
-
-source(file.path(script_dir, "bond-dashboard/Modules/download/process_bond_holdings_tidy.R"))
+source_download_script("process_bond_holdings_tidy.R")
 message("  ✓ Tidy processing functions loaded")
 
-source(file.path(script_dir, "bond-dashboard/Modules/download/process_holdings_timeseries.R"))
+source_download_script("process_holdings_timeseries.R")
 message("  ✓ Time series processing functions loaded")
 
-source(file.path(script_dir, "bond-dashboard/Modules/download/validate_and_repair.R"))
+source_download_script("validate_and_repair.R")
 message("  ✓ File validation and repair utilities loaded")
 
 message("\n=== Functions Available ===")
