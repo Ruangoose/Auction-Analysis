@@ -13039,10 +13039,7 @@ $$Net Return = Carry + Roll - Funding Cost$$
 
                 } else {
                     # Fallback: Save HTML file for manual sending
-                    output_file <- file.path(
-                        getwd(),
-                        paste0("email_report_", format(Sys.Date(), "%Y%m%d"), ".html")
-                    )
+                    output_file <- paste0("email_report_", format(Sys.Date(), "%Y%m%d"), ".html")
                     writeLines(email_html, output_file)
 
                     showNotification(

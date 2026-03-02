@@ -10,12 +10,20 @@ pacman::p_load(
     splines, mgcv
 )
 
-# Source enhanced modules
-source("bond-dashboard/R/data_processing.R")
-source("bond-dashboard/R/plotting.R")
-source("bond-dashboard/R/analytics.R")
-source("bond-dashboard/Modules/data_loader.R")
-source("bond-dashboard/Modules/archive_loader.R")
+# Source enhanced modules (with flexible path resolution)
+source_flexible <- function(primary_path, alt_paths = NULL) {
+    all_paths <- c(primary_path, alt_paths)
+    for (p in all_paths) {
+        if (file.exists(p)) { source(p); return(invisible(TRUE)) }
+    }
+    stop(sprintf("Could not find '%s' in any expected location.", basename(primary_path)))
+}
+
+source_flexible("bond-dashboard/R/data_processing.R", "R/data_processing.R")
+source_flexible("bond-dashboard/R/plotting.R", "R/plotting.R")
+source_flexible("bond-dashboard/R/analytics.R", "R/analytics.R")
+source_flexible("bond-dashboard/Modules/data_loader.R", "Modules/data_loader.R")
+source_flexible("bond-dashboard/Modules/archive_loader.R", "Modules/archive_loader.R")
 
 # Initialize shinyjs for dynamic UI
 shinyjs::useShinyjs()
