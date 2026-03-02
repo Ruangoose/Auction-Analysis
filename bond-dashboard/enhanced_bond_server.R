@@ -3,25 +3,59 @@
 # Professional Fixed Income Analysis Platform v2.0
 # ================================================================================
 
-# Load required libraries with error handling
-required_packages <- c(
-    "shiny", "shinydashboard", "shinyWidgets", "shinyBS", "shinycssloaders",
-    "tidyverse", "ggplot2", "lubridate", "scales", "readxl", "splines",
-    "zoo", "DT", "rmarkdown", "knitr", "TTR", "forecast", "memoise",
-    "data.table", "RColorBrewer", "viridis", "gridExtra", "corrplot",
-    "quantmod", "PerformanceAnalytics", "xts", "tseries", "randomForest",
-    "glmnet", "shinyjqui", "waiter", "htmltools", "knitr", "blastula", "openxlsx", "base64enc",
-    "webshot2", "htmltools", "htmlwidgets", "DT", "stringr", "officer", "flextable", "future", "promises", "magick", "shinyjs", "jsonlite",
-    "ggrepel", "ggridges"#, "webp"
-)
+# Load required libraries (duplicates removed, startup messages suppressed)
+suppressPackageStartupMessages({
+    library(shiny)
+    library(shinydashboard)
+    library(shinyWidgets)
+    library(shinyBS)
+    library(shinycssloaders)
+    library(tidyverse)
+    library(ggplot2)
+    library(lubridate)
+    library(scales)
+    library(readxl)
+    library(splines)
+    library(zoo)
+    library(DT)
+    library(rmarkdown)
+    library(knitr)
+    library(TTR)
+    library(forecast)
+    library(memoise)
+    library(data.table)
+    library(RColorBrewer)
+    library(viridis)
+    library(gridExtra)
+    library(corrplot)
+    library(quantmod)
+    library(PerformanceAnalytics)
+    library(xts)
+    library(tseries)
+    library(randomForest)
+    library(glmnet)
+    library(shinyjqui)
+    library(waiter)
+    library(htmltools)
+    library(blastula)
+    library(openxlsx)
+    library(base64enc)
+    library(webshot2)
+    library(htmlwidgets)
+    library(stringr)
+    library(officer)
+    library(flextable)
+    library(future)
+    library(promises)
+    library(magick)
+    library(shinyjs)
+    library(jsonlite)
+    library(ggrepel)
+    library(ggridges)
+})
 
-# Install and load packages
-for (pkg in required_packages) {
-    if (!require(pkg, character.only = TRUE)) {
-        install.packages(pkg)
-        library(pkg, character.only = TRUE)
-    }
-}
+# Verbose logging flag: set options(insele.verbose = TRUE) to enable debug output
+VERBOSE <- getOption("insele.verbose", FALSE)
 
 # ================================================================================
 # FONT CONFIGURATION (CROSS-PLATFORM)
@@ -81,14 +115,23 @@ source_module <- function(module_name) {
     stop(sprintf("ERROR: Could not find module '%s' in any expected location.", module_name))
 }
 
-# Load all required modules
-required_modules <- c(
+# Eager modules (needed immediately for data load + main views)
+eager_modules <- c(
     "data_loader.R",                 # Dynamic Excel data loader with caching
     "archive_loader.R",              # Archive CSV ingestion + hybrid data loading
     "theme_config.R",
     "ui_helpers.R",
     "data_processors.R",
     "plot_generators.R",
+    "enhanced_bond_ui.R"
+)
+
+for (module in eager_modules) {
+    source_module(module)
+}
+
+# Deferred modules (loaded on first use — only define functions used in reactive contexts)
+deferred_modules <- c(
     "risk_plots.R",
     "technical_plots.R",
     "carry_roll_plots.R",
@@ -98,13 +141,24 @@ required_modules <- c(
     "insights_generators.R",
     "report_generators.R",
     "treasury_plots.R",              # Treasury holdings plot generators
-    "mod_treasury_holdings.R",       # Treasury holdings Shiny module
-    "enhanced_bond_ui.R"
+    "mod_treasury_holdings.R"        # Treasury holdings Shiny module
 )
 
+# Lazy-load deferred modules on first use
+deferred_loaded <- new.env(parent = emptyenv())
+ensure_module <- function(module_name) {
+    if (is.null(deferred_loaded[[module_name]])) {
+        source_module(module_name)
+        deferred_loaded[[module_name]] <- TRUE
+    }
+}
 
-for (module in required_modules) {
-    source_module(module)
+# Pre-load all deferred modules that define functions used across multiple reactive contexts
+# This ensures they are available when needed without modifying every call site
+ensure_all_deferred <- function() {
+    for (module in deferred_modules) {
+        ensure_module(module)
+    }
 }
 
 
@@ -113,6 +167,9 @@ for (module in required_modules) {
 # ================================================================================
 
 server <- function(input, output, session) {
+
+    # Load deferred modules now that UI is rendered (user sees loading screen faster)
+    ensure_all_deferred()
 
     # Ensure TTR functions are available (fallback)
     observe({
@@ -3458,13 +3515,15 @@ server <- function(input, output, session) {
             # Get full historical data for butterfly calculations
             historical_data <- filtered_data()
 
-            message(sprintf("=== BUTTERFLY DEBUG ==="))
-            message(sprintf("Using filtered_data: %d rows, %d bonds",
-                           nrow(historical_data),
-                           dplyr::n_distinct(historical_data$bond)))
-            message(sprintf("Date range: %s to %s",
-                           min(historical_data$date, na.rm = TRUE),
-                           max(historical_data$date, na.rm = TRUE)))
+            if (VERBOSE) {
+                message(sprintf("=== BUTTERFLY DEBUG ==="))
+                message(sprintf("Using filtered_data: %d rows, %d bonds",
+                               nrow(historical_data),
+                               dplyr::n_distinct(historical_data$bond)))
+                message(sprintf("Date range: %s to %s",
+                               min(historical_data$date, na.rm = TRUE),
+                               max(historical_data$date, na.rm = TRUE)))
+            }
 
             lookback <- as.numeric(input$butterfly_lookback)
             if (lookback == 9999) lookback <- 3650  # ~10 years for "all"
@@ -3623,7 +3682,7 @@ server <- function(input, output, session) {
     })
 
     # Butterfly table output
-    output$butterfly_table <- DT::renderDataTable({
+    output$butterfly_table <- DT::renderDataTable(server = TRUE, {
         req(butterfly_data())
 
         # Use filtered reactive instead of raw butterfly_data
@@ -11671,8 +11730,6 @@ server <- function(input, output, session) {
             paste0("insele_bond_data_", format(Sys.Date(), "%Y%m%d"), ".xlsx")
         },
         content = function(file) {
-            require(openxlsx)
-
             wb <- createWorkbook()
             addWorksheet(wb, "Processed Data")
             writeData(wb, "Processed Data", processed_data())
@@ -11703,10 +11760,6 @@ server <- function(input, output, session) {
         },
         content = function(file) {
             withProgress(message = "Generating PDF report...", value = 0, {
-
-                require(gridExtra)
-                require(grid)
-                require(png)  # For reading PNG files
 
                 temp_dir <- tempdir()
                 temp_pdf <- file.path(temp_dir, paste0("temp_report_", Sys.getpid(), ".pdf"))
@@ -12464,8 +12517,6 @@ server <- function(input, output, session) {
             paste0("insele_bond_analysis_", format(Sys.Date(), "%Y%m%d"), ".xlsx")
         },
         content = function(file) {
-            require(openxlsx)
-
             withProgress(message = "Creating Excel workbook...", value = 0, {
 
                 wb <- createWorkbook()

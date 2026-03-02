@@ -211,61 +211,65 @@ identify_butterfly_trades <- function(df, min_zscore = 1.5) {
         arrange(modified_duration) %>%
         filter(!is.na(yield_to_maturity))
 
-    butterflies <- data.frame()
+    if (nrow(latest) < 3) return(data.frame())
 
-    # Generate all possible butterfly combinations
-    if(nrow(latest) >= 3) {
-        for(i in 2:(nrow(latest)-1)) {
-            wing1 <- latest[i-1,]
-            body <- latest[i,]
-            wing2 <- latest[i+1,]
+    # Pre-allocate results list
+    n_combos <- nrow(latest) - 2
+    results_list <- vector("list", n_combos)
 
-            # Calculate expected body yield (linear interpolation)
-            weight <- (body$modified_duration - wing1$modified_duration) /
-                (wing2$modified_duration - wing1$modified_duration)
-            expected_yield <- wing1$yield_to_maturity * (1 - weight) + wing2$yield_to_maturity * weight
+    # Generate all possible butterfly combinations (adjacent triples)
+    for(i in 2:(nrow(latest)-1)) {
+        wing1 <- latest[i-1,]
+        body <- latest[i,]
+        wing2 <- latest[i+1,]
 
-            # Richness/cheapness in basis points
-            richness_bps <- (body$yield_to_maturity - expected_yield) * 100
+        # Calculate expected body yield (linear interpolation)
+        weight <- (body$modified_duration - wing1$modified_duration) /
+            (wing2$modified_duration - wing1$modified_duration)
+        expected_yield <- wing1$yield_to_maturity * (1 - weight) + wing2$yield_to_maturity * weight
 
-            # Historical comparison
-            hist_richness <- df %>%
-                filter(bond %in% c(wing1$bond, body$bond, wing2$bond)) %>%
-                group_by(date) %>%
-                summarise(
-                    w1_yield = mean(yield_to_maturity[bond == wing1$bond], na.rm = TRUE),
-                    b_yield = mean(yield_to_maturity[bond == body$bond], na.rm = TRUE),
-                    w2_yield = mean(yield_to_maturity[bond == wing2$bond], na.rm = TRUE),
-                    .groups = "drop"
-                ) %>%
-                mutate(
-                    hist_richness = (b_yield - (w1_yield * (1-weight) + w2_yield * weight)) * 100
-                )
+        # Richness/cheapness in basis points
+        richness_bps <- (body$yield_to_maturity - expected_yield) * 100
 
-            z_score <- (richness_bps - mean(hist_richness$hist_richness, na.rm = TRUE)) /
-                sd(hist_richness$hist_richness, na.rm = TRUE)
+        # Historical comparison
+        hist_richness <- df %>%
+            filter(bond %in% c(wing1$bond, body$bond, wing2$bond)) %>%
+            group_by(date) %>%
+            summarise(
+                w1_yield = mean(yield_to_maturity[bond == wing1$bond], na.rm = TRUE),
+                b_yield = mean(yield_to_maturity[bond == body$bond], na.rm = TRUE),
+                w2_yield = mean(yield_to_maturity[bond == wing2$bond], na.rm = TRUE),
+                .groups = "drop"
+            ) %>%
+            mutate(
+                hist_richness = (b_yield - (w1_yield * (1-weight) + w2_yield * weight)) * 100
+            )
 
-            butterflies <- bind_rows(butterflies, data.frame(
-                wing1 = wing1$bond,
-                body = body$bond,
-                wing2 = wing2$bond,
-                richness_bps = richness_bps,
-                z_score = z_score,
-                percentile = ecdf(hist_richness$hist_richness)(richness_bps) * 100,
-                signal = case_when(
-                    z_score > min_zscore ~ "CHEAP (Buy Body)",
-                    z_score < -min_zscore ~ "RICH (Sell Body)",
-                    TRUE ~ "NEUTRAL"
-                ),
-                duration_weighted_ratio = paste0(
-                    round(body$modified_duration / wing1$modified_duration, 2), ":",
-                    "1:",
-                    round(body$modified_duration / wing2$modified_duration, 2)
-                )
-            ))
-        }
+        z_score <- (richness_bps - mean(hist_richness$hist_richness, na.rm = TRUE)) /
+            sd(hist_richness$hist_richness, na.rm = TRUE)
+
+        results_list[[i - 1]] <- data.frame(
+            wing1 = wing1$bond,
+            body = body$bond,
+            wing2 = wing2$bond,
+            richness_bps = richness_bps,
+            z_score = z_score,
+            percentile = ecdf(hist_richness$hist_richness)(richness_bps) * 100,
+            signal = case_when(
+                z_score > min_zscore ~ "CHEAP (Buy Body)",
+                z_score < -min_zscore ~ "RICH (Sell Body)",
+                TRUE ~ "NEUTRAL"
+            ),
+            duration_weighted_ratio = paste0(
+                round(body$modified_duration / wing1$modified_duration, 2), ":",
+                "1:",
+                round(body$modified_duration / wing2$modified_duration, 2)
+            ),
+            stringsAsFactors = FALSE
+        )
     }
 
+    butterflies <- bind_rows(results_list)
     return(butterflies %>% arrange(desc(abs(z_score))))
 }
 
@@ -282,7 +286,9 @@ calculate_rolldown <- function(df, horizons = c(3, 6, 12)) {
     # Fit the curve
     curve_fit <- smooth.spline(latest$modified_duration, latest$yield_to_maturity, spar = 0.7)
 
-    results <- data.frame()
+    # Pre-allocate results list
+    results_list <- vector("list", nrow(latest) * length(horizons))
+    result_idx <- 0
 
     for(bond_row in 1:nrow(latest)) {
         bond_data <- latest[bond_row,]
@@ -303,18 +309,22 @@ calculate_rolldown <- function(df, horizons = c(3, 6, 12)) {
                 # Calculate breakeven (how much yields can rise before negative return)
                 breakeven_bps <- total_return / new_duration
 
-                results <- bind_rows(results, data.frame(
+                result_idx <- result_idx + 1
+                results_list[[result_idx]] <- data.frame(
                     bond = bond_data$bond,
                     horizon_months = horizon_months,
                     carry_return = carry_return,
                     rolldown_return = rolldown_return,
                     total_return = total_return,
                     breakeven_bps = breakeven_bps,
-                    annualized_return = total_return * (12 / horizon_months)
-                ))
+                    annualized_return = total_return * (12 / horizon_months),
+                    stringsAsFactors = FALSE
+                )
             }
         }
     }
+
+    results <- bind_rows(results_list[seq_len(result_idx)])
 
     return(results)
 }
@@ -638,54 +648,67 @@ identify_pair_trades <- function(df, min_spread_zscore = 1.5) {
         filter(date == max(date)) %>%
         ungroup()
 
-    pairs <- data.frame()
+    n <- nrow(latest)
+    if (n < 2) return(data.frame())
 
-    # Generate all pairs with similar duration (within 2 years)
-    for(i in 1:(nrow(latest)-1)) {
-        for(j in (i+1):nrow(latest)) {
-            bond1 <- latest[i,]
-            bond2 <- latest[j,]
+    # Pre-compute wide yield matrix ONCE (instead of inside the loop)
+    yields_wide <- df %>%
+        select(date, bond, yield_to_maturity) %>%
+        pivot_wider(names_from = bond, values_from = yield_to_maturity, values_fn = mean)
 
-            dur_diff <- abs(bond1$modified_duration - bond2$modified_duration)
+    # Generate all pairs and vectorize duration filter
+    combos <- combn(n, 2)
+    dur_diff <- abs(latest$modified_duration[combos[1,]] - latest$modified_duration[combos[2,]])
+    valid_pairs <- which(dur_diff < 2)
 
-            if(dur_diff < 2) {
-                # Calculate current spread
-                current_spread <- bond2$yield_to_maturity - bond1$yield_to_maturity
+    # Pre-allocate results list
+    results_list <- vector("list", length(valid_pairs))
+    result_idx <- 0
 
-                # Historical spread analysis
-                hist_spread <- df %>%
-                    filter(bond %in% c(bond1$bond, bond2$bond)) %>%
-                    select(date, bond, yield_to_maturity) %>%
-                    pivot_wider(names_from = bond, values_from = yield_to_maturity) %>%
-                    mutate(spread = .[[bond2$bond]] - .[[bond1$bond]]) %>%
-                    filter(!is.na(spread))
+    for (k in valid_pairs) {
+        i <- combos[1, k]
+        j <- combos[2, k]
+        bond1 <- latest[i,]
+        bond2 <- latest[j,]
 
-                if(nrow(hist_spread) > 20) {
-                    mean_spread <- mean(hist_spread$spread, na.rm = TRUE)
-                    sd_spread <- sd(hist_spread$spread, na.rm = TRUE)
-                    z_score <- (current_spread - mean_spread) / sd_spread
+        # Check bonds exist in wide data
+        if (!all(c(bond1$bond, bond2$bond) %in% names(yields_wide))) next
 
-                    # Duration-neutral hedge ratio
-                    hedge_ratio <- bond2$modified_duration / bond1$modified_duration
+        # Calculate current spread
+        current_spread <- bond2$yield_to_maturity - bond1$yield_to_maturity
 
-                    pairs <- bind_rows(pairs, data.frame(
-                        long_bond = ifelse(z_score > 0, bond2$bond, bond1$bond),
-                        short_bond = ifelse(z_score > 0, bond1$bond, bond2$bond),
-                        current_spread_bps = current_spread * 100,
-                        mean_spread_bps = mean_spread * 100,
-                        z_score = abs(z_score),
-                        hedge_ratio = hedge_ratio,
-                        expected_profit_bps = abs(current_spread - mean_spread) * 100,
-                        signal = case_when(
-                            abs(z_score) > min_spread_zscore ~ "EXECUTE",
-                            abs(z_score) > min_spread_zscore * 0.7 ~ "MONITOR",
-                            TRUE ~ "IGNORE"
-                        )
-                    ))
-                }
-            }
+        # Historical spread from pre-computed wide matrix (simple column subtraction)
+        spread_vec <- yields_wide[[bond2$bond]] - yields_wide[[bond1$bond]]
+        spread_vec <- spread_vec[!is.na(spread_vec)]
+
+        if (length(spread_vec) > 20) {
+            mean_spread <- mean(spread_vec)
+            sd_spread <- sd(spread_vec)
+            z_score <- (current_spread - mean_spread) / sd_spread
+
+            hedge_ratio <- bond2$modified_duration / bond1$modified_duration
+
+            result_idx <- result_idx + 1
+            results_list[[result_idx]] <- data.frame(
+                long_bond = ifelse(z_score > 0, bond2$bond, bond1$bond),
+                short_bond = ifelse(z_score > 0, bond1$bond, bond2$bond),
+                current_spread_bps = current_spread * 100,
+                mean_spread_bps = mean_spread * 100,
+                z_score = abs(z_score),
+                hedge_ratio = hedge_ratio,
+                expected_profit_bps = abs(current_spread - mean_spread) * 100,
+                signal = case_when(
+                    abs(z_score) > min_spread_zscore ~ "EXECUTE",
+                    abs(z_score) > min_spread_zscore * 0.7 ~ "MONITOR",
+                    TRUE ~ "IGNORE"
+                ),
+                stringsAsFactors = FALSE
+            )
         }
     }
 
+    # Single bind_rows at the end (instead of growing dataframe in loop)
+    pairs <- bind_rows(results_list[seq_len(result_idx)])
+    if (nrow(pairs) == 0) return(data.frame())
     return(pairs %>% arrange(desc(z_score)))
 }

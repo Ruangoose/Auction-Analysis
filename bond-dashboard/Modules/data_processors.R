@@ -65,7 +65,7 @@ calculate_conviction_score <- function(spread_bps, zscore, bid_to_cover = NA_rea
 #' @description Calculates z-scores and percentile ranks for bond spreads.
 #'   IMPORTANT FIX: No longer uses placeholder values (1.0) that mask missing data.
 #'   Instead, uses NA for insufficient data and adds quality flags.
-calculate_relative_value <- function(data, lookback = NULL) {
+calculate_relative_value <- memoise(function(data, lookback = NULL) {
     # Set default lookback if NULL or invalid
     if(is.null(lookback) || length(lookback) == 0 || is.na(lookback) || lookback <= 0) {
         lookback <- 60
@@ -152,7 +152,7 @@ calculate_relative_value <- function(data, lookback = NULL) {
                    n_good, n_low, n_insufficient, n_na_zscore))
 
     return(result)
-}
+})
 
 # Add to calculate_advanced_technicals:
 # Identify actual support/resistance levels using density peaks
@@ -3194,22 +3194,24 @@ investigate_bond_carry <- function(bond_name,
         head(5) %>%
         select(bond, net_return, carry_income, roll_return, coupon_standardized)
 
-    cat("\nTop 5 performers:\n")
-    cat(sprintf("  %-10s  Net Return  Carry   Roll    Coupon\n", "Bond"))
-    for(i in 1:nrow(top_5)) {
-        cat(sprintf("  %-10s  %7.2f%%  %6.2f%% %6.2f%%  %6.2f%%\n",
-                    top_5$bond[i], top_5$net_return[i],
-                    top_5$carry_income[i], top_5$roll_return[i],
-                    top_5$coupon_standardized[i]))
-    }
+    if (getOption("insele.verbose", FALSE)) {
+        cat("\nTop 5 performers:\n")
+        cat(sprintf("  %-10s  Net Return  Carry   Roll    Coupon\n", "Bond"))
+        for(i in 1:nrow(top_5)) {
+            cat(sprintf("  %-10s  %7.2f%%  %6.2f%% %6.2f%%  %6.2f%%\n",
+                        top_5$bond[i], top_5$net_return[i],
+                        top_5$carry_income[i], top_5$roll_return[i],
+                        top_5$coupon_standardized[i]))
+        }
 
-    cat("\nBottom 5 performers:\n")
-    cat(sprintf("  %-10s  Net Return  Carry   Roll    Coupon\n", "Bond"))
-    for(i in 1:nrow(bottom_5)) {
-        cat(sprintf("  %-10s  %7.2f%%  %6.2f%% %6.2f%%  %6.2f%%\n",
-                    bottom_5$bond[i], bottom_5$net_return[i],
-                    bottom_5$carry_income[i], bottom_5$roll_return[i],
-                    bottom_5$coupon_standardized[i]))
+        cat("\nBottom 5 performers:\n")
+        cat(sprintf("  %-10s  Net Return  Carry   Roll    Coupon\n", "Bond"))
+        for(i in 1:nrow(bottom_5)) {
+            cat(sprintf("  %-10s  %7.2f%%  %6.2f%% %6.2f%%  %6.2f%%\n",
+                        bottom_5$bond[i], bottom_5$net_return[i],
+                        bottom_5$carry_income[i], bottom_5$roll_return[i],
+                        bottom_5$coupon_standardized[i]))
+        }
     }
 
     # Summary statistics
@@ -3365,7 +3367,7 @@ investigate_bond_carry <- function(bond_name,
 }
 
 #' @export
-calculate_fair_value <- function(data, method = "smooth.spline") {
+calculate_fair_value <- memoise(function(data, method = "smooth.spline") {
     if(nrow(data) < 4) {
         data$fitted_yield <- data$yield_to_maturity
         data$spread_to_curve <- 0
@@ -3388,7 +3390,7 @@ calculate_fair_value <- function(data, method = "smooth.spline") {
     # Calculate spread in basis points
     data$spread_to_curve <- (data$yield_to_maturity - data$fitted_yield) * 100
     return(data)
-}
+})
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ENHANCED AUCTION METRICS
