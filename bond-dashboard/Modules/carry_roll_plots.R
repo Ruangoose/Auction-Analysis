@@ -423,8 +423,8 @@ generate_forward_curve_plot <- function(data, params = NULL, selected_period = N
     )
     forward_periods$end_year <- forward_periods$start_year + forward_periods$tenor_years
 
-    # Calculate forward rates for each period
-    forward_data <- data.frame()
+    # Calculate forward rates for each period (pre-allocated list)
+    forward_list <- vector("list", nrow(forward_periods))
     for (i in 1:nrow(forward_periods)) {
         t1 <- forward_periods$start_year[i]  # Start of forward period
         t2 <- forward_periods$end_year[i]    # End of forward period
@@ -456,7 +456,7 @@ generate_forward_curve_plot <- function(data, params = NULL, selected_period = N
         # Negative spread = market expects rates to FALL (bullish for bonds)
         spread_bps <- (forward_rate_pct - r_tenor_pct) * 100
 
-        forward_data <- rbind(forward_data, data.frame(
+        forward_list[[i]] <- data.frame(
             start_year = t1,
             end_year = t2,
             tenor_years = tenor,
@@ -466,8 +466,9 @@ generate_forward_curve_plot <- function(data, params = NULL, selected_period = N
             label = forward_periods$label[i],
             mid_point = (t1 + t2) / 2,
             stringsAsFactors = FALSE
-        ))
+        )
     }
+    forward_data <- bind_rows(forward_list)
 
     # Validate forward rate data
     forward_data <- forward_data %>%
@@ -779,145 +780,134 @@ calculate_butterfly_spreads <- function(bond_data, lookback_days = 365) {
         message(sprintf("WARNING: Only %d observations (need 60+ for reliable stats)", nrow(yields_wide)))
     }
 
-    # Generate all valid butterfly combinations
+    # Generate all valid butterfly combinations using vectorized approach
     # Short wing (shortest) - 2×Body (middle) + Long wing (longest)
     n_bonds <- length(bond_names)
     message(sprintf("Generating butterflies from %d bonds...", n_bonds))
 
-    butterflies <- list()
-    combos_checked <- 0
-    combos_valid <- 0
+    # Filter bond_names to only those present in yields_wide
+    available_bonds <- bond_names[bond_names %in% names(yields_wide)]
+    n_avail <- length(available_bonds)
 
-    for (i in 1:(n_bonds - 2)) {
-        for (j in (i + 1):(n_bonds - 1)) {
-            for (k in (j + 1):n_bonds) {
-
-                combos_checked <- combos_checked + 1
-
-                short_wing <- bond_names[i]
-                body <- bond_names[j]
-                long_wing <- bond_names[k]
-
-                # Check if all three bonds exist in wide data
-                if (!all(c(short_wing, body, long_wing) %in% names(yields_wide))) {
-                    next
-                }
-
-                # Calculate butterfly spread time series
-                spread_name <- sprintf("%s-%s-%s", short_wing, body, long_wing)
-
-                spread_ts <- tryCatch({
-                    yields_wide %>%
-                        mutate(
-                            butterfly_spread = .data[[short_wing]] - 2 * .data[[body]] + .data[[long_wing]]
-                        ) %>%
-                        filter(!is.na(butterfly_spread)) %>%
-                        select(date, butterfly_spread)
-                }, error = function(e) {
-                    message(sprintf("Error calculating %s: %s", spread_name, e$message))
-                    NULL
-                })
-
-                if (is.null(spread_ts) || nrow(spread_ts) < 60) {
-                    next
-                }
-
-                combos_valid <- combos_valid + 1
-
-                # Calculate statistics
-                spread_mean <- mean(spread_ts$butterfly_spread, na.rm = TRUE)
-                spread_sd <- sd(spread_ts$butterfly_spread, na.rm = TRUE)
-
-                if (is.na(spread_sd) || spread_sd == 0) {
-                    message(sprintf("WARNING: %s has zero/NA std dev, skipping", spread_name))
-                    next
-                }
-
-                current_spread <- tail(spread_ts$butterfly_spread, 1)
-                z_score <- (current_spread - spread_mean) / spread_sd
-
-                # DEBUG: Log spread data details for first 5 combos to verify data varies
-                if (combos_valid <= 5) {
-                    message(sprintf("[SPREAD DEBUG] %s: n=%d, first=%.6f, last=%.6f, mean=%.6f, sd=%.6f",
-                                    spread_name,
-                                    nrow(spread_ts),
-                                    head(spread_ts$butterfly_spread, 1),
-                                    tail(spread_ts$butterfly_spread, 1),
-                                    spread_mean,
-                                    spread_sd))
-                }
-
-                # ADF test for stationarity with comprehensive logging
-                adf_result <- tryCatch({
-                    spread_vec <- spread_ts$butterfly_spread
-                    n_obs <- length(spread_vec)
-
-                    # Pre-test checks
-                    if (n_obs < 20) {
-                        message(sprintf("[ADF] %s: SKIP - insufficient data (%d obs)", spread_name, n_obs))
-                        return(list(p.value = NA, statistic = NA, p_truncated = FALSE))
-                    }
-
-                    vec_sd <- sd(spread_vec, na.rm = TRUE)
-                    if (is.na(vec_sd) || vec_sd < 1e-10) {
-                        message(sprintf("[ADF] %s: SKIP - constant/near-constant series (sd=%.2e)", spread_name, vec_sd))
-                        return(list(p.value = NA, statistic = NA, p_truncated = FALSE))
-                    }
-
-                    test_result <- tseries::adf.test(spread_vec, alternative = "stationary")
-
-                    # Log detailed ADF results for first 10 butterflies
-                    if (combos_valid <= 10) {
-                        message(sprintf("[ADF] %s: stat=%.4f, p=%.4f, lag=%d, n=%d",
-                                        spread_name,
-                                        test_result$statistic,
-                                        test_result$p.value,
-                                        test_result$parameter,
-                                        n_obs))
-                    }
-
-                    # tseries::adf.test truncates p-values at 0.01 and 0.99
-                    # If p.value == 0.01, it's actually <= 0.01
-                    list(
-                        p.value = test_result$p.value,
-                        statistic = test_result$statistic,
-                        lag = test_result$parameter,
-                        p_truncated = (test_result$p.value == 0.01)
-                    )
-                }, error = function(e) {
-                    message(sprintf("[ADF] %s: ERROR - %s", spread_name, e$message))
-                    list(p.value = NA, statistic = NA, p_truncated = FALSE)
-                })
-
-                # Store results - spread is already in correct units (percentage points if yields are in %)
-                butterflies[[spread_name]] <- list(
-                    name = spread_name,
-                    short_wing = short_wing,
-                    body = body,
-                    long_wing = long_wing,
-                    spread_ts = spread_ts,
-                    mean = spread_mean,
-                    sd = spread_sd,
-                    current = current_spread,
-                    z_score = z_score,
-                    adf_pvalue = adf_result$p.value,
-                    adf_statistic = adf_result$statistic,
-                    adf_p_truncated = adf_result$p_truncated,
-                    is_stationary = !is.na(adf_result$p.value) && adf_result$p.value < 0.05,
-                    diff_from_mean = current_spread - spread_mean,
-                    n_observations = nrow(spread_ts),
-                    yields_in_pct = yields_in_pct  # Track yield units
-                )
-            }
-        }
+    if (n_avail < 3) {
+        message("Not enough bonds available in wide data for butterfly combinations")
+        return(NULL)
     }
 
-    message(sprintf("Combinations checked: %d", combos_checked))
+    # Generate all 3-bond combinations at once instead of triple-nested loop
+    combos <- combn(n_avail, 3)
+    combos_checked <- ncol(combos)
+    message(sprintf("Total combinations to check: %d", combos_checked))
+
+    # Convert yields_wide to a numeric matrix for vectorized spread computation
+    dates_vec <- yields_wide$date
+    yield_mat <- as.matrix(yields_wide[, available_bonds, drop = FALSE])
+
+    # Compute ALL butterfly spreads at once: short_wing - 2*body + long_wing
+    # Each column of spread_mat is one butterfly's time series
+    spread_mat <- yield_mat[, combos[1,], drop = FALSE] -
+                  2 * yield_mat[, combos[2,], drop = FALSE] +
+                  yield_mat[, combos[3,], drop = FALSE]
+
+    # Count non-NA observations per combination (vectorized)
+    obs_counts <- colSums(!is.na(spread_mat))
+
+    # Filter to combinations with 60+ observations
+    valid_mask <- obs_counts >= 60
+    valid_indices <- which(valid_mask)
+    combos_valid <- length(valid_indices)
     message(sprintf("Valid butterflies (60+ obs): %d", combos_valid))
+
+    # Pre-allocate results list
+    butterflies <- vector("list", combos_valid)
+    names_vec <- character(combos_valid)
+    result_idx <- 0
+
+    for (vi in valid_indices) {
+        i_combo <- combos[1, vi]
+        j_combo <- combos[2, vi]
+        k_combo <- combos[3, vi]
+
+        short_wing <- available_bonds[i_combo]
+        body <- available_bonds[j_combo]
+        long_wing <- available_bonds[k_combo]
+        spread_name <- sprintf("%s-%s-%s", short_wing, body, long_wing)
+
+        # Extract pre-computed spread vector and remove NAs
+        spread_vec <- spread_mat[, vi]
+        valid_rows <- !is.na(spread_vec)
+        spread_vec_clean <- spread_vec[valid_rows]
+        dates_clean <- dates_vec[valid_rows]
+
+        spread_mean <- mean(spread_vec_clean)
+        spread_sd <- sd(spread_vec_clean)
+
+        if (is.na(spread_sd) || spread_sd == 0) {
+            next
+        }
+
+        current_spread <- tail(spread_vec_clean, 1)
+        z_score <- (current_spread - spread_mean) / spread_sd
+
+        # Build spread_ts data.frame (same structure as original)
+        spread_ts <- data.frame(
+            date = dates_clean,
+            butterfly_spread = spread_vec_clean
+        )
+
+        # ADF test for stationarity (preserved — same logic as original)
+        adf_result <- tryCatch({
+            n_obs <- length(spread_vec_clean)
+            if (n_obs < 20) {
+                return(list(p.value = NA, statistic = NA, p_truncated = FALSE))
+            }
+            if (spread_sd < 1e-10) {
+                return(list(p.value = NA, statistic = NA, p_truncated = FALSE))
+            }
+
+            test_result <- tseries::adf.test(spread_vec_clean, alternative = "stationary")
+            list(
+                p.value = test_result$p.value,
+                statistic = test_result$statistic,
+                lag = test_result$parameter,
+                p_truncated = (test_result$p.value == 0.01)
+            )
+        }, error = function(e) {
+            list(p.value = NA, statistic = NA, p_truncated = FALSE)
+        })
+
+        # Store results — same list structure as original
+        result_idx <- result_idx + 1
+        names_vec[result_idx] <- spread_name
+        butterflies[[result_idx]] <- list(
+            name = spread_name,
+            short_wing = short_wing,
+            body = body,
+            long_wing = long_wing,
+            spread_ts = spread_ts,
+            mean = spread_mean,
+            sd = spread_sd,
+            current = current_spread,
+            z_score = z_score,
+            adf_pvalue = adf_result$p.value,
+            adf_statistic = adf_result$statistic,
+            adf_p_truncated = adf_result$p_truncated,
+            is_stationary = !is.na(adf_result$p.value) && adf_result$p.value < 0.05,
+            diff_from_mean = current_spread - spread_mean,
+            n_observations = nrow(spread_ts),
+            yields_in_pct = yields_in_pct
+        )
+    }
+
+    # Trim pre-allocated list to actual results
+    butterflies <- butterflies[seq_len(result_idx)]
+    names(butterflies) <- names_vec[seq_len(result_idx)]
+
+    message(sprintf("Combinations checked: %d", combos_checked))
     message(sprintf("Final butterflies: %d", length(butterflies)))
 
-    # DEBUG: Stationarity distribution summary
-    if (length(butterflies) > 0) {
+    # Stationarity distribution summary (gated behind verbose flag)
+    if (length(butterflies) > 0 && getOption("insele.verbose", FALSE)) {
         stationary_count <- sum(sapply(butterflies, function(bf) isTRUE(bf$is_stationary)))
         non_stationary_count <- sum(sapply(butterflies, function(bf) !isTRUE(bf$is_stationary) && !is.na(bf$is_stationary)))
         na_count <- sum(sapply(butterflies, function(bf) is.na(bf$is_stationary)))
@@ -927,7 +917,6 @@ calculate_butterfly_spreads <- function(bond_data, lookback_days = 365) {
         message(sprintf("Non-Stationary (p>=0.05): %d", non_stationary_count))
         message(sprintf("NA/Error: %d", na_count))
 
-        # ADF statistic range
         adf_stats <- sapply(butterflies, function(bf) bf$adf_statistic)
         adf_stats <- adf_stats[!is.na(adf_stats)]
         if (length(adf_stats) > 0) {
@@ -935,7 +924,6 @@ calculate_butterfly_spreads <- function(bond_data, lookback_days = 365) {
                             min(adf_stats), max(adf_stats), mean(adf_stats), sd(adf_stats)))
         }
 
-        # ADF p-value range
         adf_pvals <- sapply(butterflies, function(bf) bf$adf_pvalue)
         adf_pvals <- adf_pvals[!is.na(adf_pvals)]
         if (length(adf_pvals) > 0) {
@@ -944,7 +932,6 @@ calculate_butterfly_spreads <- function(bond_data, lookback_days = 365) {
             message(sprintf("P-values > 0.05 (non-stationary): %d", sum(adf_pvals > 0.05)))
         }
 
-        # WARNING if all stationary
         if (stationary_count == length(butterflies)) {
             message("WARNING: ALL butterflies marked as stationary! This may indicate a bug.")
         }

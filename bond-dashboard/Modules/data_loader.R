@@ -1357,12 +1357,14 @@ load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
         new_bonds <- ytm_summary %>%
             dplyr::filter(first_date > as.Date("2024-01-01"))
         if (nrow(new_bonds) > 0) {
-            message("\n  📊 New bonds (data starts after 2024-01-01):")
-            for (i in 1:nrow(new_bonds)) {
-                row <- new_bonds[i, ]
-                message(sprintf("    %s: %s to %s (%d obs, YTM %.1f%%-%.1f%%)",
-                                row$bond, row$first_date, row$last_date, row$n_obs,
-                                row$min_ytm, row$max_ytm))
+            message(sprintf("\n  📊 %d new bond(s) (data starts after 2024-01-01)", nrow(new_bonds)))
+            if (getOption("insele.verbose", FALSE)) {
+                for (i in 1:nrow(new_bonds)) {
+                    row <- new_bonds[i, ]
+                    message(sprintf("    %s: %s to %s (%d obs, YTM %.1f%%-%.1f%%)",
+                                    row$bond, row$first_date, row$last_date, row$n_obs,
+                                    row$min_ytm, row$max_ytm))
+                }
             }
         }
 
@@ -1371,9 +1373,11 @@ load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
             dplyr::filter(date == max(date)) %>%
             dplyr::filter(yield_to_maturity < 5 | yield_to_maturity > 15)
         if (nrow(ytm_check) > 0) {
-            message("\n  ⚠ WARNING: Bonds with unusual YTM values on latest date:")
-            for (i in 1:min(nrow(ytm_check), 5)) {
-                message(sprintf("    %s: %.2f%%", ytm_check$bond[i], ytm_check$yield_to_maturity[i]))
+            message(sprintf("\n  ⚠ WARNING: %d bond(s) with unusual YTM values on latest date", nrow(ytm_check)))
+            if (getOption("insele.verbose", FALSE)) {
+                for (i in 1:min(nrow(ytm_check), 5)) {
+                    message(sprintf("    %s: %.2f%%", ytm_check$bond[i], ytm_check$yield_to_maturity[i]))
+                }
             }
         } else {
             message("    ✓ All YTM values on latest date are within normal range (5-15%)")
@@ -1559,9 +1563,11 @@ load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
             dplyr::filter(date == max(date, na.rm = TRUE)) %>%
             dplyr::count(maturity_bucket) %>%
             dplyr::arrange(dplyr::desc(n))
-        message("\n  Maturity bucket distribution (latest date):")
-        for (i in 1:nrow(bucket_dist)) {
-            message(sprintf("    %s: %d bonds", bucket_dist$maturity_bucket[i], bucket_dist$n[i]))
+        message(sprintf("\n  Maturity bucket distribution: %d buckets", nrow(bucket_dist)))
+        if (getOption("insele.verbose", FALSE)) {
+            for (i in 1:nrow(bucket_dist)) {
+                message(sprintf("    %s: %d bonds", bucket_dist$maturity_bucket[i], bucket_dist$n[i]))
+            }
         }
     }
 
@@ -1975,26 +1981,29 @@ verify_bond_data_quality <- function(data, ytm_min = 5, ytm_max = 15, dur_min = 
         ) %>%
         dplyr::arrange(dplyr::desc(ytm_ok), bond)
 
-    message("\n  Bond Data Quality:")
-    for (i in 1:nrow(quality_check)) {
-        row <- quality_check[i,]
-        status_icon <- if(row$ytm_ok && row$dur_ok) "✓" else "✗"
-        message(sprintf("    %s %-6s: YTM=%6.2f%%, ModDur=%5.2f  %s",
-                        status_icon, row$bond, row$ytm, row$mod_dur, row$status))
-    }
-
     n_good <- sum(quality_check$ytm_ok & quality_check$dur_ok)
     n_bad <- nrow(quality_check) - n_good
 
-    message(sprintf("\n  Summary: %d good, %d problematic", n_good, n_bad))
+    message(sprintf("\n  Bond Data Quality: %d good, %d problematic", n_good, n_bad))
+
+    if (getOption("insele.verbose", FALSE)) {
+        for (i in 1:nrow(quality_check)) {
+            row <- quality_check[i,]
+            status_icon <- if(row$ytm_ok && row$dur_ok) "✓" else "✗"
+            message(sprintf("    %s %-6s: YTM=%6.2f%%, ModDur=%5.2f  %s",
+                            status_icon, row$bond, row$ytm, row$mod_dur, row$status))
+        }
+    }
 
     if (n_bad > 0) {
         message("\n  ⚠ PROBLEMATIC BONDS DETECTED!")
         bad_bonds <- quality_check %>% dplyr::filter(!(ytm_ok & dur_ok))
-        for (i in 1:nrow(bad_bonds)) {
-            row <- bad_bonds[i,]
-            message(sprintf("    %s: ytm=%.2f, mod_dur=%.2f - %s",
-                            row$bond, row$ytm, row$mod_dur, row$status))
+        if (getOption("insele.verbose", FALSE)) {
+            for (i in 1:nrow(bad_bonds)) {
+                row <- bad_bonds[i,]
+                message(sprintf("    %s: ytm=%.2f, mod_dur=%.2f - %s",
+                                row$bond, row$ytm, row$mod_dur, row$status))
+            }
         }
         message("\n  RECOMMENDED ACTION: Force cache refresh with force_refresh=TRUE")
     }
