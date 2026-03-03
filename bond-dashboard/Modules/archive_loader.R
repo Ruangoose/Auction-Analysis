@@ -205,6 +205,22 @@ read_archive_csv <- function(csv_path, value_col) {
   # Parse dates
   raw$date <- as.Date(raw$date)
 
+  # === Filter out non-trading days (weekends/holidays) ===
+  # Must happen BEFORE pivot_longer while data is still in wide format
+  rows_before <- nrow(raw)
+  raw <- raw %>%
+    dplyr::rowwise() %>%
+    dplyr::mutate(
+      .has_data = any(abs(dplyr::c_across(dplyr::all_of(bond_cols))) > 1e-10, na.rm = TRUE)
+    ) %>%
+    dplyr::ungroup() %>%
+    dplyr::filter(.has_data) %>%
+    dplyr::select(-.has_data)
+
+  if (nrow(raw) < rows_before) {
+    message(sprintf("[Archive]     Filtered %d non-trading days", rows_before - nrow(raw)))
+  }
+
   # Pivot to long format
   long_df <- raw %>%
     tidyr::pivot_longer(
@@ -673,6 +689,23 @@ load_ts_sheet_for_hybrid <- function(excel_path, sheet_name, value_col) {
     na = c("", "NA", "#N/A", "N/A", "#VALUE!", "#REF!", "#DIV/0!"),
     guess_max = 10000
   )
+
+  # === Filter out non-trading days (weekends/holidays) ===
+  # Source the helper if not already available (for standalone hybrid loading)
+  if (!exists("filter_non_trading_days", mode = "function")) {
+    # Inline minimal version for archive_loader independence
+    df <- df %>%
+      dplyr::rowwise() %>%
+      dplyr::mutate(
+        .has_data = any(abs(dplyr::c_across(-date)) > 1e-10, na.rm = TRUE)
+      ) %>%
+      dplyr::ungroup() %>%
+      dplyr::filter(.has_data) %>%
+      dplyr::select(-.has_data)
+    message(sprintf("[Hybrid]     Filtered non-trading days"))
+  } else {
+    df <- filter_non_trading_days(df, date_col = "date", verbose = TRUE)
+  }
 
   if (!"date" %in% names(df)) {
     stop(sprintf("Sheet '%s' missing 'date' column", sheet_name))
