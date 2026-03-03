@@ -2461,11 +2461,11 @@ generate_pre_auction_pdf <- function(file, config, filtered_data, processed_data
 
         # Thin horizontal orange accent line across the navy panel
         grid.lines(x = c(0.03, 0.32), y = c(0.15, 0.15),
-                   gp = gpar(col = adjustcolor("#E8913A", alpha.f = 0.5), lwd = 2))
+                   gp = gpar(col = adjustcolor("#E8913A", alpha.f = 0.6), lwd = 3))
 
         # --- Logo (top of white area, left-aligned) ---
         if (!is.null(logo_grob)) {
-            pushViewport(viewport(x = 0.54, y = 0.88, width = 0.28, height = 0.10,
+            pushViewport(viewport(x = 0.42, y = 0.89, width = 0.35, height = 0.12,
                                   just = c("left", "center")))
             grid.draw(logo_grob)
             popViewport()
