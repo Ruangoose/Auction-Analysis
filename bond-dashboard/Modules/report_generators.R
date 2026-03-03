@@ -2444,60 +2444,94 @@ generate_pre_auction_pdf <- function(file, config, filtered_data, processed_data
     tryCatch({
         pdf(temp_pdf, width = 11, height = 8.5)
 
-        # ─── PAGE 1: COVER ─────────────────────────────────────────
+        # ─── PAGE 1: COVER (Professional Branded Layout) ──────────────────
         grid.newpage()
 
-        # Background header bar
-        grid.rect(x = 0.5, y = 0.92, width = 1, height = 0.16,
+        # --- Navy left panel (35% width, full height minus footer) ---
+        grid.rect(x = unit(0.175, "npc"), y = unit(0.53, "npc"),
+                  width = unit(0.35, "npc"), height = unit(0.94, "npc"),
                   gp = gpar(fill = "#1B3A6B", col = NA))
 
-        # Logo
+        # --- Decorative geometric elements inside navy panel ---
+        # Large subtle circle (visual depth)
+        grid.circle(x = unit(0.15, "npc"), y = unit(0.55, "npc"),
+                    r = unit(0.18, "npc"),
+                    gp = gpar(fill = adjustcolor("#2B4F7F", alpha.f = 0.3), col = NA))
+
+        # Medium circle (upper area)
+        grid.circle(x = unit(0.28, "npc"), y = unit(0.78, "npc"),
+                    r = unit(0.10, "npc"),
+                    gp = gpar(fill = adjustcolor("#2B4F7F", alpha.f = 0.2), col = NA))
+
+        # Small orange accent circle
+        grid.circle(x = unit(0.08, "npc"), y = unit(0.30, "npc"),
+                    r = unit(0.07, "npc"),
+                    gp = gpar(fill = adjustcolor("#E8913A", alpha.f = 0.15), col = NA))
+
+        # --- Logo (top of white area, left-aligned) ---
         if (!is.null(logo_grob)) {
-            pushViewport(viewport(x = 0.5, y = 0.92, width = 0.2, height = 0.12))
+            pushViewport(viewport(x = 0.54, y = 0.88, width = 0.28, height = 0.10,
+                                  just = c("left", "center")))
             grid.draw(logo_grob)
             popViewport()
+        } else {
+            grid.text("INSELE CAPITAL PARTNERS",
+                      x = 0.42, y = 0.89, just = "left",
+                      gp = gpar(fontsize = 20, fontface = 2, col = "#1B3A6B"))
+            grid.text("BROKING SERVICES",
+                      x = 0.42, y = 0.85, just = "left",
+                      gp = gpar(fontsize = 12, col = "#5B7B8A"))
         }
 
-        # Title
-        grid.text("Weekly Auction Preview",
-                  x = 0.5, y = 0.72,
-                  gp = gpar(fontsize = 28, fontface = "bold", col = "#1B3A6B"))
+        # --- Orange accent line (separator below logo) ---
+        grid.lines(x = c(0.38, 0.92), y = c(0.81, 0.81),
+                   gp = gpar(col = "#E8913A", lwd = 3))
 
-        # Auction Date
+        # --- Title: WEEKLY AUCTION PREVIEW (stacked, bold, left-aligned) ---
+        grid.text("WEEKLY", x = 0.42, y = 0.72, just = "left",
+                  gp = gpar(fontsize = 36, fontface = 2, col = "#1B3A6B"))
+        grid.text("AUCTION", x = 0.42, y = 0.64, just = "left",
+                  gp = gpar(fontsize = 36, fontface = 2, col = "#1B3A6B"))
+        grid.text("PREVIEW", x = 0.42, y = 0.56, just = "left",
+                  gp = gpar(fontsize = 36, fontface = 2, col = "#1B3A6B"))
+
+        # --- Auction date (in brand orange) ---
         grid.text(format(auction_date, "%A, %B %d, %Y"),
-                  x = 0.5, y = 0.63,
-                  gp = gpar(fontsize = 18, col = "#555555"))
+                  x = 0.42, y = 0.46, just = "left",
+                  gp = gpar(fontsize = 16, col = "#E8913A"))
 
-        # Bonds
+        # --- Bonds on auction ---
         grid.text(paste("Bonds on Auction:", paste(auction_bonds, collapse = ", ")),
-                  x = 0.5, y = 0.54,
+                  x = 0.42, y = 0.38, just = "left",
                   gp = gpar(fontsize = 14, col = "#333333"))
 
-        # Client
+        # --- Client name (conditional) ---
         if (nchar(client_name) > 0) {
             grid.text(paste("Prepared for:", client_name),
-                      x = 0.5, y = 0.46,
-                      gp = gpar(fontsize = 13, col = "#666666"))
+                      x = 0.42, y = 0.31, just = "left",
+                      gp = gpar(fontsize = 13, fontface = 3, col = "#666666"))
         }
 
-        # Company line
-        grid.text("Prepared by Insele Capital Partners - Broking Services",
-                  x = 0.5, y = 0.36,
-                  gp = gpar(fontsize = 12, fontface = "italic", col = "#1B3A6B"))
-
-        # Date generated
-        grid.text(paste("Generated:", format(Sys.Date(), "%B %d, %Y")),
-                  x = 0.5, y = 0.28,
-                  gp = gpar(fontsize = 11, col = "#999999"))
-
-        # Footer bar
-        grid.rect(x = 0.5, y = 0.04, width = 1, height = 0.06,
+        # --- Navy footer bar (full width) ---
+        grid.rect(x = unit(0.5, "npc"), y = unit(0.03, "npc"),
+                  width = unit(1, "npc"), height = unit(0.06, "npc"),
                   gp = gpar(fill = "#1B3A6B", col = NA))
-        grid.text("INSELE CAPITAL PARTNERS",
-                  x = 0.5, y = 0.04,
-                  gp = gpar(fontsize = 10, col = "white", fontface = "bold"))
 
-        add_footer(1, total_pages)
+        # Footer contact details (white text on navy)
+        grid.text("www.insele.capital",
+                  x = 0.10, y = 0.03, just = "left",
+                  gp = gpar(fontsize = 9, col = "white"))
+        grid.text("+27 11 286 1949",
+                  x = 0.35, y = 0.03,
+                  gp = gpar(fontsize = 9, col = "white"))
+        grid.text("bonds@insele.capital",
+                  x = 0.60, y = 0.03,
+                  gp = gpar(fontsize = 9, col = "white"))
+        grid.text("Prepared by: Insele Capital Partners",
+                  x = 0.90, y = 0.03, just = "right",
+                  gp = gpar(fontsize = 9, col = "white"))
+
+        # Note: No add_footer() call on cover — branded footer bar replaces it
 
         # ─── PAGE 2: AUCTION OUTLOOK (Enhancement 1) ──────────────
         grid.newpage()
