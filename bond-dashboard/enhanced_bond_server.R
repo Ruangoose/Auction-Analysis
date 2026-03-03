@@ -11770,8 +11770,12 @@ server <- function(input, output, session) {
                 if(!is.null(logo_path) && file.exists(logo_path)) {
                     tryCatch({
                         logo_img <- png::readPNG(logo_path)
-                        logo_grob <- rasterGrob(logo_img, width = unit(2, "inches"),
-                                                height = unit(0.8, "inches"))
+                        # Boost alpha channel to increase logo opacity
+                        if (length(dim(logo_img)) == 3 && dim(logo_img)[3] == 4) {
+                            logo_img[,,4] <- pmin(logo_img[,,4] * 2, 1)
+                        }
+                        logo_grob <- rasterGrob(logo_img, width = unit(2.8, "inches"),
+                                                height = unit(1.1, "inches"))
                     }, error = function(e) {
                         logo_grob <- NULL
                     })

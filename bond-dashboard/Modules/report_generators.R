@@ -2465,7 +2465,7 @@ generate_pre_auction_pdf <- function(file, config, filtered_data, processed_data
 
         # --- Logo (top of white area, left-aligned) ---
         if (!is.null(logo_grob)) {
-            pushViewport(viewport(x = 0.42, y = 0.89, width = 0.35, height = 0.12,
+            pushViewport(viewport(x = 0.42, y = 0.89, width = 0.45, height = 0.16,
                                   just = c("left", "center")))
             grid.draw(logo_grob)
             popViewport()
