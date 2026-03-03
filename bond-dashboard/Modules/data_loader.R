@@ -17,6 +17,68 @@
 MIN_OBSERVATIONS <- 1  # Require only 1 observation minimum to include all bonds with any valid data
 
 # ==============================================================================
+# NON-TRADING DAY FILTER
+# Data-driven approach: if ALL bond columns are zero for a date, market was closed
+# Handles weekends, SA public holidays, and ad-hoc closures without a calendar
+# ==============================================================================
+
+#' Filter out non-trading days from time series data
+#'
+#' Removes dates where ALL bond values are zero (or very close to zero),
+#' indicating the market was closed (weekends, public holidays, etc.)
+#' This is a data-driven approach that requires no calendar maintenance.
+#'
+#' @param df Data frame in WIDE format (date column + bond columns)
+#' @param date_col Name of the date column (default: "date")
+#' @param zero_threshold Values below this are treated as zero (default: 1e-10)
+#' @param verbose Print diagnostic messages (default: TRUE)
+#' @return Data frame with non-trading days removed
+#' @export
+filter_non_trading_days <- function(df,
+                                    date_col = "date",
+                                    zero_threshold = 1e-10,
+                                    verbose = TRUE) {
+
+  if (is.null(df) || nrow(df) == 0) {
+    return(df)
+  }
+
+  # Get bond columns (all columns except date)
+  bond_cols <- setdiff(names(df), date_col)
+
+  if (length(bond_cols) == 0) {
+    warning("[filter_non_trading_days] No bond columns found")
+    return(df)
+  }
+
+  # Identify rows where ALL bond values are zero (or NA/missing)
+  # A trading day should have at least ONE non-zero value
+  rows_before <- nrow(df)
+
+  df_filtered <- df %>%
+    dplyr::rowwise() %>%
+    dplyr::mutate(
+      .has_trading_data = any(
+        abs(dplyr::c_across(dplyr::all_of(bond_cols))) > zero_threshold,
+        na.rm = TRUE
+      )
+    ) %>%
+    dplyr::ungroup() %>%
+    dplyr::filter(.has_trading_data) %>%
+    dplyr::select(-.has_trading_data)
+
+  rows_after <- nrow(df_filtered)
+  rows_removed <- rows_before - rows_after
+
+  if (verbose && rows_removed > 0) {
+    message(sprintf("    [Non-trading filter] Removed %d non-trading days (weekends/holidays)",
+                    rows_removed))
+  }
+
+  return(df_filtered)
+}
+
+# ==============================================================================
 # CORRUPTION DETECTION AND VALIDATION FUNCTIONS
 # Added 2026-01-15 to fix bond data corruption (YTM=1.0%, ModDur=1.0)
 # ==============================================================================
@@ -499,6 +561,10 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
                                na = c("", "NA", "#N/A", "N/A", "#VALUE!", "#REF!", "#DIV/0!"),
                                guess_max = 10000)
 
+      # === Filter out non-trading days (weekends/holidays) ===
+      # Must happen BEFORE pivot_longer while data is still in wide format
+      df <- filter_non_trading_days(df, date_col = "date", verbose = TRUE)
+
       # Ensure date column exists and is proper format
       if (!"date" %in% names(df)) {
         stop("Sheet '", sheet_name, "' missing 'date' column")
@@ -903,6 +969,13 @@ load_time_series_sheet <- function(excel_path, sheet_name, value_name, available
                                  na = c("", "NA", "#N/A", "N/A", "#VALUE!", "#REF!", "#DIV/0!"),
                                  guess_max = 10000)
 
+        # Ensure date column is properly typed
+        df <- df %>% dplyr::mutate(date = lubridate::as_date(date))
+
+        # === Filter out non-trading days (weekends/holidays) ===
+        # Must happen BEFORE pivot_longer while data is still in wide format
+        df <- filter_non_trading_days(df, date_col = "date", verbose = TRUE)
+
         # Get columns that exist in this sheet and are in available_bonds (or date)
         valid_cols <- intersect(names(df), c("date", available_bonds))
 
@@ -913,7 +986,6 @@ load_time_series_sheet <- function(excel_path, sheet_name, value_name, available
 
         result <- df %>%
             dplyr::select(dplyr::all_of(valid_cols)) %>%
-            dplyr::mutate(date = lubridate::as_date(date)) %>%
             tidyr::pivot_longer(
                 cols = -date,
                 names_to = "bond",
