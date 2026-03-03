@@ -581,7 +581,13 @@ load_logo_for_pdf <- function(logo_path = "bond-dashboard/www/Insele_logo_2.webp
             return(NULL)
         }
 
-        # Convert WebP to PNG for PDF compatibility
+        # If file is already PNG, return it directly — no conversion needed
+        if(grepl("\\.png$", tolower(logo_path))) {
+            message(sprintf("[LOGO] PNG file found, using directly: %s", logo_path))
+            return(logo_path)
+        }
+
+        # For non-PNG files (WebP, etc.), convert to PNG for PDF compatibility
         temp_png <- tempfile(fileext = ".png")
 
         # Option 1: Using magick package (recommended)
@@ -593,9 +599,9 @@ load_logo_for_pdf <- function(logo_path = "bond-dashboard/www/Insele_logo_2.webp
         else if(requireNamespace("webp", quietly = TRUE)) {
             webp::read_webp(logo_path, output = temp_png)
         }
-        # Option 3: Using png package with conversion
+        # Option 3: No conversion available
         else {
-            # This requires the image to already be in a compatible format
+            message("[LOGO] No image conversion package available (magick or webp). Cannot convert non-PNG logo.")
             return(NULL)
         }
 

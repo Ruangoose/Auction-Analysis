@@ -2452,21 +2452,16 @@ generate_pre_auction_pdf <- function(file, config, filtered_data, processed_data
                   width = unit(0.35, "npc"), height = unit(0.94, "npc"),
                   gp = gpar(fill = "#1B3A6B", col = NA))
 
-        # --- Decorative geometric elements inside navy panel ---
-        # Large subtle circle (visual depth)
-        grid.circle(x = unit(0.15, "npc"), y = unit(0.55, "npc"),
-                    r = unit(0.18, "npc"),
-                    gp = gpar(fill = adjustcolor("#2B4F7F", alpha.f = 0.3), col = NA))
+        # --- Decorative elements inside navy panel ---
+        # Large partial circle anchored to bottom-left corner
+        # Only the upper-right quadrant is visible; rest bleeds off-page
+        grid.circle(x = unit(-0.02, "npc"), y = unit(0.08, "npc"),
+                    r = unit(0.22, "npc"),
+                    gp = gpar(fill = adjustcolor("#2B4F7F", alpha.f = 0.25), col = NA))
 
-        # Medium circle (upper area)
-        grid.circle(x = unit(0.28, "npc"), y = unit(0.78, "npc"),
-                    r = unit(0.10, "npc"),
-                    gp = gpar(fill = adjustcolor("#2B4F7F", alpha.f = 0.2), col = NA))
-
-        # Small orange accent circle
-        grid.circle(x = unit(0.08, "npc"), y = unit(0.30, "npc"),
-                    r = unit(0.07, "npc"),
-                    gp = gpar(fill = adjustcolor("#E8913A", alpha.f = 0.15), col = NA))
+        # Thin horizontal orange accent line across the navy panel
+        grid.lines(x = c(0.03, 0.32), y = c(0.15, 0.15),
+                   gp = gpar(col = adjustcolor("#E8913A", alpha.f = 0.5), lwd = 2))
 
         # --- Logo (top of white area, left-aligned) ---
         if (!is.null(logo_grob)) {
