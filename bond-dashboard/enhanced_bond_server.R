@@ -11770,8 +11770,7 @@ server <- function(input, output, session) {
                 if(!is.null(logo_path) && file.exists(logo_path)) {
                     tryCatch({
                         logo_img <- png::readPNG(logo_path)
-                        logo_grob <- rasterGrob(logo_img, width = unit(2, "inches"),
-                                                height = unit(0.8, "inches"))
+                        logo_grob <- rasterGrob(logo_img, interpolate = TRUE)
                     }, error = function(e) {
                         logo_grob <- NULL
                     })
