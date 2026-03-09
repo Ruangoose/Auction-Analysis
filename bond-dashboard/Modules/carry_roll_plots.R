@@ -1,6 +1,6 @@
 #' @export
 # 10. Enhanced Carry & Roll Heatmap Generation
-generate_enhanced_carry_roll_heatmap <- function(data, return_type = "net", funding_rate = 8.25) {
+generate_enhanced_carry_roll_heatmap <- function(data, return_type = "net", funding_rate = 8.25, annualize = FALSE) {
 
     # Error handling wrapper for robustness
     tryCatch({
@@ -86,6 +86,15 @@ generate_enhanced_carry_roll_heatmap <- function(data, return_type = "net", fund
         return(NULL)
     }
 
+    # Optionally annualize returns (display transformation only)
+    if (annualize) {
+        heatmap_data <- heatmap_data %>%
+            mutate(
+                holding_days = as.numeric(gsub("d", "", as.character(holding_period))),
+                return_value = return_value * (365 / holding_days)
+            )
+    }
+
     # ═══════════════════════════════════════════════════════════════════════
     # FIX 2: PROPER COLOR SCALE - GREEN FOR POSITIVE, RED FOR NEGATIVE
     # ═══════════════════════════════════════════════════════════════════════
@@ -109,8 +118,10 @@ generate_enhanced_carry_roll_heatmap <- function(data, return_type = "net", fund
             labels = function(x) sprintf("%.1f%%", x),
             guide = guide_colorbar(
                 title.position = "top",
-                barwidth = 12,
-                barheight = 0.5
+                barwidth = 18,
+                barheight = 0.8,
+                label.theme = element_text(size = 10),
+                title.theme = element_text(size = 11, face = "bold")
             )
         )
     } else {
@@ -125,8 +136,10 @@ generate_enhanced_carry_roll_heatmap <- function(data, return_type = "net", fund
             labels = function(x) sprintf("%.1f%%", x),
             guide = guide_colorbar(
                 title.position = "top",
-                barwidth = 12,
-                barheight = 0.5
+                barwidth = 18,
+                barheight = 0.8,
+                label.theme = element_text(size = 10),
+                title.theme = element_text(size = 11, face = "bold")
             )
         )
     }
@@ -182,21 +195,29 @@ generate_enhanced_carry_roll_heatmap <- function(data, return_type = "net", fund
         # ═══════════════════════════════════════════════════════════════════════
         labs(
             title = "Carry & Roll Analysis",
-            subtitle = sprintf("Sorted by 90-day %s return (highest at top) | Funding: %.2f%%",
-                               return_type_label, funding_rate),
+            subtitle = sprintf("Sorted by 90-day %s return (highest at top) | Funding: %.2f%%%s",
+                               return_type_label, funding_rate,
+                               if(annualize) " | ANNUALIZED" else ""),
             x = "Holding Period",
             y = "",
             caption = paste0(
-                "Returns shown are total period returns (not annualized)",
+                if(annualize) "Returns are annualized (period return \u00d7 365/days)"
+                else "Returns shown are total period returns (not annualized)",
                 if (has_truncated) " | * = Truncated at maturity" else ""
             )
         ) +
 
         create_insele_theme() +
         theme(
-            axis.text = element_text(face = "bold"),
+            axis.text = element_text(face = "bold", size = 10),
             panel.border = element_rect(fill = NA, color = insele_palette$dark_gray, linewidth = 2),
-            legend.position = "bottom"
+            legend.position = "bottom",
+            legend.text = element_text(size = 10),
+            legend.title = element_text(size = 11, face = "bold"),
+            legend.margin = ggplot2::margin(t = 5, b = 0),
+            plot.subtitle = element_text(size = 10.5, color = "#555555"),
+            plot.caption = element_text(size = 9, hjust = 0, color = "#666666", lineheight = 1.3,
+                margin = ggplot2::margin(t = 10))
         )
 
         return(p)
@@ -513,6 +534,16 @@ generate_forward_curve_plot <- function(data, params = NULL, selected_period = N
     has_negative <- min_spread < -10
     has_positive <- max_spread > 10
 
+    # Shared guide for forward curve color bar legend
+    forward_guide <- guide_colorbar(
+        barwidth = 1.2,
+        barheight = 10,
+        title.position = "top",
+        title.hjust = 0.5,
+        label.theme = element_text(size = 9),
+        title.theme = element_text(size = 10, face = "bold")
+    )
+
     if (has_negative && has_positive) {
         # True diverging scale centered on zero
         max_abs <- max(abs(min_spread), abs(max_spread))
@@ -523,7 +554,8 @@ generate_forward_curve_plot <- function(data, params = NULL, selected_period = N
             midpoint = 0,
             limits = c(-max_abs, max_abs),
             name = "Spread\n(bps)",
-            labels = function(x) sprintf("%+.0f", x)
+            labels = function(x) sprintf("%+.0f", x),
+            guide = forward_guide
         )
     } else if (has_positive) {
         # Positive spreads with clear neutral zone around zero (-25 to +25 bps)
@@ -541,7 +573,8 @@ generate_forward_curve_plot <- function(data, params = NULL, selected_period = N
             limits = c(min(0, min_spread), max(max_spread, 50)),
             name = "Spread\n(bps)",
             labels = function(x) sprintf("%+.0f", x),
-            oob = scales::squish
+            oob = scales::squish,
+            guide = forward_guide
         )
     } else {
         # Only negative spreads - use gradient from green to neutral
@@ -551,7 +584,8 @@ generate_forward_curve_plot <- function(data, params = NULL, selected_period = N
             limits = c(min(min_spread, -50), 0),
             name = "Spread\n(bps)",
             labels = function(x) sprintf("%+.0f", x),
-            oob = scales::squish
+            oob = scales::squish,
+            guide = forward_guide
         )
     }
 
@@ -598,15 +632,15 @@ generate_forward_curve_plot <- function(data, params = NULL, selected_period = N
         # Labels for forward rates (positioned above segments to avoid overlap)
         geom_label(data = forward_data,
                    aes(x = mid_point,
-                       y = forward_rate + segment_height + y_range * 0.04,
+                       y = forward_rate + segment_height + y_range * 0.05,
                        label = sprintf("%s\n%.1f%%", label, forward_rate)),
-                   size = 2.5,
+                   size = 3.2,
                    fontface = "bold",
                    fill = "white",
-                   color = "#424242",
+                   color = "#333333",
                    alpha = 0.95,
-                   label.padding = unit(0.12, "lines"),
-                   label.size = 0.25,
+                   label.padding = unit(0.18, "lines"),
+                   label.size = 0.3,
                    lineheight = 0.85) +
 
         # Color scale for spread
@@ -638,7 +672,7 @@ generate_forward_curve_plot <- function(data, params = NULL, selected_period = N
                  color = insele_palette$primary,
                  fontface = "bold",
                  hjust = 0,
-                 size = 3.5) +
+                 size = 4) +
 
         # Narrative annotation for steepest forward segment
         {
@@ -672,12 +706,15 @@ generate_forward_curve_plot <- function(data, params = NULL, selected_period = N
         create_insele_theme() +
         theme(
             plot.title = element_text(face = "bold", size = 14, color = "#1B3A6B"),
-            plot.subtitle = element_text(size = 10, color = "grey40"),
-            plot.caption = element_text(size = 8, color = "grey50", hjust = 0),
+            plot.subtitle = element_text(size = 10.5, color = "#555555"),
+            plot.caption = element_text(size = 9, hjust = 0, color = "#666666", lineheight = 1.3,
+                margin = ggplot2::margin(t = 10)),
             legend.position = "right",
-            legend.title = element_text(size = 9, face = "bold"),
+            legend.text = element_text(size = 9),
+            legend.title = element_text(size = 10, face = "bold"),
             legend.key.height = unit(1.2, "cm"),
             legend.key.width = unit(0.4, "cm"),
+            plot.margin = ggplot2::margin(t = 10, r = 15, b = 10, l = 10),
             panel.grid.minor = element_blank(),
             panel.grid.major = element_line(color = "grey90", linewidth = 0.3)
         )
