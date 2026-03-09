@@ -373,7 +373,7 @@ ui <- dashboardPage(
                         "Cubic Spline" = "cubic",
                         "LOESS" = "loess"
                     ),
-                    selected = "nss",
+                    selected = "spline",
                     width = "100%"
                 ),
 

@@ -1792,7 +1792,7 @@ server <- function(input, output, session) {
     observeEvent(input$reset_defaults, {
         updateSliderInput(session, "lookback_days", value = 60)
         updateSliderInput(session, "confidence_level", value = 95)
-        updateSelectInput(session, "curve_model", selected = "nss")
+        updateSelectInput(session, "curve_model", selected = "spline")
         updateSelectInput(session, "risk_measure", selected = "mod_dur")
 
         showNotification(
@@ -13084,7 +13084,7 @@ $$Net Return = Carry + Roll - Funding Cost$$
 
     # Store advanced settings in reactive values
     curve_advanced_settings <- reactiveValues(
-        model_type = "nss",
+        model_type = "spline",
         confidence_level = 0.95,
         show_labels = TRUE,
         show_confidence_band = TRUE,
@@ -13119,7 +13119,7 @@ $$Net Return = Carry + Roll - Funding Cost$$
                             selected = isolate(curve_advanced_settings$model_type)
                 ),
                 tags$p(class = "text-muted small", style = "margin-top: -10px;",
-                       "NSS is the industry standard for yield curve fitting"),
+                       "Smooth Spline provides flexible curve fitting for the SA bond market"),
 
                 hr(),
 
@@ -13224,7 +13224,7 @@ $$Net Return = Carry + Roll - Funding Cost$$
 
     # Reset to defaults
     observeEvent(input$reset_curve_settings, {
-        updateSelectInput(session, "adv_model_type", selected = "nss")
+        updateSelectInput(session, "adv_model_type", selected = "spline")
         updateSliderInput(session, "adv_confidence", value = 95)
         updateCheckboxInput(session, "adv_show_confidence_band", value = TRUE)
         updateCheckboxInput(session, "adv_show_labels", value = TRUE)
