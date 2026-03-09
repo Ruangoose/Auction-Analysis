@@ -1356,9 +1356,10 @@ generate_var_distribution_plot <- function(data, params = list()) {
                 strip.background = element_rect(fill = "#E3F2FD", color = NA),
                 strip.text = element_text(face = "bold", size = 9, color = insele_palette$primary),
                 panel.spacing = unit(1, "lines"),
-                plot.title = element_text(face = "bold", color = insele_palette$primary),
-                plot.caption = element_text(hjust = 0, size = 8, lineheight = 1.2,
-                    margin = ggplot2::margin(t = 10, r = 0, b = 0, l = 0, unit = "pt")),
+                plot.title = element_text(face = "bold", color = insele_palette$primary, size = 14),
+                plot.subtitle = element_text(size = 10.5, color = "#555555", lineheight = 1.2),
+                plot.caption = element_text(hjust = 0, size = 9, lineheight = 1.3, color = "#666666",
+                    margin = ggplot2::margin(t = 12, r = 0, b = 0, l = 0, unit = "pt")),
                 legend.position = "top",
                 panel.grid.minor = element_blank()
             )
@@ -1642,17 +1643,18 @@ generate_var_ladder_plot <- function(var_data, params = list()) {
         theme_minimal(base_size = 11) +
         theme(
             plot.title = element_text(face = "bold", color = "#1B3A6B", size = 14),
-            plot.subtitle = element_text(color = "#666666", size = 10, lineheight = 1.2),
+            plot.subtitle = element_text(color = "#555555", size = 10.5, lineheight = 1.3),
             axis.text.y = element_text(face = "bold", size = 10),
             panel.grid.major.x = element_line(color = "#E0E0E0"),
             panel.grid.major.y = element_blank(),
             panel.grid.minor = element_blank(),
-            plot.margin = ggplot2::margin(10, 60, 10, 10),  # Extra right margin for labels
+            plot.margin = ggplot2::margin(10, 60, 10, 10),
             plot.caption = element_text(
                 hjust = 0,
-                size = 8,
-                lineheight = 1.2,
-                margin = ggplot2::margin(t = 10, r = 0, b = 0, l = 0, unit = "pt")
+                size = 9,
+                color = "#666666",
+                lineheight = 1.3,
+                margin = ggplot2::margin(t = 12, r = 0, b = 0, l = 0, unit = "pt")
             )
         )
 

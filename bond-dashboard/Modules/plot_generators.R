@@ -1204,10 +1204,18 @@ generate_enhanced_convexity_plot <- function(data, params = list()) {
         ) +
 
         scale_color_gradient(
-            low = "#4CAF50",
-            high = "#F44336",
+            low = "#E8913A",
+            high = "#1B3A6B",
             name = "Yield (%)",
-            labels = scales::percent_format(scale = 1)
+            labels = scales::percent_format(scale = 1),
+            guide = guide_colorbar(
+                barwidth = 1,
+                barheight = 8,
+                title.position = "top",
+                title.hjust = 0.5,
+                label.theme = element_text(size = 9),
+                title.theme = element_text(size = 10, face = "bold")
+            )
         ) +
 
         scale_size_identity() +  # Use pre-scaled sizes
@@ -1228,19 +1236,22 @@ generate_enhanced_convexity_plot <- function(data, params = list()) {
             ),
             x = "Modified Duration (years)",
             y = "Convexity",
-            caption = "Point size = DV01 (larger = more rate sensitive) | Color = Yield (green = low, red = high)"
+            caption = "Point size = DV01 (larger = more rate sensitive) | Color = Yield (orange = low, navy = high)"
         ) +
 
         create_insele_theme() +
         theme(
             legend.position = "right",
+            legend.margin = ggplot2::margin(l = 5, r = 5),
             panel.grid.major = element_line(color = "#F0F0F0", linetype = "solid"),
             plot.caption = element_text(
                 hjust = 0,
-                size = 8,
-                lineheight = 1.2,
-                margin = ggplot2::margin(t = 10, r = 0, b = 0, l = 0, unit = "pt")
-            )
+                size = 9,
+                color = "#666666",
+                lineheight = 1.3,
+                margin = ggplot2::margin(t = 12, r = 0, b = 0, l = 0, unit = "pt")
+            ),
+            plot.margin = ggplot2::margin(t = 10, r = 15, b = 10, l = 10)
         )
 
     # Add convexity insight as attribute
