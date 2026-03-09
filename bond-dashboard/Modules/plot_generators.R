@@ -659,7 +659,14 @@ generate_enhanced_yield_curve <- function(data, params) {
                 }
 
                 paste0(
-                    "Model: ", params$curve_model, " | ",
+                    "Model: ", switch(params$curve_model,
+                        "nss" = "Nelson-Siegel-Svensson",
+                        "spline" = "Smooth Spline",
+                        "loess" = "LOESS",
+                        "polynomial" = "Polynomial",
+                        "cubic" = "Cubic Spline",
+                        params$curve_model
+                    ), " | ",
                     "Date: ", format(params$curve_date, "%d %B %Y"), " | ",
                     "Bonds: ", length(unique(data$bond)),
                     "\n", spread_summary
