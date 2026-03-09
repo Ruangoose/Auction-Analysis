@@ -5036,7 +5036,12 @@ server <- function(input, output, session) {
                 `Mod Duration` = sprintf("%.2f", modified_duration),
                 Duration = sprintf("%.2f", duration),
                 Convexity = sprintf("%.2f", convexity),
-                `DV01 (R mn)` = sprintf("%.3f", dv01_millions),
+                `DV01` = case_when(
+                    is.na(dv01_millions) ~ "N/A",
+                    dv01_millions >= 0.10 ~ sprintf("R%.2fm", dv01_millions),
+                    dv01_millions >= 0.01 ~ sprintf("R%.3fm", dv01_millions),
+                    TRUE ~ sprintf("R%.1fk", dv01_absolute / 1e3)
+                ),
                 # VaR values with explicit bps notation in data
                 `95% VaR (bps)` = sprintf("%.0f", abs(VaR_95_bps)),
                 `99% VaR (bps)` = sprintf("%.0f", abs(VaR_99_bps)),
@@ -5049,7 +5054,7 @@ server <- function(input, output, session) {
                 `Mod Dur (yrs)` = `Mod Duration`,
                 `Dur (yrs)` = Duration,
                 Convexity,
-                `DV01 (R mn)`,
+                DV01,
                 `95% VaR (bps)`,
                 `99% VaR (bps)`,
                 `CVaR (bps)`,
@@ -5089,28 +5094,27 @@ server <- function(input, output, session) {
         ) %>%
             formatStyle(
                 "95% VaR (bps)",
-                backgroundColor = styleInterval(
-                    c(100, 200),
-                    c("#E8F5E9", "#FFF3E0", "#FFEBEE")  # Green, Orange, Red
-                )
+                background = styleColorBar(range(as.numeric(risk_summary$VaR_95_bps), na.rm = TRUE), '#FFCDD2'),
+                backgroundSize = '98% 88%',
+                backgroundRepeat = 'no-repeat',
+                backgroundPosition = 'center'
             ) %>%
             formatStyle(
                 "99% VaR (bps)",
-                backgroundColor = styleInterval(
-                    c(150, 300),
-                    c("#E8F5E9", "#FFF3E0", "#FFEBEE")  # Green, Orange, Red
-                ),
-                fontWeight = styleInterval(200, c("normal", "bold"))
+                background = styleColorBar(range(as.numeric(risk_summary$VaR_99_bps), na.rm = TRUE), '#FFCDD2'),
+                backgroundSize = '98% 88%',
+                backgroundRepeat = 'no-repeat',
+                backgroundPosition = 'center'
             ) %>%
             formatStyle(
                 "CVaR (bps)",
-                backgroundColor = styleInterval(
-                    c(150, 300),
-                    c("#E8F5E9", "#FFF3E0", "#FFEBEE")  # Green, Orange, Red
-                )
+                background = styleColorBar(range(as.numeric(abs(risk_summary$CVaR_95) * 100), na.rm = TRUE), '#FFE0B2'),
+                backgroundSize = '98% 88%',
+                backgroundRepeat = 'no-repeat',
+                backgroundPosition = 'center'
             ) %>%
             formatStyle(
-                "DV01 (R mn)",
+                "DV01",
                 background = styleColorBar(range(risk_summary$dv01_millions, na.rm = TRUE), '#E3F2FD'),
                 backgroundSize = '98% 88%',
                 backgroundRepeat = 'no-repeat',
