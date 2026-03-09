@@ -1560,6 +1560,12 @@ ui <- dashboardPage(
                                                                    selected = "net", inline = TRUE)
                                                   ),
 
+                                                  # Annualize Toggle
+                                                  tags$div(
+                                                      style = "flex: 0 0 auto; margin-left: 10px;",
+                                                      checkboxInput("annualize_returns", "Annualize", value = FALSE, width = "100px")
+                                                  ),
+
                                                   # Recalculate Button
                                                   actionButton("recalculate_carry", "Recalculate",
                                                                icon = icon("sync"), class = "btn-primary btn-sm"),

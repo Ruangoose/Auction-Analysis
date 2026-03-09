@@ -3217,7 +3217,8 @@ server <- function(input, output, session) {
         p <- generate_enhanced_carry_roll_heatmap(
             carry_roll_data(),
             return_type_value,
-            funding_rate = funding_rate_value
+            funding_rate = funding_rate_value,
+            annualize = if(!is.null(input$annualize_returns)) input$annualize_returns else FALSE
         )
         if(!is.null(p)) {
             print(p)
@@ -3794,12 +3795,16 @@ server <- function(input, output, session) {
                     values = c('#E8F5E9', '#F1F8E9', 'transparent')
                 )
             ) %>%
-            # Signal column styling with text color
+            # Signal column styling with text color, background, and bold
             DT::formatStyle(
                 'Signal',
+                backgroundColor = DT::styleEqual(
+                    c('BUY WINGS / SELL BODY', 'SELL WINGS / BUY BODY', 'NEUTRAL'),
+                    c('#E8F5E9', '#FFEBEE', '#F5F5F5')
+                ),
                 color = DT::styleEqual(
                     c('BUY WINGS / SELL BODY', 'SELL WINGS / BUY BODY', 'NEUTRAL'),
-                    c('#2E7D32', '#C62828', '#757575')
+                    c('#1B5E20', '#B71C1C', '#666666')
                 ),
                 fontWeight = DT::styleEqual(
                     c('BUY WINGS / SELL BODY', 'SELL WINGS / BUY BODY', 'NEUTRAL'),
@@ -6679,19 +6684,27 @@ server <- function(input, output, session) {
 
             tags$hr(style = "margin: 8px 0;"),
 
-            # Minimum Breakeven (most sensitive) - now shows bond name
+            # Minimum Breakeven (most sensitive) - now shows bond name with tiered urgency
             tags$div(
-                style = "margin-bottom: 15px;",
-                tags$div(class = "text-muted", style = "font-size: 11px;", "Most Sensitive Bond:"),
+                style = sprintf("margin-bottom: 15px; padding: 8px; border-radius: 6px; border-left: 4px solid %s; background: %s;",
+                                if(min_breakeven <= 3) "#D32F2F" else if(min_breakeven <= 5) "#FF9800" else "#689F38",
+                                if(min_breakeven <= 3) "#FFEBEE" else if(min_breakeven <= 5) "#FFF3E0" else "transparent"),
+                tags$div(class = "text-muted", style = "font-size: 11px;",
+                         if(min_breakeven <= 5) tags$span(
+                             style = "color: #D32F2F; font-weight: bold;",
+                             icon("exclamation-triangle"), " Most Sensitive Bond:"
+                         ) else "Most Sensitive Bond:"),
                 tags$div(
-                    style = sprintf("font-size: 14px; font-weight: bold; color: %s;",
-                                    ifelse(min_breakeven > 5, "#689F38", "#FF9800")),
+                    style = sprintf("font-size: 16px; font-weight: bold; color: %s;",
+                                    if(min_breakeven <= 3) "#D32F2F" else if(min_breakeven <= 5) "#E65100" else "#689F38"),
                     sprintf("%s: +%.0f bps", min_breakeven_bond, min_breakeven)
                 ),
                 tags$small(
-                    class = "text-muted",
-                    style = "font-size: 10px; display: block;",
-                    "This bond has the smallest margin of safety"
+                    style = sprintf("font-size: 10px; display: block; color: %s;",
+                                    if(min_breakeven <= 5) "#C62828" else "#666666"),
+                    if(min_breakeven <= 3) "CRITICAL: Almost no margin of safety \u2014 trade breaks even with minimal yield rise"
+                    else if(min_breakeven <= 5) "WARNING: Very thin margin of safety"
+                    else "This bond has the smallest margin of safety"
                 )
             ),
 
@@ -7020,8 +7033,14 @@ server <- function(input, output, session) {
         # Format for display - FIXED: removed redundant duration from Spot Rate column
         display_table <- forward_rates %>%
             filter(!is.na(Forward_Rate)) %>%
+            arrange(Start_Year) %>%
             mutate(
-                Forward_Rate_Fmt = sprintf("%.2f%%", Forward_Rate),
+                # Detect forward curve inversions (longer-tenor forward < shorter-tenor forward by >10 bps)
+                prev_forward_rate = lag(Forward_Rate),
+                is_inversion = !is.na(prev_forward_rate) & Forward_Rate < prev_forward_rate - 0.1,
+                Forward_Rate_Fmt = ifelse(is_inversion,
+                                          sprintf("%.2f%% \u2193", Forward_Rate),
+                                          sprintf("%.2f%%", Forward_Rate)),
                 # FIXED: Clean spot rate display without duration
                 Spot_Rate_Fmt = sprintf("%.2f%%", Current_Spot_Tenor),
                 Spread_Fmt = sprintf("%+.0f bps", Spread_bps),
@@ -7029,7 +7048,7 @@ server <- function(input, output, session) {
                 Bonds_Used = paste(From_Bond, "→", To_Bond)
             ) %>%
             select(Period, Forward_Rate_Fmt, Spot_Rate_Fmt, Spread_Fmt,
-                   Market_View, Signal_Strength, Bonds_Used)
+                   Market_View, Signal_Strength, Bonds_Used, is_inversion)
 
         # Create enhanced datatable with better styling
         datatable(
@@ -7042,7 +7061,8 @@ server <- function(input, output, session) {
                     list(className = 'dt-center', targets = '_all'),
                     list(width = '100px', targets = c(0, 1, 2, 3)),
                     list(width = '120px', targets = c(4, 5)),
-                    list(width = '130px', targets = 6)
+                    list(width = '130px', targets = 6),
+                    list(visible = FALSE, targets = 7)  # Hide is_inversion column
                 )
             ),
             rownames = FALSE,
@@ -7054,7 +7074,8 @@ server <- function(input, output, session) {
                 "Spread",
                 "Market View",
                 "Signal",
-                "Reference Bonds"
+                "Reference Bonds",
+                "is_inversion"
             ),
             caption = htmltools::tags$caption(
                 style = 'caption-side: top; text-align: left;',
@@ -7113,6 +7134,14 @@ server <- function(input, output, session) {
                     cuts = c(-50, -10, 25, 100),
                     values = c("#1B5E20", "#43A047", "#424242", "#E65100", "#C62828")
                 )
+            ) %>%
+            # Forward curve inversion highlighting
+            formatStyle(
+                "Forward_Rate_Fmt",
+                "is_inversion",
+                color = styleEqual(c(TRUE, FALSE), c("#C62828", "inherit")),
+                backgroundColor = styleEqual(c(TRUE, FALSE), c("#FFEBEE", "transparent")),
+                fontWeight = styleEqual(c(TRUE, FALSE), c("bold", "normal"))
             )
     })
 
