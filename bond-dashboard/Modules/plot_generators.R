@@ -73,10 +73,12 @@ get_spread_color_scale <- function(data, palette, scale_name = "Spread to Fair V
                    sprintf("%+.0f", x))  # No decimals for larger values
         },
         guide = guide_colorbar(
-            barwidth = 15,
-            barheight = 0.5,
+            barwidth = 18,
+            barheight = 0.8,
             title.position = "top",
-            title.hjust = 0.5
+            title.hjust = 0.5,
+            label.theme = element_text(size = 10),
+            title.theme = element_text(size = 11, face = "bold")
         )
     )
 }
@@ -694,18 +696,18 @@ generate_enhanced_yield_curve <- function(data, params) {
             legend.box = "horizontal",
             legend.box.spacing = unit(0.5, "cm"),
             legend.spacing.x = unit(0.5, "cm"),
-            legend.text = element_text(size = 10),  # Increased from default
-            legend.title = element_text(size = 11, face = "bold"),
+            legend.text = element_text(size = 11),  # Increased from default
+            legend.title = element_text(size = 12, face = "bold"),
             legend.key.size = unit(1.2, "lines"),
             legend.margin = ggplot2::margin(t = 10, b = 5, l = 0, r = 0),
 
             # Caption improvements - make it more readable
             plot.caption = element_text(
-                size = 7,
+                size = 8.5,
                 color = insele_palette$medium_gray,
                 hjust = 0,
-                lineheight = 1.3,
-                margin = ggplot2::margin(t = 10, b = 0)
+                lineheight = 1.4,
+                margin = ggplot2::margin(t = 12, b = 0)
             ),
 
             # Add some padding around the plot for labels that extend beyond
@@ -854,10 +856,12 @@ generate_relative_value_heatmap <- function(data, params) {
             oob = scales::squish,
             name = "Z-Score",
             guide = guide_colorbar(
-                barwidth = 12,
-                barheight = 0.5,
+                barwidth = 18,
+                barheight = 0.8,
                 title.position = "top",
-                title.hjust = 0.5
+                title.hjust = 0.5,
+                label.theme = element_text(size = 10),
+                title.theme = element_text(size = 11, face = "bold")
             )
         ) +
 
@@ -909,10 +913,14 @@ generate_relative_value_heatmap <- function(data, params) {
         ) +
         create_insele_theme() +
         theme(
-            axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
+            axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
             axis.text.y = element_text(face = "bold", size = 9),
             panel.border = element_rect(fill = NA, color = insele_palette$dark_gray, linewidth = 1),
             legend.position = "bottom",
+            legend.text = element_text(size = 10),
+            legend.title = element_text(size = 11, face = "bold"),
+            legend.margin = ggplot2::margin(t = 5, b = 0),
+            plot.caption = element_text(size = 9, hjust = 0.5, color = "grey40"),
             plot.margin = ggplot2::margin(t = 20, r = 10, b = 10, l = 10)  # Extra top margin for Today label
         )
 
