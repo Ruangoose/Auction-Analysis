@@ -785,7 +785,14 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
                     x = ""
                 ) +
                 create_insele_theme() +
-                theme(legend.position = "top")
+                # Enhancement 5: Increased text sizes for readability
+                theme(
+                    legend.position = "top",
+                    plot.title = element_text(size = 13),
+                    plot.subtitle = element_text(size = 10.5),
+                    axis.text = element_text(size = 9),
+                    axis.title = element_text(size = 10)
+                )
 
             # RSI panel - ENHANCED with shaded zones and bond terminology
             # Get latest RSI for label
@@ -879,7 +886,13 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
                     y = "RSI",
                     x = ""
                 ) +
-                create_insele_theme()
+                create_insele_theme() +
+                # Enhancement 5: Increased text sizes for readability
+                theme(
+                    plot.title = element_text(size = 12),
+                    axis.text.y = element_text(size = 9),
+                    axis.text.x = element_text(size = 9)
+                )
 
             # MACD panel - ENHANCED with proper bars and crossover points
             # Get latest values
@@ -896,28 +909,32 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
                 )
 
             p3 <- ggplot(tech_data, aes(x = date)) +
+                # Enhancement 6: More visible zero reference line
                 geom_hline(
                     yintercept = 0,
-                    color = "#9E9E9E",
-                    linewidth = 0.7
+                    color = "grey50",
+                    linewidth = 0.5,
+                    linetype = "dashed"
                 ) +
+                # Enhancement 6: Wider histogram bars for better visibility
                 geom_col(
                     aes(y = macd_histogram,
                         fill = macd_histogram >= 0),
-                    width = 1.5,
+                    width = 1,
                     alpha = 0.8,
                     na.rm = TRUE
                 ) +
+                # Enhancement 6: Thicker MACD and signal lines
                 geom_line(
                     aes(y = macd),
                     color = insele_palette$primary,
-                    linewidth = 1,
+                    linewidth = 1.1,
                     na.rm = TRUE
                 ) +
                 geom_line(
                     aes(y = macd_signal),
                     color = insele_palette$accent,
-                    linewidth = 0.8,
+                    linewidth = 0.9,
                     linetype = "dashed",
                     na.rm = TRUE
                 ) +
@@ -952,7 +969,13 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
                     y = "MACD",
                     x = "Date"
                 ) +
-                create_insele_theme()
+                create_insele_theme() +
+                # Enhancement 5: Increased text sizes for readability
+                theme(
+                    plot.title = element_text(size = 12),
+                    axis.text = element_text(size = 9),
+                    axis.title = element_text(size = 10)
+                )
 
             # Combine all three plots
             p <- gridExtra::arrangeGrob(
@@ -1395,8 +1418,9 @@ generate_signal_matrix_heatmap <- function(data) {
 
         # Use score_label to ensure 0s are displayed (show original scores)
         # TOTAL column gets larger, bolder text
+        # Enhancement 10: TOTAL column text larger for visual hierarchy
         geom_text(aes(label = score_label),
-                  size = ifelse(signal_scores_long$indicator == "total_signal", 4.5, 3.5),
+                  size = ifelse(signal_scores_long$indicator == "total_signal", 5.5, 3.5),
                   fontface = "bold",
                   color = case_when(
                       signal_scores_long$color_category %in% c("strong_buy", "strong_sell") ~ "white",
@@ -1404,8 +1428,8 @@ generate_signal_matrix_heatmap <- function(data) {
                       TRUE ~ "gray40"
                   )) +
 
-        # TOTAL column left border separator
-        geom_vline(xintercept = 4.5, color = "#1B3A6B", linewidth = 1.2) +
+        # Enhancement 10: Thicker TOTAL column separator
+        geom_vline(xintercept = 4.5, color = "#1B3A6B", linewidth = 2) +
 
         # Colour scale with high contrast between neutral and ±1
         scale_fill_manual(
@@ -1443,14 +1467,19 @@ generate_signal_matrix_heatmap <- function(data) {
         ) +
 
         create_insele_theme() +
+        # Enhancement 3: Improved subtitle, caption, legend readability
         theme(
             plot.title = element_text(face = "bold", color = "#1B3A6B", size = 14),
-            plot.subtitle = element_text(color = "#666666", size = 10),
-            axis.text.x = element_text(angle = 0, hjust = 0.5, face = "bold", size = 10),
+            plot.subtitle = element_text(color = "#555555", size = 11, lineheight = 1.2),
+            plot.caption = element_text(color = "#666666", size = 9.5, hjust = 0, lineheight = 1.3,
+                margin = ggplot2::margin(t = 10)),
+            axis.text.x = element_text(angle = 0, hjust = 0.5, face = "bold", size = 11),
             axis.text.y = element_text(face = "bold", size = 9),
             panel.grid = element_blank(),
             panel.border = element_rect(fill = NA, color = insele_palette$dark_gray, linewidth = 1),
-            legend.position = "bottom"
+            legend.position = "bottom",
+            legend.text = element_text(size = 10),
+            legend.title = element_text(size = 11, face = "bold")
         )
 
     return(p)

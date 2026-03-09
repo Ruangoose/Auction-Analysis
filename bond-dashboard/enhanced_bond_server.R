@@ -5255,15 +5255,46 @@ server <- function(input, output, session) {
                         ),
                         tags$div(
                             style = "text-align: right;",
-                            tags$small(
-                                style = "color: #888;",
-                                sprintf("%d%% conf.", confidence_pct)
+                            tags$div(
+                                style = "margin-top: 5px;",
+                                tags$div(
+                                    style = "display: flex; align-items: center; gap: 8px;",
+                                    tags$span(style = "font-size: 11px; color: #666; white-space: nowrap;",
+                                              "Signal Strength:"),
+                                    tags$span(
+                                        style = sprintf("font-weight: bold; font-size: 13px; color: %s;",
+                                                       if(confidence_pct >= 60) "#388E3C" else if(confidence_pct >= 30) "#FF9800" else "#9E9E9E"),
+                                        sprintf("%d%%", confidence_pct)
+                                    ),
+                                    tags$span(
+                                        style = sprintf("display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: bold; color: white; background: %s;",
+                                                       if(confidence_pct >= 60) "#388E3C" else if(confidence_pct >= 30) "#FF9800" else "#9E9E9E"),
+                                        if(confidence_pct >= 60) "Strong" else if(confidence_pct >= 30) "Moderate" else "Weak"
+                                    )
+                                ),
+                                tags$div(
+                                    style = "margin-top: 4px; height: 6px; background: #E0E0E0; border-radius: 3px; overflow: hidden; width: 100%;",
+                                    tags$div(
+                                        style = sprintf("height: 100%%; width: %d%%; background: %s; border-radius: 3px; transition: width 0.3s ease;",
+                                                       confidence_pct,
+                                                       if(confidence_pct >= 60) "#388E3C" else if(confidence_pct >= 30) "#FF9800" else "#9E9E9E")
+                                    )
+                                )
                             )
                         )
                     ),
+                    # Enhancement 4: Styled action pill badge for recommendation
                     tags$div(
-                        style = "background: white; padding: 6px 8px; border-radius: 3px; margin-top: 8px; font-size: 11px;",
-                        tags$strong(overall_signal$recommendation)
+                        style = "margin-top: 8px;",
+                        tags$div(
+                            style = sprintf(
+                                "display: inline-block; padding: 6px 16px; border-radius: 20px; font-size: 13px; font-weight: bold; color: white; background: %s; letter-spacing: 0.5px;",
+                                if(grepl("REDUCE|CAUTION", overall_signal$recommendation)) "#D32F2F"
+                                else if(grepl("ADD|OPPORTUNITY", overall_signal$recommendation)) "#388E3C"
+                                else "#1B3A6B"
+                            ),
+                            overall_signal$recommendation
+                        )
                     ),
                     # Component breakdown (compact)
                     tags$details(
@@ -5581,11 +5612,12 @@ server <- function(input, output, session) {
             tags$div(
                 class = "panel-body",
                 style = "padding: 10px;",
-                plotOutput("signal_history_sparkline", height = "180px", width = "100%"),  # INCREASED from 100px, FIXED: explicit width
+                # Enhancement 9: Legend moved above chart for better readability
                 tags$div(
-                    style = "font-size: 10px; color: #888; margin-top: 5px; text-align: center;",
-                    HTML("&#x1F7E2; Oversold (buy zone) | &#x1F534; Overbought (sell zone)")
-                )
+                    style = "font-size: 11px; color: #555; margin-bottom: 6px; text-align: center; font-weight: 500;",
+                    HTML("&#x1F7E2; Oversold (buy zone) &nbsp;|&nbsp; &#x1F534; Overbought (sell zone)")
+                ),
+                plotOutput("signal_history_sparkline", height = "180px", width = "100%")
             )
         )
     })
@@ -5944,21 +5976,47 @@ server <- function(input, output, session) {
                                 sprintf("%.3f%%", latest$yield_to_maturity)
                             ),
                             tags$div(
-                                style = "font-size: 11px; color: #888;",
-                                sprintf("Signal Strength: %d%%", confidence_pct),
-                                tags$span(
-                                    style = sprintf("margin-left: 5px; padding: 2px 6px; background: %s; color: white; border-radius: 3px; font-size: 9px;",
-                                                   ifelse(confidence_pct >= 60, "#388E3C", ifelse(confidence_pct >= 40, "#FF9800", "#9E9E9E"))),
-                                    ifelse(confidence_pct >= 60, "Strong", ifelse(confidence_pct >= 40, "Moderate", "Weak"))
+                                style = "margin-top: 5px;",
+                                tags$div(
+                                    style = "display: flex; align-items: center; gap: 8px;",
+                                    tags$span(style = "font-size: 11px; color: #666; white-space: nowrap;",
+                                              "Signal Strength:"),
+                                    tags$span(
+                                        style = sprintf("font-weight: bold; font-size: 13px; color: %s;",
+                                                       if(confidence_pct >= 60) "#388E3C" else if(confidence_pct >= 30) "#FF9800" else "#9E9E9E"),
+                                        sprintf("%d%%", confidence_pct)
+                                    ),
+                                    tags$span(
+                                        style = sprintf("display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: bold; color: white; background: %s;",
+                                                       if(confidence_pct >= 60) "#388E3C" else if(confidence_pct >= 30) "#FF9800" else "#9E9E9E"),
+                                        if(confidence_pct >= 60) "Strong" else if(confidence_pct >= 30) "Moderate" else "Weak"
+                                    )
+                                ),
+                                tags$div(
+                                    style = "margin-top: 4px; height: 6px; background: #E0E0E0; border-radius: 3px; overflow: hidden; width: 100%;",
+                                    tags$div(
+                                        style = sprintf("height: 100%%; width: %d%%; background: %s; border-radius: 3px; transition: width 0.3s ease;",
+                                                       confidence_pct,
+                                                       if(confidence_pct >= 60) "#388E3C" else if(confidence_pct >= 30) "#FF9800" else "#9E9E9E")
+                                    )
                                 )
                             )
                         )
                     )
                 ),
 
+                # Enhancement 4: Styled action pill badge for recommendation
                 tags$div(
-                    style = "background: #F5F5F5; padding: 8px 10px; border-radius: 4px; margin-top: 10px; font-size: 12px;",
-                    tags$strong(overall_signal$recommendation)
+                    style = "margin-top: 8px;",
+                    tags$div(
+                        style = sprintf(
+                            "display: inline-block; padding: 6px 16px; border-radius: 20px; font-size: 13px; font-weight: bold; color: white; background: %s; letter-spacing: 0.5px;",
+                            if(grepl("REDUCE|CAUTION", overall_signal$recommendation)) "#D32F2F"
+                            else if(grepl("ADD|OPPORTUNITY", overall_signal$recommendation)) "#388E3C"
+                            else "#1B3A6B"
+                        ),
+                        overall_signal$recommendation
+                    )
                 ),
 
                 # ═══════════════════════════════════════════════════════════════
@@ -6177,11 +6235,36 @@ server <- function(input, output, session) {
         tech_summary <- tech_summary %>%
             arrange(desc(total_score))
 
+        # Enhancement 7: Calculate RSI trajectory (5-day change) for directional arrows
+        rsi_trajectory <- filtered_data_with_technicals() %>%
+            filter(!is.na(rsi_14)) %>%
+            group_by(bond) %>%
+            arrange(date) %>%
+            mutate(
+                rsi_5d_ago = lag(rsi_14, 5),
+                rsi_change_5d = rsi_14 - rsi_5d_ago
+            ) %>%
+            filter(date == max(date)) %>%
+            slice(1) %>%
+            ungroup() %>%
+            select(bond, rsi_change_5d)
+
+        tech_summary <- tech_summary %>%
+            left_join(rsi_trajectory, by = "bond")
+
         # Format for display using pre-calculated labels from master reactive
         display_table <- tech_summary %>%
             mutate(
+                rsi_arrow = case_when(
+                    is.na(rsi_change_5d) ~ "",
+                    rsi_change_5d > 2 ~ " \u2191",
+                    rsi_change_5d > 0.5 ~ " \u2197",
+                    rsi_change_5d < -2 ~ " \u2193",
+                    rsi_change_5d < -0.5 ~ " \u2198",
+                    TRUE ~ " \u2192"
+                ),
                 `Current Yield` = sprintf("%.3f%%", yield_to_maturity),
-                RSI = sprintf("%.1f", rsi_14),
+                RSI = sprintf("%.1f%s", rsi_14, rsi_arrow),
                 `RSI Signal` = rsi_signal_label,
                 # BB Position as percentage
                 `BB %` = sprintf("%.0f%%", bb_position * 100),
@@ -6303,25 +6386,29 @@ server <- function(input, output, session) {
                     c("white", "white", "black", "white", "white")
                 )
             ) %>%
-            # Color code Score column with gradient
+            # Color code Score column with diverging heat gradient
             formatStyle(
                 "Score",
-                color = styleInterval(
+                backgroundColor = DT::styleInterval(
                     c(-3, -1, 1, 3),
-                    c("#C62828", "#FF8A65", "#666666", "#4CAF50", "#1B5E20")
+                    c('#FFCDD2', '#FFEBEE', '#FFFFFF', '#E8F5E9', '#C8E6C9')
+                ),
+                color = DT::styleInterval(
+                    c(-2, 0, 2),
+                    c('#B71C1C', '#D32F2F', '#1B5E20', '#1B5E20')
                 ),
                 fontWeight = "bold"
             ) %>%
-            # Color code Overall Signal (5 levels with proper colors)
+            # Color code Overall Signal with matching background colors
             formatStyle(
                 "Overall Signal",
-                backgroundColor = styleEqual(
+                backgroundColor = DT::styleEqual(
                     c("Strong Buy", "Buy", "Neutral", "Sell", "Strong Sell"),
-                    c("#1B5E20", "#4CAF50", "#E0E0E0", "#FF7043", "#C62828")
+                    c('#C8E6C9', '#E8F5E9', '#F5F5F5', '#FFEBEE', '#FFCDD2')
                 ),
-                color = styleEqual(
+                color = DT::styleEqual(
                     c("Strong Buy", "Buy", "Neutral", "Sell", "Strong Sell"),
-                    c("white", "white", "black", "white", "white")
+                    c('#1B5E20', '#2E7D32', '#666666', '#C62828', '#B71C1C')
                 ),
                 fontWeight = "bold"
             )
