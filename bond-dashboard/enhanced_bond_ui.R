@@ -3089,9 +3089,17 @@ ui <- dashboardPage(
 
                                                   tags$div(style = "margin-top: 15px;"),
 
-                                                  actionButton("email_report", "Email Report",
-                                                               class = "btn-info btn-block",
-                                                               icon = icon("envelope")),
+                                                  tags$div(
+                                                      style = "margin-top: 0px;",
+                                                      tags$a(
+                                                          id = "download_email_draft",
+                                                          class = "btn btn-info btn-block shiny-download-link",
+                                                          href = "",
+                                                          target = "_blank",
+                                                          download = NA,
+                                                          icon("envelope"), " Email Draft (.eml)"
+                                                      )
+                                                  ),
 
                                                   tags$div(style = "margin-top: 15px;"),
 

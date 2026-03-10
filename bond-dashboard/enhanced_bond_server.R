@@ -40,6 +40,7 @@ suppressPackageStartupMessages({
     library(blastula)
     library(openxlsx)
     library(base64enc)
+    library(pdftools)
     library(webshot2)
     library(htmlwidgets)
     library(stringr)
@@ -2059,21 +2060,13 @@ server <- function(input, output, session) {
         })
     })
 
-    # Generate Email Report Button (Sidebar) - Link to main email function
+    # Generate Email Report Button (Sidebar) - triggers .eml download
     observeEvent(input$generate_email_report, {
-        # Switch to Reports & Export tab
+        # Switch to Reports & Export tab so user sees the download button
         updateTabItems(session, "main_tabs", "Reports & Export")
-
-        # Use observe to trigger click after tab switches (non-blocking)
-        observe({
-            req(input$main_tabs == "Reports & Export")
-            shinyjs::click("email_report")
-        })
-
         showNotification(
-            "Opening email report dialog...",
-            type = "message",
-            duration = 2
+            "Use the 'Email Draft (.eml)' button to download the email draft.",
+            type = "message", duration = 4
         )
     })
 
@@ -12941,255 +12934,132 @@ $$Net Return = Carry + Roll - Funding Cost$$
     # ================================================================================
 
 
-    # Email Report Modal
-    observeEvent(input$email_report, {
-        showModal(modalDialog(
-            title = "Email Report",
-            size = "m",
+    # ================================================================================
+    # .EML EMAIL DRAFT DOWNLOAD (Pre-Auction Reports)
+    # ================================================================================
+    # Generates a .eml file that opens in Outlook as a compose draft (X-Unsent: 1).
+    # User adds recipients in Outlook and clicks Send. No SMTP needed.
+    # ================================================================================
 
-            textInput("email_recipients",
-                      "Recipients (comma-separated):",
-                      placeholder = "email1@example.com, email2@example.com",
-                      width = "100%"),
+    output$download_email_draft <- downloadHandler(
+        filename = function() {
+            config <- report_config()
+            auction_date <- config$auction_date %||% Sys.Date()
+            sprintf("Insele_Pre_Auction_Draft_%s.eml", format(auction_date, "%Y%m%d"))
+        },
+        content = function(file) {
+            config <- report_config()
 
-            textAreaInput("email_message",
-                          "Personal Message (optional):",
-                          placeholder = "Add a personal message to include in the email...",
-                          rows = 3,
-                          width = "100%"),
-
-            checkboxInput("include_weekly_forecast",
-                          "Include weekly auction forecast",
-                          value = TRUE),
-
-            checkboxInput("include_recommendations",
-                          "Include trading recommendations",
-                          value = FALSE),
-
-            tags$div(
-                style = "background: #f8f9fa; padding: 10px; border-radius: 5px; margin-top: 15px;",
-                tags$small("The email will include key charts and summaries from your current analysis.")
-            ),
-
-            footer = tagList(
-                modalButton("Cancel"),
-                actionButton("send_email", "Send Email",
-                             class = "btn-primary",
-                             icon = icon("paper-plane"))
-            )
-        ))
-    })
-
-    # Send Email Handler
-    observeEvent(input$send_email, {
-        req(input$email_recipients)
-
-        # Validate email addresses
-        recipients <- trimws(strsplit(input$email_recipients, ",")[[1]])
-        valid_emails <- grepl("^[^@]+@[^@]+\\.[^@]+$", recipients)
-
-        if(!all(valid_emails)) {
-            showNotification("Please enter valid email addresses", type = "error")
-            return()
-        }
-
-        withProgress(message = "Preparing email...", value = 0, {
-
-            incProgress(0.2, detail = "Generating charts")
-
-            # Generate subset of charts for email
-            email_charts <- list()
-
-            # Always include yield curve with error handling
-            email_charts$yield_curve <- tryCatch({
-                if(!is.null(processed_data()) && nrow(processed_data()) > 0) {
-                    generate_enhanced_yield_curve(
-                        processed_data(),
-                        list(
-                            xaxis_choice = if(!is.null(input$xaxis_choice)) input$xaxis_choice else "modified_duration",
-                            curve_model = if(!is.null(input$curve_model)) input$curve_model else "loess"
-                        )
-                    )
-                } else { NULL }
-            }, error = function(e) {
-                log_error(e, context = "email_yield_curve")
-                NULL
-            })
-
-            # Include VaR if risk section selected
-            if("risk" %in% input$report_sections && !is.null(var_data()) && nrow(var_data()) > 0) {
-                email_charts$var_ladder <- tryCatch({
-                    generate_var_ladder_plot(var_data(), list())
-                }, error = function(e) {
-                    log_error(e, context = "email_var_ladder")
-                    NULL
-                })
-            }
-
-            # Include carry if selected
-            if("carry" %in% input$report_sections && !is.null(carry_roll_data()) && nrow(carry_roll_data()) > 0) {
-                email_charts$carry_heatmap <- tryCatch({
-                    return_type <- if(!is.null(input$return_type)) input$return_type else "net"
-                    generate_enhanced_carry_roll_heatmap(carry_roll_data(), return_type)
-                }, error = function(e) {
-                    log_error(e, context = "email_carry_heatmap")
-                    NULL
-                })
-            }
-
-            incProgress(0.4, detail = "Converting images")
-
-            # Convert to base64 with error handling
-            charts_base64 <- list()
-            for(name in names(email_charts)) {
-                if(!is.null(email_charts[[name]])) {
-                    charts_base64[[name]] <- tryCatch({
-                        plot_to_base64(email_charts[[name]], width = 8, height = 5, dpi = 100)
-                    }, error = function(e) {
-                        log_error(e, context = paste("email_base64", name))
-                        NULL
-                    })
-                }
-            }
-
-            incProgress(0.6, detail = "Preparing content")
-
-            # Generate summaries with error handling
-            summaries <- tryCatch({
-                list(
-                    overview = if(nrow(filtered_data()) > 0 && nrow(processed_data()) > 0) {
-                        sprintf(
-                            "Analysis of %d SA government bonds shows average yields at %.2f%% with bid-to-cover ratios averaging %.2fx.",
-                            length(unique(filtered_data()$bond)),
-                            mean(processed_data()$yield_to_maturity, na.rm = TRUE),
-                            mean(filtered_data()$bid_to_cover, na.rm = TRUE)
-                        )
-                    } else {
-                        "Bond analysis report attached."
-                    },
-                    yield_curve = generate_chart_summary("yield_curve", processed_data()),
-                    risk = if(!is.null(var_data())) {
-                        generate_chart_summary("var_analysis", var_data())
-                    } else { NULL },
-                    carry = "See attached analysis for detailed carry and roll expectations."
+            # Validate: only pre-auction reports support .eml generation
+            if (config$report_type != "pre_auction") {
+                showNotification(
+                    "Email draft is currently available for Pre-Auction reports only.",
+                    type = "warning", duration = 5
                 )
-            }, error = function(e) {
-                list(overview = "Bond market analysis report.")
-            })
+                return(NULL)
+            }
 
-            # Get auction data
-            auction_data <- tryCatch({
-                if(input$include_weekly_forecast) {
-                    weekly_auction_summary()
-                } else { NULL }
-            }, error = function(e) { NULL })
+            # Validate auction bonds selected
+            auction_bonds <- config$pre_auction_bonds
+            if (is.null(auction_bonds) || length(auction_bonds) == 0) {
+                showModal(modalDialog(
+                    title = tags$div(icon("exclamation-triangle"), " Select Auction Bonds",
+                                    style = "color: #E53935;"),
+                    tags$p("Please select the bonds on offer before generating the email draft."),
+                    tags$p("Go to the report configuration panel and select bonds under 'Bonds on Auction'."),
+                    easyClose = TRUE,
+                    footer = modalButton("OK")
+                ))
+                return(NULL)
+            }
 
-            # Create email HTML
-            email_html <- create_email_template(
-                charts_base64,
-                summaries,
-                auction_data,
-                if(!is.null(input$email_message)) input$email_message else ""
-            )
+            withProgress(message = "Building email draft...", value = 0, {
 
-            incProgress(0.8, detail = "Sending email")
+                temp_dir <- tempdir()
+                auction_date <- config$auction_date %||% Sys.Date()
 
-            # Email sending implementation
-            tryCatch({
-                # Option 1: Using blastula (if available)
-                if(requireNamespace("blastula", quietly = TRUE)) {
+                # -- Stage 1: Generate PDF to temp file --------------------------
+                incProgress(0.1, detail = "Generating PDF report")
 
-                    # Create email object
-                    email <- blastula::compose_email(
-                        body = blastula::md(email_html),
-                        footer = blastula::md("© Insele Capital Partners")
-                    )
+                temp_pdf <- file.path(temp_dir, paste0("eml_pdf_", Sys.getpid(), ".pdf"))
 
-                    # Add Excel attachment if requested
-                    if(input$include_excel_attachment %||% FALSE) {
-                        temp_excel <- tempfile(fileext = ".xlsx")
-                        # Generate Excel file (reuse export_excel logic)
-                        # ... excel generation code ...
-
-                        email <- blastula::add_attachment(
-                            email,
-                            file = temp_excel,
-                            filename = paste0("bond_analysis_", format(Sys.Date(), "%Y%m%d"), ".xlsx")
-                        )
-                    }
-
-                    # Send email (configure SMTP credentials)
-                    # blastula::smtp_send(
-                    #     email,
-                    #     to = recipients,
-                    #     from = "reports@inselecapital.com",
-                    #     subject = paste("SA Government Bond Report -", format(Sys.Date(), "%B %d, %Y")),
-                    #     credentials = blastula::creds_envvar(
-                    #         user = "SMTP_USER",
-                    #         pass_envvar = "SMTP_PASS",
-                    #         host = "smtp.gmail.com",
-                    #         port = 587
-                    #     )
-                    # )
-
-                    # For demo/testing: save to file
-                    temp_html <- file.path(tempdir(), paste0("email_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".html"))
-                    writeLines(email_html, temp_html)
-
-                    # Option 2: Using mailR (alternative)
-                } else if(requireNamespace("mailR", quietly = TRUE)) {
-                    # mailR implementation
-                    # mailR::send.mail(
-                    #     from = "reports@inselecapital.com",
-                    #     to = recipients,
-                    #     subject = paste("SA Government Bond Report -", format(Sys.Date(), "%B %d, %Y")),
-                    #     body = email_html,
-                    #     html = TRUE,
-                    #     smtp = list(
-                    #         host.name = "smtp.gmail.com",
-                    #         port = 587,
-                    #         user.name = Sys.getenv("SMTP_USER"),
-                    #         passwd = Sys.getenv("SMTP_PASS"),
-                    #         ssl = TRUE
-                    #     ),
-                    #     authenticate = TRUE,
-                    #     send = TRUE
-                    # )
-
-                } else {
-                    # Fallback: Save HTML file for manual sending
-                    output_file <- paste0("email_report_", format(Sys.Date(), "%Y%m%d"), ".html")
-                    writeLines(email_html, output_file)
-
-                    showNotification(
-                        "Email sending requires the 'blastula' package with SMTP configuration. The report has been generated as HTML -- use the HTML download button instead.",
-                        type = "warning",
-                        duration = 8
-                    )
+                # Load logo (same pattern as existing PDF handler)
+                logo_path <- load_logo_for_pdf()
+                logo_grob <- NULL
+                if (!is.null(logo_path) && file.exists(logo_path)) {
+                    tryCatch({
+                        logo_img <- png::readPNG(logo_path)
+                        logo_grob <- rasterGrob(logo_img, interpolate = TRUE)
+                    }, error = function(e) { logo_grob <- NULL })
                 }
+
+                report_data <- collect_report_data()
+
+                generate_pre_auction_pdf(
+                    temp_pdf, config, report_data$filt_data, report_data$proc_data,
+                    report_data$carry_data_val, logo_grob
+                )
+
+                if (!file.exists(temp_pdf)) {
+                    showNotification("PDF generation failed. Cannot create email draft.",
+                                    type = "error", duration = 5)
+                    return(NULL)
+                }
+
+                # -- Stage 2: Convert PDF pages to PNGs -------------------------
+                incProgress(0.4, detail = "Converting pages to images")
+
+                n_pages <- pdftools::pdf_info(temp_pdf)$pages
+                png_paths <- character(n_pages)
+                png_base64_list <- vector("list", n_pages)
+
+                for (i in seq_len(n_pages)) {
+                    png_path <- file.path(temp_dir, sprintf("eml_page_%02d_%d.png", i, Sys.getpid()))
+                    bitmap <- pdftools::pdf_render_page(temp_pdf, page = i, dpi = 150)
+                    png::writePNG(bitmap, png_path)
+                    png_paths[i] <- png_path
+                    png_base64_list[[i]] <- base64enc::base64encode(png_path)
+                }
+
+                # -- Stage 3: Build HTML body and assemble .EML -----------------
+                incProgress(0.7, detail = "Assembling email draft")
+
+                email_html <- build_eml_email_html(
+                    page_labels = NULL,  # Uses defaults matching 9-page report
+                    n_pages = n_pages,
+                    auction_bonds = auction_bonds,
+                    auction_date = auction_date
+                )
+
+                eml_lines <- build_eml_file(
+                    html_body = email_html,
+                    png_paths = png_paths,
+                    png_base64_list = png_base64_list,
+                    pdf_path = temp_pdf,
+                    auction_bonds = auction_bonds,
+                    auction_date = auction_date
+                )
+
+                # -- Write .eml with CRITICAL writeBin for CRLF ----------------
+                # NEVER use writeLines() -- it mangles \r\n on Windows.
+                eml_raw <- charToRaw(paste(eml_lines, collapse = "\r\n"))
+                con <- file(file, "wb")
+                writeBin(eml_raw, con)
+                close(con)
+
+                # -- Cleanup temp files ----------------------------------------
+                # Safe to clean up now -- .eml is fully written
+                unlink(png_paths, force = TRUE)
+                unlink(temp_pdf, force = TRUE)
 
                 incProgress(1, detail = "Complete")
-                removeModal()
-
                 showNotification(
-                    HTML(paste0(
-                        "<strong>✓ Email Report Ready!</strong><br>",
-                        "Report prepared for ", length(recipients), " recipient(s).<br>",
-                        "<small>Check your email or temp folder for the report.</small>"
-                    )),
-                    type = "message",
-                    duration = 8
-                )
-
-            }, error = function(e) {
-                log_error(e, context = "email_send")
-                showNotification(
-                    "Email preparation complete. Please check output folder.",
-                    type = "warning"
+                    "Email draft ready! Double-click the .eml file to open in Outlook.",
+                    type = "message", duration = 6
                 )
             })
-        })
-    })
+        }
+    )
 
 
     # ================================================================================

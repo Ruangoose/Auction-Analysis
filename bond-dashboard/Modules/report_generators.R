@@ -3043,3 +3043,255 @@ create_pre_auction_html_report <- function(config, filtered_data, processed_data
 
     return(html)
 }
+
+
+# ================================================================================
+# .EML EMAIL DRAFT FUNCTIONS (Pre-Auction Reports)
+# ================================================================================
+
+#' Build HTML email body with CID image references for Outlook rendering
+#'
+#' @param page_labels Character vector of labels for each page. NULL uses defaults.
+#' @param n_pages Number of pages in the PDF report
+#' @param auction_bonds Character vector of bond names on auction
+#' @param auction_date Date of the auction
+#' @param client_name Client name for header
+#' @param primary_color Navy color for header/footer
+#' @param accent_color Orange accent color
+#' @param tagline Company tagline
+#' @return Character string of HTML email body
+build_eml_email_html <- function(page_labels, n_pages, auction_bonds, auction_date,
+                                  client_name = "Insele Capital Partners",
+                                  primary_color = "#1B3A6B",
+                                  accent_color = "#E8913A",
+                                  tagline = "The Power of Partnership") {
+
+    # Default page labels matching the 9-page report structure
+    default_page_labels <- c(
+        "Cover Page", "Auction Outlook", "Bond Snapshot",
+        "Relative Value Context", "Auction Performance History",
+        "Supply & Demand Analysis", "Forecast",
+        "Cumulative Issuance"
+    )
+
+    if (is.null(page_labels)) {
+        page_labels <- default_page_labels
+    }
+
+    # Pad labels if n_pages exceeds the list
+    if (n_pages > length(page_labels)) {
+        extra <- n_pages - length(page_labels)
+        page_labels <- c(page_labels, paste("Page", seq(length(page_labels) + 1, n_pages)))
+    }
+
+    # Truncate if fewer pages than labels
+    if (n_pages < length(page_labels)) {
+        page_labels <- page_labels[seq_len(n_pages)]
+    }
+
+    # Pre-compute ALL formatted dates before any sprintf() calls
+    auction_date_long <- format(auction_date, "%A, %d %B %Y")
+    auction_date_short <- format(auction_date, "%d %B %Y")
+    current_year <- format(Sys.Date(), "%Y")
+    bonds_str <- paste(auction_bonds, collapse = ", ")
+
+    # Build chart sections
+    chart_sections <- ""
+    for (i in seq_len(n_pages)) {
+        cid_ref <- sprintf("chart%02d", i)
+        label <- page_labels[i]
+        chart_sections <- paste0(chart_sections, sprintf(
+            '<tr><td style="padding: 15px 30px 5px 30px; font-family: Arial, Helvetica, sans-serif; font-size: 14px; font-weight: bold; color: %s;">%s</td></tr>
+<tr><td style="padding: 5px 30px 15px 30px; text-align: center;"><img src="cid:%s" width="620" style="display: block; margin: 0 auto; max-width: 620px;" /></td></tr>
+',
+            primary_color, label, cid_ref
+        ))
+    }
+
+    # Assemble complete HTML (no DOCTYPE - can cause Outlook issues)
+    html <- sprintf(
+'<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+</head>
+<body style="margin: 0; padding: 0; background-color: #f4f4f4; font-family: Arial, Helvetica, sans-serif;">
+<table width="680" align="center" cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto; background-color: #ffffff;">
+<!-- Header Bar -->
+<tr>
+<td style="background-color: %s; padding: 20px 30px;">
+<table width="100%%" cellpadding="0" cellspacing="0" border="0">
+<tr>
+<td style="font-family: Arial, Helvetica, sans-serif; font-size: 20px; font-weight: bold; color: #ffffff;">%s</td>
+<td style="font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #cccccc; text-align: right;">%s<br/>%s</td>
+</tr>
+<tr>
+<td colspan="2" style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; color: %s; padding-top: 4px;">Pre-Auction Report</td>
+</tr>
+</table>
+</td>
+</tr>
+<!-- Intro Paragraph -->
+<tr>
+<td style="padding: 20px 30px; background-color: #f8f9fa;">
+<table width="100%%" cellpadding="0" cellspacing="0" border="0">
+<tr>
+<td style="font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #333333; line-height: 1.5;">
+Pre-Auction analysis for <strong>%s</strong> scheduled for <strong>%s</strong>.
+This report contains yield curve analysis, relative value context, auction performance history,
+supply and demand dynamics, and forecast data to support auction preparation.
+</td>
+</tr>
+</table>
+</td>
+</tr>
+<!-- Chart Sections -->
+%s
+<!-- Footer -->
+<tr>
+<td style="background-color: %s; padding: 20px 30px;">
+<table width="100%%" cellpadding="0" cellspacing="0" border="0">
+<tr>
+<td style="font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #ffffff; text-align: center;">
+&copy; %s %s &nbsp;|&nbsp; <span style="color: %s;">%s</span><br/>
+<span style="font-size: 10px; color: #aaaaaa;">This report is confidential and intended solely for the recipient. Do not distribute without authorisation.</span>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+</body>
+</html>',
+        primary_color,                  # Header bg
+        client_name,                    # Header left: client name
+        auction_date_short,             # Header right: date
+        bonds_str,                      # Header right: bonds
+        accent_color,                   # "Pre-Auction Report" subtitle color
+        bonds_str,                      # Intro: bonds
+        auction_date_long,              # Intro: auction date
+        chart_sections,                 # All chart sections
+        primary_color,                  # Footer bg
+        current_year,                   # Footer: year
+        client_name,                    # Footer: client name
+        accent_color,                   # Footer: tagline color
+        tagline                         # Footer: tagline
+    )
+
+    return(html)
+}
+
+
+#' Assemble a complete MIME .eml file structure
+#'
+#' @param html_body Character string of the HTML email body
+#' @param png_paths Character vector of paths to PNG files (for filename references)
+#' @param png_base64_list List of base64-encoded PNG strings
+#' @param pdf_path Path to the PDF attachment
+#' @param auction_bonds Character vector of bond names
+#' @param auction_date Date of the auction
+#' @param subject_prefix Subject line prefix
+#' @return Character vector of .eml lines (one element per line)
+build_eml_file <- function(html_body, png_paths, png_base64_list, pdf_path,
+                            auction_bonds, auction_date,
+                            subject_prefix = "Insele Pre-Auction Report") {
+
+    # Helper: split base64 into 76-char lines (MIME standard)
+    split_b64 <- function(b64_string) {
+        n <- nchar(b64_string)
+        starts <- seq(1, n, 76)
+        ends <- pmin(starts + 75, n)
+        substring(b64_string, starts, ends)
+    }
+
+    # Pre-compute formatted values
+    auction_date_fmt <- format(auction_date, "%d %B %Y")
+    bonds_str <- paste(auction_bonds, collapse = ", ")
+    subject <- sprintf("%s: %s - %s", subject_prefix, bonds_str, auction_date_fmt)
+    rfc2822_date <- format(Sys.time(), "%a, %d %b %Y %H:%M:%S %z")
+
+    # Unique boundary strings
+    ts_str <- format(Sys.time(), "%Y%m%d%H%M%S")
+    boundary_mixed <- paste0("_=_mixed_boundary_", ts_str, "_001_=_")
+    boundary_related <- paste0("_=_related_boundary_", ts_str, "_002_=_")
+
+    # PDF attachment filename
+    pdf_filename <- sprintf("Insele_Pre_Auction_Report_%s.pdf", format(auction_date, "%Y%m%d"))
+
+    # Base64-encode the PDF
+    pdf_b64 <- base64enc::base64encode(pdf_path)
+
+    # ── Build .eml lines ──────────────────────────────────────────
+    lines <- character()
+
+    # RFC 2822 headers
+    lines <- c(lines,
+        "MIME-Version: 1.0",
+        paste0("X-Unsent: 1"),
+        paste0("Date: ", rfc2822_date),
+        "From: ",
+        "To: ",
+        paste0("Subject: ", subject),
+        paste0("Content-Type: multipart/mixed; boundary=\"", boundary_mixed, "\""),
+        ""
+    )
+
+    # ── multipart/mixed top level ──
+    lines <- c(lines,
+        paste0("--", boundary_mixed),
+        paste0("Content-Type: multipart/related; boundary=\"", boundary_related, "\""),
+        ""
+    )
+
+    # ── multipart/related: HTML body ──
+    lines <- c(lines,
+        paste0("--", boundary_related),
+        "Content-Type: text/html; charset=\"UTF-8\"",
+        "Content-Transfer-Encoding: 7bit",
+        "",
+        html_body,
+        ""
+    )
+
+    # ── multipart/related: inline images ──
+    n_pages <- length(png_base64_list)
+    for (i in seq_len(n_pages)) {
+        cid <- sprintf("chart%02d", i)
+        b64_lines <- split_b64(png_base64_list[[i]])
+
+        lines <- c(lines,
+            paste0("--", boundary_related),
+            "Content-Type: image/png",
+            "Content-Transfer-Encoding: base64",
+            paste0("Content-ID: <", cid, ">"),
+            "Content-Disposition: inline",
+            "",
+            b64_lines,
+            ""
+        )
+    }
+
+    # Close multipart/related
+    lines <- c(lines,
+        paste0("--", boundary_related, "--"),
+        ""
+    )
+
+    # ── PDF attachment ──
+    pdf_b64_lines <- split_b64(pdf_b64)
+    lines <- c(lines,
+        paste0("--", boundary_mixed),
+        "Content-Type: application/pdf",
+        "Content-Transfer-Encoding: base64",
+        paste0("Content-Disposition: attachment; filename=\"", pdf_filename, "\""),
+        "",
+        pdf_b64_lines,
+        ""
+    )
+
+    # Close multipart/mixed
+    lines <- c(lines,
+        paste0("--", boundary_mixed, "--")
+    )
+
+    return(lines)
+}
