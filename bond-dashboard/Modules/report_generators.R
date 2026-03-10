@@ -3193,7 +3193,8 @@ supply and demand dynamics, and forecast data to support auction preparation.
 #' @return Character vector of .eml lines (one element per line)
 build_eml_file <- function(html_body, png_paths, png_base64_list, pdf_path,
                             auction_bonds, auction_date,
-                            subject_prefix = "Insele Pre-Auction Report") {
+                            subject_prefix = "Insele Pre-Auction Report",
+                            pdf_attachment_name = NULL) {
 
     # Helper: split base64 into 76-char lines (MIME standard)
     split_b64 <- function(b64_string) {
@@ -3218,8 +3219,12 @@ build_eml_file <- function(html_body, png_paths, png_base64_list, pdf_path,
     boundary_mixed <- paste0("_=_mixed_boundary_", ts_str, "_001_=_")
     boundary_related <- paste0("_=_related_boundary_", ts_str, "_002_=_")
 
-    # PDF attachment filename
-    pdf_filename <- sprintf("Insele_Pre_Auction_Report_%s.pdf", format(auction_date, "%Y%m%d"))
+    # PDF attachment filename (use custom name if provided, else default)
+    if (is.null(pdf_attachment_name)) {
+        pdf_filename <- sprintf("Insele_Pre_Auction_Report_%s.pdf", format(auction_date, "%Y%m%d"))
+    } else {
+        pdf_filename <- pdf_attachment_name
+    }
 
     # Base64-encode the PDF
     pdf_b64 <- base64enc::base64encode(pdf_path)
@@ -3778,4 +3783,617 @@ institutional ownership data for SA Government bonds to support investment decis
     )
 
     return(html)
+}
+
+
+# ================================================================================
+# CUSTOM / DYNAMIC REPORT EMAIL HTML BUILDER
+# ================================================================================
+
+#' Build HTML email body for custom/dynamic reports with user-selected sections
+#'
+#' @param page_labels Character vector of labels for each page
+#' @param n_pages Number of pages in the PDF report
+#' @param report_title User-specified report title
+#' @param report_type_label Display name for the report type (e.g., "Custom Report")
+#' @param sections_included Character vector of section display names included
+#' @param client_name Client/company name for header
+#' @param report_date Date of the report
+#' @param primary_color Navy color for header/footer
+#' @param accent_color Orange accent color
+#' @param tagline Company tagline
+#' @return Character string of HTML email body
+build_custom_email_html <- function(page_labels, n_pages, report_title, report_type_label,
+                                     sections_included = NULL,
+                                     client_name = "Insele Capital Partners",
+                                     report_date = Sys.Date(),
+                                     primary_color = "#1B3A6B",
+                                     accent_color = "#E8913A",
+                                     tagline = "The Power of Partnership") {
+
+    # Handle page labels
+    if (is.null(page_labels)) {
+        page_labels <- paste("Page", seq_len(n_pages))
+    }
+    if (n_pages > length(page_labels)) {
+        page_labels <- c(page_labels, paste("Page", seq(length(page_labels) + 1, n_pages)))
+    }
+    if (n_pages < length(page_labels)) {
+        page_labels <- page_labels[seq_len(n_pages)]
+    }
+
+    # Pre-compute formatted values
+    current_year <- format(Sys.Date(), "%Y")
+    report_date_str <- format(report_date, "%d %B %Y")
+
+    # Build intro text from sections included
+    sections_str <- if (!is.null(sections_included) && length(sections_included) > 0) {
+        paste(sections_included, collapse = ", ")
+    } else {
+        "selected analytics"
+    }
+
+    # Build chart sections with CID image references
+    chart_sections <- ""
+    for (i in seq_len(n_pages)) {
+        cid_ref <- sprintf("chart%02d", i)
+        label <- page_labels[i]
+        chart_sections <- paste0(chart_sections, sprintf(
+            '<tr><td style="padding: 15px 30px 5px 30px; font-family: Arial, Helvetica, sans-serif; font-size: 16px; font-weight: bold; color: %s;">%s</td></tr>
+<tr><td style="padding: 5px 30px 15px 30px; text-align: center;"><img src="cid:%s" width="840" style="display: block; margin: 0 auto; max-width: 840px;" /></td></tr>
+',
+            primary_color, label, cid_ref
+        ))
+    }
+
+    # Assemble Outlook-safe HTML (no DOCTYPE)
+    html <- sprintf(
+'<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+</head>
+<body style="margin: 0; padding: 0; background-color: #f4f4f4; font-family: Arial, Helvetica, sans-serif;">
+<table width="900" align="center" cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto; background-color: #ffffff;">
+<!-- Header Bar -->
+<tr>
+<td style="background-color: %s; padding: 20px 30px;">
+<table width="100%%" cellpadding="0" cellspacing="0" border="0">
+<tr>
+<td style="font-family: Arial, Helvetica, sans-serif; font-size: 24px; font-weight: bold; color: #ffffff;">%s</td>
+<td style="font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #cccccc; text-align: right;">%s<br/>%s</td>
+</tr>
+<tr>
+<td colspan="2" style="font-family: Arial, Helvetica, sans-serif; font-size: 16px; color: %s; padding-top: 4px;">%s</td>
+</tr>
+</table>
+</td>
+</tr>
+<!-- Intro Paragraph -->
+<tr>
+<td style="padding: 20px 30px; background-color: #f8f9fa;">
+<table width="100%%" cellpadding="0" cellspacing="0" border="0">
+<tr>
+<td style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; color: #333333; line-height: 1.5;">
+<strong>%s</strong> prepared on <strong>%s</strong>.
+This report covers %s to support investment decision-making.
+</td>
+</tr>
+</table>
+</td>
+</tr>
+<!-- Chart Sections -->
+%s
+<!-- Footer -->
+<tr>
+<td style="background-color: %s; padding: 20px 30px;">
+<table width="100%%" cellpadding="0" cellspacing="0" border="0">
+<tr>
+<td style="font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #ffffff; text-align: center;">
+&copy; %s %s &nbsp;|&nbsp; <span style="color: %s;">%s</span><br/>
+<span style="font-size: 11px; color: #aaaaaa;">This report is confidential and intended solely for the recipient. Do not distribute without authorisation.</span>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+</body>
+</html>',
+        primary_color,                  # Header bg
+        client_name,                    # Header left: client name
+        report_type_label,              # Header right: report type
+        report_date_str,                # Header right: date
+        accent_color,                   # Report type subtitle color
+        report_type_label,              # Report type subtitle text
+        report_title,                   # Intro: report title
+        report_date_str,                # Intro: date
+        sections_str,                   # Intro: sections included
+        chart_sections,                 # All chart sections
+        primary_color,                  # Footer bg
+        current_year,                   # Footer: year
+        client_name,                    # Footer: client name
+        accent_color,                   # Footer: tagline color
+        tagline                         # Footer: tagline
+    )
+
+    return(html)
+}
+
+
+# ================================================================================
+# CUSTOM REPORT PDF GENERATOR (shared by PDF download and .eml email)
+# ================================================================================
+
+#' Generate a custom report PDF with dynamically selected sections and charts
+#'
+#' Encapsulates the full PDF rendering pipeline for non-pre-auction, non-treasury
+#' reports. Used by both the PDF download handler and the .eml email draft handler.
+#'
+#' @param output_path File path to write the PDF
+#' @param config Report configuration from report_config() reactive
+#' @param report_data Report data from collect_report_data()
+#' @param logo_grob Pre-loaded logo grob (or NULL)
+#' @return List with success (logical), page_labels (character vector), sections_included (character vector), n_pages (integer)
+generate_custom_report_pdf <- function(output_path, config, report_data, logo_grob) {
+
+    # Section display names
+    section_names <- c(
+        overview = "Market Overview",
+        relative = "Relative Value Analysis",
+        risk = "Risk Analytics",
+        technical = "Technical Analysis",
+        carry = "Carry & Roll Analysis",
+        auction = "Auction Intelligence",
+        intelligence = "Market Intelligence",
+        treasury = "Treasury Holdings",
+        recommendations = "Trading Recommendations"
+    )
+
+    # Chart-to-section mapping
+    chart_sections_map <- list(
+        overview = c("regime_plot"),
+        relative = c("yield_curve", "relative_heatmap", "zscore_plot", "convexity"),
+        risk = c("var_distribution", "var_ladder", "dv01_ladder"),
+        technical = c("technical_plot", "signal_matrix"),
+        carry = c("carry_heatmap", "scenario_analysis", "butterfly_spread", "forward_curve"),
+        auction = c("auction_performance", "auction_patterns", "auction_forecast",
+                     "demand_elasticity", "success_probability", "bid_distribution",
+                     "ytd_issuance", "auction_sentiment", "auction_success_factors"),
+        intelligence = c("correlation", "term_structure"),
+        treasury = c("holdings_area", "sector_trend", "holdings_fixed", "holdings_ilb",
+                      "holdings_frn", "holdings_sukuk", "ownership_changes",
+                      "holdings_diverging_fixed", "holdings_diverging_ilb")
+    )
+
+    # Chart display names for page labels
+    chart_display_names <- c(
+        regime_plot = "Regime Analysis",
+        yield_curve = "Yield Curve",
+        relative_heatmap = "Relative Value Heatmap",
+        zscore_plot = "Z-Score Distribution",
+        convexity = "Enhanced Convexity",
+        var_distribution = "VaR Distribution",
+        var_ladder = "VaR Ladder",
+        dv01_ladder = "DV01 Analysis",
+        technical_plot = "Technical Indicators",
+        signal_matrix = "Signal Matrix",
+        carry_heatmap = "Carry & Roll Heatmap",
+        scenario_analysis = "Scenario Analysis",
+        butterfly_spread = "Butterfly Spread",
+        forward_curve = "Forward Curve",
+        auction_performance = "Auction Performance",
+        auction_patterns = "Auction Patterns",
+        auction_forecast = "Auction Forecast",
+        demand_elasticity = "Demand Elasticity",
+        success_probability = "Success Probability",
+        bid_distribution = "Bid Distribution",
+        ytd_issuance = "YTD Issuance",
+        auction_sentiment = "Auction Sentiment",
+        auction_success_factors = "Auction Success Factors",
+        correlation = "Correlation Matrix",
+        term_structure = "Term Structure Evolution",
+        holdings_area = "Aggregate Holdings",
+        sector_trend = "Sector Trend",
+        holdings_fixed = "Fixed Rate Holdings",
+        holdings_ilb = "ILB Holdings",
+        holdings_frn = "FRN Holdings",
+        holdings_sukuk = "Sukuk Holdings",
+        ownership_changes = "Ownership Changes",
+        holdings_diverging_fixed = "Fixed Rate Changes",
+        holdings_diverging_ilb = "ILB Changes"
+    )
+
+    proc_data <- report_data$proc_data
+    filt_data <- report_data$filt_data
+    var_data_val <- report_data$var_data_val
+    regime_data_val <- report_data$regime_data_val
+    carry_data_val <- report_data$carry_data_val
+    filt_data_with_tech <- report_data$filt_data_with_tech
+
+    # Collect charts using existing collect_report_charts()
+    charts <- list()
+    chart_collection <- NULL
+    tryCatch({
+        chart_collection <- collect_report_charts(
+            proc_data, filt_data, filt_data_with_tech,
+            var_data_val, regime_data_val, carry_data_val,
+            report_data$treasury_ts, report_data$treasury_bonds,
+            config$input_params
+        )
+        for (name in names(chart_collection$charts)) {
+            chart_path <- chart_collection$charts[[name]]
+            if (is.character(chart_path) && file.exists(chart_path)) {
+                charts[[name]] <- readRDS(chart_path)
+            } else if (!is.character(chart_path)) {
+                charts[[name]] <- chart_path
+            }
+        }
+    }, error = function(e) {
+        message(sprintf("Chart collection error: %s", e$message))
+    })
+
+    on.exit({
+        if (!is.null(chart_collection) && !is.null(chart_collection$cleanup)) {
+            chart_collection$cleanup()
+        }
+    }, add = TRUE)
+
+    # Generate summaries for executive summary page
+    summaries <- tryCatch({
+        generate_report_summaries(
+            proc_data, filt_data, var_data_val,
+            regime_data_val, carry_data_val,
+            report_data$treasury_ts, report_data$treasury_bonds
+        )
+    }, error = function(e) {
+        list(executive = "Report generation in progress.")
+    })
+
+    # Pre-render ggplot charts to grobs BEFORE opening PDF device
+    chart_grobs <- list()
+    for (name in names(charts)) {
+        chart_obj <- charts[[name]]
+        if ("ggplot" %in% class(chart_obj)) {
+            tryCatch({
+                temp_png <- tempfile(fileext = ".png")
+                ggsave(temp_png, chart_obj, width = 10, height = 6, dpi = 150, bg = "white")
+                chart_img <- png::readPNG(temp_png)
+                chart_grobs[[name]] <- grid::rasterGrob(chart_img, interpolate = TRUE)
+                unlink(temp_png)
+            }, error = function(e) {
+                chart_grobs[[name]] <<- NULL
+            })
+        } else {
+            chart_grobs[[name]] <- chart_obj
+        }
+    }
+
+    # Track page labels as we build the PDF
+    page_labels <- character()
+    sections_included <- character()
+
+    # Count total pages for page numbering
+    total_chart_count <- sum(sapply(config$sections, function(s) {
+        if (s == "recommendations") return(1)
+        cs <- chart_sections_map[[s]]
+        if (is.null(cs)) return(0)
+        sum(vapply(cs, function(cn) !is.null(chart_grobs[[cn]]), logical(1)))
+    }))
+    total_pages <- 2 + total_chart_count + 1  # title + exec + charts + footer
+
+    add_page_number <- function(pn, tp) {
+        if (pn > 1) {
+            grid.text(
+                label = paste0("Page ", pn, " of ", tp),
+                x = 0.95, y = 0.02,
+                just = c("right", "bottom"),
+                gp = gpar(fontsize = 8, col = "#999999", fontface = 1)
+            )
+        }
+    }
+
+    add_page_header <- function(title_text = "") {
+        if (!is.null(logo_grob)) {
+            pushViewport(viewport(x = 0.92, y = 0.97, width = 0.12, height = 0.05))
+            grid.draw(logo_grob)
+            popViewport()
+        }
+        if (title_text != "") {
+            grid.text(title_text, x = 0.05, y = 0.97, just = "left",
+                      gp = gpar(fontsize = 12, fontface = 2, col = "#1B3A6B"))
+        }
+        grid.lines(x = c(0.05, 0.95), y = c(0.94, 0.94),
+                   gp = gpar(col = "#E0E0E0", lwd = 0.5))
+    }
+
+    tryCatch({
+        pdf(output_path, width = 11, height = 8.5)
+        page_number <- 0
+
+        # ── TITLE PAGE ─────────────────────────────────────────────────────
+        page_number <- page_number + 1
+        grid.newpage()
+        page_labels <- c(page_labels, "Cover Page")
+
+        if (!is.null(logo_grob)) {
+            pushViewport(viewport(x = 0.5, y = 0.9, width = 0.3, height = 0.15))
+            grid.draw(logo_grob)
+            popViewport()
+            title_y <- 0.7; subtitle_y <- 0.6; date_y <- 0.5; client_y <- 0.4
+            grid.lines(x = c(0.2, 0.8), y = c(0.82, 0.82),
+                       gp = gpar(col = "#1B3A6B", lwd = 2))
+        } else {
+            title_y <- 0.7; subtitle_y <- 0.6; date_y <- 0.5; client_y <- 0.4
+        }
+
+        grid.text("SA Government Bond Analysis Report",
+                  x = 0.5, y = title_y,
+                  gp = gpar(fontsize = 24, fontface = 2, col = "#1B3A6B"))
+        grid.text(config$report_title %||% "Market Analysis",
+                  x = 0.5, y = subtitle_y,
+                  gp = gpar(fontsize = 18, col = "#333333"))
+        grid.text(format(config$report_date %||% Sys.Date(), "%B %d, %Y"),
+                  x = 0.5, y = date_y,
+                  gp = gpar(fontsize = 14, col = "#666666"))
+        if (!is.null(config$client_name) && nchar(config$client_name) > 0) {
+            grid.text(paste("Prepared for:", config$client_name),
+                      x = 0.5, y = client_y,
+                      gp = gpar(fontsize = 12, fontface = 3, col = "#666666"))
+        }
+        if (is.null(logo_grob)) {
+            grid.text("INSELE CAPITAL PARTNERS", x = 0.5, y = 0.15,
+                      gp = gpar(fontsize = 16, fontface = 2, col = "#1B3A6B"))
+        }
+
+        # ── EXECUTIVE SUMMARY PAGE ─────────────────────────────────────────
+        page_number <- page_number + 1
+        grid.newpage()
+        page_labels <- c(page_labels, "Executive Summary")
+
+        if (!is.null(logo_grob)) {
+            pushViewport(viewport(x = 0.92, y = 0.95, width = 0.1, height = 0.06,
+                                  just = c("right", "top")))
+            grid.draw(logo_grob)
+            popViewport()
+        }
+        grid.lines(x = c(0.05, 0.95), y = c(0.92, 0.92),
+                   gp = gpar(col = "#E0E0E0", lwd = 1))
+        grid.text("Executive Summary", x = 0.05, y = 0.95, just = "left",
+                  gp = gpar(fontsize = 18, fontface = 2, col = "#1B3A6B"))
+
+        exec_metrics <- summaries$exec_metrics
+        if (!is.null(exec_metrics) && length(exec_metrics) > 0) {
+            metric_names <- names(exec_metrics)
+            n_metrics <- length(metric_names)
+            n_cols <- min(4, n_metrics)
+            n_rows <- ceiling(n_metrics / n_cols)
+            card_w <- 0.9 / n_cols
+            card_h <- 0.22
+            card_fill_map <- c(
+                "var_summary" = "#E8F0FE", "regime" = "#E8F0FE",
+                "rv_opportunities" = "#E8F5E9", "top_signals" = "#E8F5E9",
+                "yield_range" = "#F5F5F5", "avg_duration" = "#F5F5F5",
+                "steepest_spread" = "#F5F5F5", "top_carry" = "#E8F5E9"
+            )
+            for (i in seq_along(metric_names)) {
+                m <- exec_metrics[[metric_names[i]]]
+                if (is.null(m)) next
+                col_idx <- ((i - 1) %% n_cols) + 1
+                row_idx <- ((i - 1) %/% n_cols) + 1
+                cx <- 0.05 + (col_idx - 0.5) * card_w
+                cy <- 0.85 - row_idx * (card_h + 0.02)
+                card_fill <- card_fill_map[[metric_names[i]]] %||% "#F5F7FA"
+                grid.rect(x = cx, y = cy, width = card_w * 0.92, height = card_h,
+                          gp = gpar(fill = card_fill, col = "#E0E4E8", lwd = 0.5), just = "centre")
+                grid.text(m$label, x = cx, y = cy + card_h * 0.35,
+                          gp = gpar(fontsize = 8, col = "#888888", fontface = 1))
+                grid.text(m$value, x = cx, y = cy + card_h * 0.05,
+                          gp = gpar(fontsize = 13, col = "#1B3A6B", fontface = 2))
+                if (!is.null(m$subtitle) && nchar(m$subtitle) > 0) {
+                    grid.text(m$subtitle, x = cx, y = cy - card_h * 0.3,
+                              gp = gpar(fontsize = 7, col = "#999999", fontface = 1))
+                }
+            }
+            summary_y <- 0.85 - (n_rows + 1) * (card_h + 0.02)
+            if (summary_y > 0.05 && !is.null(summaries$executive)) {
+                wrapped_exec <- strwrap(summaries$executive, width = 110)
+                grid.text(paste(wrapped_exec, collapse = "\n"),
+                          x = 0.5, y = max(summary_y, 0.08),
+                          gp = gpar(fontsize = 9, col = "#555555", lineheight = 1.3))
+            }
+        } else if (!is.null(summaries$executive)) {
+            wrapped_text <- strwrap(summaries$executive, width = 95)
+            summary_df <- data.frame(Content = wrapped_text, stringsAsFactors = FALSE)
+            summary_table <- gridExtra::tableGrob(summary_df, rows = NULL, cols = NULL,
+                theme = gridExtra::ttheme_minimal(base_size = 11, base_colour = "#333333"))
+            pushViewport(viewport(x = 0.5, y = 0.5, width = 0.9, height = 0.7))
+            grid.draw(summary_table)
+            popViewport()
+        }
+        add_page_number(page_number, total_pages)
+
+        # ── Section summaries for divider headers ──
+        section_summaries <- list()
+        tryCatch({
+            section_summaries$overview <- summaries$market_conditions %||% ""
+            section_summaries$relative <- summaries$relative_summary %||% ""
+            section_summaries$risk <- summaries$risk_summary %||% ""
+            section_summaries$technical <- summaries$technical_summary %||% ""
+            section_summaries$carry <- summaries$carry_summary %||% ""
+            section_summaries$auction <- summaries$auction_summary %||% ""
+            section_summaries$intelligence <- summaries$intelligence_summary %||% ""
+            section_summaries$treasury <- summaries$treasury_summary %||% ""
+            section_summaries$recommendations <- ""
+        }, error = function(e) {})
+
+        # Generate trading recommendations
+        trading_recs <- tryCatch({
+            generate_trading_recommendations(
+                proc_data, filt_data, var_data_val,
+                carry_data_val, regime_data_val
+            )
+        }, error = function(e) { list() })
+
+        # ── CHART PAGES BY SECTION ─────────────────────────────────────────
+        for (section in config$sections) {
+            section_title <- section_names[[section]]
+            sections_included <- c(sections_included, section_title)
+
+            # Trading Recommendations (text-only page)
+            if (section == "recommendations") {
+                page_number <- page_number + 1
+                grid.newpage()
+                add_page_header("Trading Recommendations")
+                page_labels <- c(page_labels, "Trading Recommendations")
+
+                if (length(trading_recs) > 0) {
+                    y_pos <- 0.88
+                    for (rec_section in trading_recs) {
+                        if (is.null(rec_section) || !is.list(rec_section)) next
+                        title <- rec_section$title %||% ""
+                        items <- rec_section$items %||% character()
+                        grid.text(title, x = 0.06, y = y_pos, just = "left",
+                                  gp = gpar(fontsize = 12, fontface = 2, col = "#1B3A6B"))
+                        y_pos <- y_pos - 0.03
+                        grid.lines(x = c(0.06, 0.94), y = c(y_pos, y_pos),
+                                   gp = gpar(col = "#E0E4E8", lwd = 0.5))
+                        y_pos <- y_pos - 0.02
+                        if (is.character(items) && length(items) > 0) {
+                            for (item in items) {
+                                wrapped <- strwrap(paste0("\u2022 ", item), width = 105)
+                                for (line in wrapped) {
+                                    grid.text(line, x = 0.08, y = y_pos, just = "left",
+                                              gp = gpar(fontsize = 9, col = "#444444", lineheight = 1.3))
+                                    y_pos <- y_pos - 0.025
+                                }
+                            }
+                        }
+                        y_pos <- y_pos - 0.02
+                        if (y_pos < 0.08) break
+                    }
+                } else if (!is.null(summaries$recommendations)) {
+                    wrapped_recs <- strwrap(summaries$recommendations, width = 95)
+                    grid.text(paste(wrapped_recs, collapse = "\n"), x = 0.5, y = 0.5,
+                              gp = gpar(fontsize = 11, col = "#333333", lineheight = 1.4))
+                }
+                add_page_number(page_number, total_pages)
+                next
+            }
+
+            # Chart pages for this section
+            section_chart_names <- chart_sections_map[[section]]
+            first_chart_in_section <- TRUE
+
+            if (!is.null(section_chart_names)) {
+                for (chart_name in section_chart_names) {
+                    if (!chart_name %in% names(chart_grobs)) next
+                    chart_grob <- chart_grobs[[chart_name]]
+                    if (is.null(chart_grob)) next
+
+                    page_number <- page_number + 1
+                    display_name <- chart_display_names[[chart_name]] %||%
+                        gsub("_", " ", tools::toTitleCase(chart_name))
+                    page_labels <- c(page_labels,
+                        paste0(section_title, ": ", display_name))
+
+                    tryCatch({
+                        grid.newpage()
+                        if (first_chart_in_section) {
+                            # Combined section header + first chart
+                            pushViewport(viewport(x = 0.5, y = 0.91, width = 0.92, height = 0.16))
+                            if (!is.null(logo_grob)) {
+                                pushViewport(viewport(x = 0.95, y = 0.85, width = 0.08, height = 0.5,
+                                                      just = c("right", "top")))
+                                grid.draw(logo_grob)
+                                popViewport()
+                            }
+                            grid.text(section_title, x = 0.02, y = 0.65, just = "left",
+                                      gp = gpar(fontsize = 18, fontface = 2, col = "#1B3A6B"))
+                            grid.lines(x = c(0, 1), y = c(0.35, 0.35),
+                                       gp = gpar(col = "#1B3A6B", lwd = 1.5))
+                            sec_summary <- section_summaries[[section]] %||% ""
+                            if (nchar(sec_summary) > 0) {
+                                wrapped_summary <- strwrap(sec_summary, width = 110)
+                                display_summary <- paste(wrapped_summary[1:min(2, length(wrapped_summary))], collapse = "\n")
+                                grid.text(display_summary, x = 0.02, y = 0.1, just = "left",
+                                          gp = gpar(fontsize = 9, col = "#666666", lineheight = 1.3))
+                            }
+                            popViewport()
+                            pushViewport(viewport(x = 0.5, y = 0.39, width = 0.92, height = 0.72))
+                            grid.draw(chart_grob)
+                            popViewport()
+                            first_chart_in_section <- FALSE
+                        } else {
+                            # Subsequent charts: full page with small header
+                            add_page_header(display_name)
+                            pushViewport(viewport(x = 0.5, y = 0.45, width = 0.92, height = 0.82))
+                            grid.draw(chart_grob)
+                            popViewport()
+                        }
+                        add_page_number(page_number, total_pages)
+                    }, error = function(e) {
+                        grid.newpage()
+                        add_page_header()
+                        grid.text(paste("Chart", chart_name, "temporarily unavailable"),
+                                  x = 0.5, y = 0.5,
+                                  gp = gpar(fontsize = 12, col = "#666666"))
+                        add_page_number(page_number, total_pages)
+                    })
+                }
+            }
+
+            # If section had no valid charts, still render a section page
+            if (first_chart_in_section) {
+                page_number <- page_number + 1
+                grid.newpage()
+                page_labels <- c(page_labels, section_title)
+                grid.text(section_title, x = 0.5, y = 0.6,
+                          gp = gpar(fontsize = 22, fontface = 2, col = "#1B3A6B"))
+                grid.text("No charts available for this section",
+                          x = 0.5, y = 0.45,
+                          gp = gpar(fontsize = 11, col = "#999999"))
+                add_page_number(page_number, total_pages)
+            }
+        }
+
+        # ── FOOTER PAGE ────────────────────────────────────────────────────
+        page_number <- page_number + 1
+        grid.newpage()
+        page_labels <- c(page_labels, "Disclaimer")
+
+        if (!is.null(logo_grob)) {
+            pushViewport(viewport(x = 0.5, y = 0.7, width = 0.25, height = 0.1))
+            grid.draw(logo_grob)
+            popViewport()
+        }
+        grid.text(
+            paste("\u00A9", format(Sys.Date(), "%Y"),
+                  "Insele Capital Partners. All rights reserved.\n\n",
+                  "This report is proprietary and confidential.\n",
+                  "Disclaimer: This report is for informational purposes only",
+                  "and does not constitute investment advice."),
+            x = 0.5, y = 0.4,
+            gp = gpar(fontsize = 10, col = "#666666", lineheight = 1.5)
+        )
+        add_page_number(page_number, total_pages)
+
+        dev.off()
+
+        return(list(
+            success = TRUE,
+            page_labels = page_labels,
+            sections_included = sections_included,
+            n_pages = page_number
+        ))
+
+    }, error = function(e) {
+        message(sprintf("Custom PDF generation error: %s", e$message))
+        while (dev.cur() > 1) { try(dev.off(), silent = TRUE) }
+        return(list(
+            success = FALSE,
+            page_labels = character(),
+            sections_included = character(),
+            n_pages = 0
+        ))
+    })
 }
