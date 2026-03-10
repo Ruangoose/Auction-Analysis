@@ -558,23 +558,32 @@ safe_execute <- function(expr, default = NULL, context = "", show_notification =
 # Helper function to load and convert logo
 load_logo_for_pdf <- function(logo_path = "bond-dashboard/www/Insele_logo_2.webp") {
     tryCatch({
+        message(sprintf("[LOGO] Working directory: %s", getwd()))
+        message(sprintf("[LOGO] Primary path exists? %s: %s", logo_path, file.exists(logo_path)))
+
         # Check if file exists
         if(!file.exists(logo_path)) {
             # Try alternative paths (relative to various possible working directories)
             alt_paths <- c(
-                "www/Insele_logo_2.webp",
-                "bond-dashboard/www/insele_logo.webp",
+                "www/logo.png",                           # Most reliable - PNG, short path
+                "bond-dashboard/www/logo.png",            # If running from parent dir
+                "www/Insele_logo_2.webp",                 # WebP variants
+                "bond-dashboard/www/Insele_logo_2.webp",
                 "www/insele_logo.webp",
-                "bond-dashboard/www/logo.png",
-                "www/logo.png"
+                "bond-dashboard/www/insele_logo.webp",
+                "www/Insele_logo_2.png",                  # PNG variant of webp name
+                "bond-dashboard/www/Insele_logo_2.png"
             )
 
             for(path in alt_paths) {
                 if(file.exists(path)) {
                     logo_path <- path
+                    message(sprintf("[LOGO] Found logo at: %s", path))
                     break
                 }
             }
+        } else {
+            message(sprintf("[LOGO] Using primary path: %s", logo_path))
         }
 
         if(!file.exists(logo_path)) {

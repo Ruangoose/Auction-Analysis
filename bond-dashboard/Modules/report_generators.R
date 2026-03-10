@@ -3101,8 +3101,8 @@ build_eml_email_html <- function(page_labels, n_pages, auction_bonds, auction_da
         cid_ref <- sprintf("chart%02d", i)
         label <- page_labels[i]
         chart_sections <- paste0(chart_sections, sprintf(
-            '<tr><td style="padding: 15px 30px 5px 30px; font-family: Arial, Helvetica, sans-serif; font-size: 14px; font-weight: bold; color: %s;">%s</td></tr>
-<tr><td style="padding: 5px 30px 15px 30px; text-align: center;"><img src="cid:%s" width="620" style="display: block; margin: 0 auto; max-width: 620px;" /></td></tr>
+            '<tr><td style="padding: 15px 30px 5px 30px; font-family: Arial, Helvetica, sans-serif; font-size: 16px; font-weight: bold; color: %s;">%s</td></tr>
+<tr><td style="padding: 5px 30px 15px 30px; text-align: center;"><img src="cid:%s" width="840" style="display: block; margin: 0 auto; max-width: 840px;" /></td></tr>
 ',
             primary_color, label, cid_ref
         ))
@@ -3115,17 +3115,17 @@ build_eml_email_html <- function(page_labels, n_pages, auction_bonds, auction_da
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
 </head>
 <body style="margin: 0; padding: 0; background-color: #f4f4f4; font-family: Arial, Helvetica, sans-serif;">
-<table width="680" align="center" cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto; background-color: #ffffff;">
+<table width="900" align="center" cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto; background-color: #ffffff;">
 <!-- Header Bar -->
 <tr>
 <td style="background-color: %s; padding: 20px 30px;">
 <table width="100%%" cellpadding="0" cellspacing="0" border="0">
 <tr>
-<td style="font-family: Arial, Helvetica, sans-serif; font-size: 20px; font-weight: bold; color: #ffffff;">%s</td>
-<td style="font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #cccccc; text-align: right;">%s<br/>%s</td>
+<td style="font-family: Arial, Helvetica, sans-serif; font-size: 24px; font-weight: bold; color: #ffffff;">%s</td>
+<td style="font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #cccccc; text-align: right;">%s<br/>%s</td>
 </tr>
 <tr>
-<td colspan="2" style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; color: %s; padding-top: 4px;">Pre-Auction Report</td>
+<td colspan="2" style="font-family: Arial, Helvetica, sans-serif; font-size: 16px; color: %s; padding-top: 4px;">Pre-Auction Report</td>
 </tr>
 </table>
 </td>
@@ -3135,7 +3135,7 @@ build_eml_email_html <- function(page_labels, n_pages, auction_bonds, auction_da
 <td style="padding: 20px 30px; background-color: #f8f9fa;">
 <table width="100%%" cellpadding="0" cellspacing="0" border="0">
 <tr>
-<td style="font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #333333; line-height: 1.5;">
+<td style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; color: #333333; line-height: 1.5;">
 Pre-Auction analysis for <strong>%s</strong> scheduled for <strong>%s</strong>.
 This report contains yield curve analysis, relative value context, auction performance history,
 supply and demand dynamics, and forecast data to support auction preparation.
@@ -3151,9 +3151,9 @@ supply and demand dynamics, and forecast data to support auction preparation.
 <td style="background-color: %s; padding: 20px 30px;">
 <table width="100%%" cellpadding="0" cellspacing="0" border="0">
 <tr>
-<td style="font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #ffffff; text-align: center;">
+<td style="font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #ffffff; text-align: center;">
 &copy; %s %s &nbsp;|&nbsp; <span style="color: %s;">%s</span><br/>
-<span style="font-size: 10px; color: #aaaaaa;">This report is confidential and intended solely for the recipient. Do not distribute without authorisation.</span>
+<span style="font-size: 11px; color: #aaaaaa;">This report is confidential and intended solely for the recipient. Do not distribute without authorisation.</span>
 </td>
 </tr>
 </table>
