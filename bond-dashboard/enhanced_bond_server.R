@@ -12944,20 +12944,27 @@ $$Net Return = Carry + Roll - Funding Cost$$
     output$download_email_draft <- downloadHandler(
         filename = function() {
             config <- report_config()
-            auction_date <- config$auction_date %||% Sys.Date()
-            sprintf("Insele_Pre_Auction_Draft_%s.eml", format(auction_date, "%Y%m%d"))
+            if (config$report_type == "treasury") {
+                sprintf("Insele_Treasury_Holdings_%s.eml", format(Sys.Date(), "%Y%m%d"))
+            } else {
+                auction_date <- config$auction_date %||% Sys.Date()
+                sprintf("Insele_Pre_Auction_Draft_%s.eml", format(auction_date, "%Y%m%d"))
+            }
         },
         content = function(file) {
             config <- report_config()
 
-            # Validate: only pre-auction reports support .eml generation
-            if (config$report_type != "pre_auction") {
+            # Validate: supported report types for .eml generation
+            supported_types <- c("pre_auction", "treasury")
+            if (!config$report_type %in% supported_types) {
                 showNotification(
-                    "Email draft is currently available for Pre-Auction reports only.",
+                    "Email draft is currently available for Pre-Auction and Treasury Holdings reports.",
                     type = "warning", duration = 5
                 )
                 return(NULL)
             }
+
+            if (config$report_type == "pre_auction") {
 
             # Validate auction bonds selected
             auction_bonds <- config$pre_auction_bonds
@@ -13058,6 +13065,112 @@ $$Net Return = Carry + Roll - Funding Cost$$
                     type = "message", duration = 6
                 )
             })
+
+            } else if (config$report_type == "treasury") {
+            # Treasury Holdings pipeline
+            withProgress(message = "Building Treasury email draft...", value = 0, {
+
+                temp_dir <- tempdir()
+
+                # -- Stage 1: Generate Treasury PDF --------------------------------
+                incProgress(0.1, detail = "Generating Treasury PDF")
+
+                temp_pdf <- file.path(temp_dir, paste0("eml_treasury_", Sys.getpid(), ".pdf"))
+
+                # Load logo
+                logo_path <- load_logo_for_pdf()
+                logo_grob <- NULL
+                if (!is.null(logo_path) && file.exists(logo_path)) {
+                    tryCatch({
+                        logo_img <- png::readPNG(logo_path)
+                        logo_grob <- rasterGrob(logo_img, interpolate = TRUE)
+                    }, error = function(e) { logo_grob <- NULL })
+                }
+
+                report_data <- collect_report_data()
+
+                # Validate treasury data exists
+                if (is.null(report_data$treasury_ts) && is.null(report_data$treasury_bonds)) {
+                    showNotification(
+                        "No treasury holdings data loaded. Please upload data in the Treasury Holdings tab first.",
+                        type = "error", duration = 6
+                    )
+                    return(NULL)
+                }
+
+                generate_treasury_holdings_pdf(
+                    temp_pdf, config,
+                    report_data$treasury_ts,
+                    report_data$treasury_bonds,
+                    logo_grob
+                )
+
+                if (!file.exists(temp_pdf)) {
+                    showNotification("Treasury PDF generation failed.", type = "error", duration = 5)
+                    return(NULL)
+                }
+
+                # -- Stage 2: Convert PDF pages to PNGs ----------------------------
+                incProgress(0.4, detail = "Converting pages to images")
+
+                n_pages <- pdftools::pdf_info(temp_pdf)$pages
+                png_paths <- character(n_pages)
+                png_base64_list <- vector("list", n_pages)
+
+                for (i in seq_len(n_pages)) {
+                    png_path <- file.path(temp_dir, sprintf("eml_treasury_%02d_%d.png", i, Sys.getpid()))
+                    bitmap <- pdftools::pdf_render_page(temp_pdf, page = i, dpi = 150)
+                    png::writePNG(bitmap, png_path)
+                    png_paths[i] <- png_path
+                    png_base64_list[[i]] <- base64enc::base64encode(png_path)
+                }
+
+                # -- Stage 3: Build HTML and assemble .EML -------------------------
+                incProgress(0.7, detail = "Assembling email draft")
+
+                # Determine data date range for the email header
+                data_date_range <- tryCatch({
+                    if (!is.null(report_data$treasury_ts) && nrow(report_data$treasury_ts) > 0) {
+                        date_range <- range(report_data$treasury_ts$date, na.rm = TRUE)
+                        sprintf("%s to %s", format(date_range[1], "%b %Y"), format(date_range[2], "%b %Y"))
+                    } else {
+                        format(Sys.Date(), "%B %Y")
+                    }
+                }, error = function(e) format(Sys.Date(), "%B %Y"))
+
+                email_html <- build_treasury_email_html(
+                    page_labels = NULL,  # Uses defaults
+                    n_pages = n_pages,
+                    data_date_range = data_date_range
+                )
+
+                eml_lines <- build_eml_file(
+                    html_body = email_html,
+                    png_paths = png_paths,
+                    png_base64_list = png_base64_list,
+                    pdf_path = temp_pdf,
+                    auction_bonds = NULL,  # Not applicable for treasury
+                    auction_date = Sys.Date(),
+                    subject_prefix = "Insele Treasury Holdings Report"
+                )
+
+                # -- Write .eml with CRITICAL writeBin for CRLF -------------------
+                eml_raw <- charToRaw(paste(eml_lines, collapse = "\r\n"))
+                con <- file(file, "wb")
+                writeBin(eml_raw, con)
+                close(con)
+
+                # -- Cleanup -------------------------------------------------------
+                unlink(png_paths, force = TRUE)
+                unlink(temp_pdf, force = TRUE)
+
+                incProgress(1, detail = "Complete")
+                showNotification(
+                    "Treasury Holdings email draft ready! Double-click the .eml file to open in Outlook.",
+                    type = "message", duration = 6
+                )
+            })
+            }
         }
     )
 

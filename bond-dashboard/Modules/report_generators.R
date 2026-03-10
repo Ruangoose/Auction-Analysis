@@ -3206,7 +3206,11 @@ build_eml_file <- function(html_body, png_paths, png_base64_list, pdf_path,
     # Pre-compute formatted values
     auction_date_fmt <- format(auction_date, "%d %B %Y")
     bonds_str <- paste(auction_bonds, collapse = ", ")
-    subject <- sprintf("%s: %s - %s", subject_prefix, bonds_str, auction_date_fmt)
+    subject <- if (!is.null(auction_bonds) && length(auction_bonds) > 0) {
+        sprintf("%s: %s - %s", subject_prefix, bonds_str, auction_date_fmt)
+    } else {
+        sprintf("%s - %s", subject_prefix, auction_date_fmt)
+    }
     rfc2822_date <- format(Sys.time(), "%a, %d %b %Y %H:%M:%S %z")
 
     # Unique boundary strings
@@ -3294,4 +3298,484 @@ build_eml_file <- function(html_body, png_paths, png_base64_list, pdf_path,
     )
 
     return(lines)
+}
+
+
+# ================================================================================
+# TREASURY HOLDINGS PDF GENERATOR
+# ================================================================================
+
+#' Generate a branded multi-page landscape PDF of treasury holdings analysis
+#'
+#' @param file Output file path
+#' @param config Report configuration list from report_config()
+#' @param treasury_ts Holdings time series data (or NULL)
+#' @param treasury_bonds Bond-level holdings data (or NULL)
+#' @param logo_grob Logo rasterGrob (or NULL)
+generate_treasury_holdings_pdf <- function(file, config, treasury_ts, treasury_bonds, logo_grob) {
+    require(gridExtra)
+    require(grid)
+
+    temp_dir <- tempdir()
+    temp_pdf <- file.path(temp_dir, paste0("treasury_holdings_", Sys.getpid(), ".pdf"))
+    client_name <- config$client_name %||% ""
+
+    # Helper: add footer to each page
+    add_footer <- function(page_num, total) {
+        grid.text(
+            sprintf("(c) %s Insele Capital Partners - Confidential", format(Sys.Date(), "%Y")),
+            x = 0.5, y = 0.02,
+            gp = gpar(fontsize = 8, col = "#999999")
+        )
+        grid.text(
+            sprintf("Page %d of %d", page_num, total),
+            x = 0.95, y = 0.02,
+            gp = gpar(fontsize = 8, col = "#999999")
+        )
+    }
+
+    # Helper: draw page header bar
+    draw_page_header <- function(title) {
+        grid.rect(x = 0.5, y = 0.96, width = 1, height = 0.06,
+                  gp = gpar(fill = "#1B3A6B", col = NA))
+        grid.text(title, x = 0.5, y = 0.96,
+                  gp = gpar(fontsize = 16, fontface = 2, col = "white"))
+    }
+
+    # Helper: draw placeholder for unavailable content
+    draw_placeholder <- function(msg, y = 0.5) {
+        grid.rect(x = 0.5, y = y, width = 0.6, height = 0.08,
+                  gp = gpar(fill = "#f8f9fa", col = "#dddddd"))
+        grid.text(msg, x = 0.5, y = y,
+                  gp = gpar(fontsize = 12, col = "#999999"))
+    }
+
+    # Helper: safely render a ggplot to a rasterGrob via temp PNG
+    render_chart_to_grob <- function(chart_expr, width = 10, height = 6, dpi = 150) {
+        tryCatch({
+            p <- chart_expr
+            if (is.null(p)) return(NULL)
+            temp_png <- tempfile(fileext = ".png")
+            ggsave(temp_png, p, width = width, height = height, dpi = dpi, bg = "white")
+            img <- png::readPNG(temp_png)
+            grob <- grid::rasterGrob(img, interpolate = TRUE)
+            unlink(temp_png)
+            return(grob)
+        }, error = function(e) {
+            message(sprintf("[TREASURY PDF] Chart render error: %s", e$message))
+            return(NULL)
+        })
+    }
+
+    # ══════════════════════════════════════════════════════════════════
+    # PRE-RENDER all charts BEFORE opening PDF device
+    # ══════════════════════════════════════════════════════════════════
+    message("[TREASURY PDF] Pre-rendering charts...")
+
+    # Track which pages will be generated (cover always included)
+    pages <- list()
+
+    # Page 1: Cover (always)
+    pages[[length(pages) + 1]] <- list(type = "cover")
+
+    # Pages from treasury_ts data
+    if (!is.null(treasury_ts) && nrow(treasury_ts) > 0) {
+        # Page 2: Aggregate Holdings Area Chart
+        area_grob <- render_chart_to_grob(
+            generate_holdings_area_chart(treasury_ts),
+            width = 12, height = 7
+        )
+        pages[[length(pages) + 1]] <- list(
+            type = "chart", title = "Aggregate Holdings Over Time",
+            grob = area_grob
+        )
+
+        # Page 3: Top Sector Trend
+        top_sector <- tryCatch({
+            treasury_ts %>%
+                filter(date == max(date)) %>%
+                arrange(desc(percentage)) %>%
+                slice(1) %>%
+                pull(sector)
+        }, error = function(e) "Non-residents")
+
+        sector_grob <- render_chart_to_grob(
+            generate_sector_trend_chart(treasury_ts, sector_name = top_sector),
+            width = 10, height = 6
+        )
+        pages[[length(pages) + 1]] <- list(
+            type = "chart",
+            title = sprintf("Sector Trend Analysis - %s", top_sector),
+            grob = sector_grob
+        )
+
+        # Page 4: Ownership Changes
+        ownership_grob <- render_chart_to_grob(
+            generate_ownership_change_chart(treasury_ts, periods = c(1, 3, 12)),
+            width = 12, height = 7
+        )
+        pages[[length(pages) + 1]] <- list(
+            type = "chart", title = "Ownership Changes (1m, 3m, 12m)",
+            grob = ownership_grob
+        )
+    }
+
+    # Pages from treasury_bonds data
+    if (!is.null(treasury_bonds) && nrow(treasury_bonds) > 0) {
+        # Check which bond types have data
+        available_types <- unique(treasury_bonds$bond_type)
+
+        if ("Fixed Rate" %in% available_types) {
+            fixed_data <- treasury_bonds %>% filter(bond_type == "Fixed Rate")
+            if (nrow(fixed_data) > 0) {
+                # Page 5: Fixed Rate Bond Holdings
+                fixed_bar_grob <- render_chart_to_grob(
+                    generate_bond_holdings_bar_chart(treasury_bonds, "Fixed Rate"),
+                    width = 10, height = 12
+                )
+                pages[[length(pages) + 1]] <- list(
+                    type = "chart_tall", title = "Fixed Rate Bond Holdings",
+                    grob = fixed_bar_grob
+                )
+
+                # Page 7: Fixed Rate Changes (3-month diverging)
+                fixed_div_grob <- render_chart_to_grob(
+                    generate_holdings_change_diverging(treasury_bonds, 3, "Fixed Rate", 12),
+                    width = 10, height = 8
+                )
+                pages[[length(pages) + 1]] <- list(
+                    type = "chart", title = "Fixed Rate Ownership Changes (3-Month)",
+                    grob = fixed_div_grob
+                )
+            }
+        }
+
+        if ("ILB" %in% available_types) {
+            ilb_data <- treasury_bonds %>% filter(bond_type == "ILB")
+            if (nrow(ilb_data) > 0) {
+                # Page 6: ILB Bond Holdings
+                ilb_bar_grob <- render_chart_to_grob(
+                    generate_bond_holdings_bar_chart(treasury_bonds, "ILB"),
+                    width = 10, height = 12
+                )
+                pages[[length(pages) + 1]] <- list(
+                    type = "chart_tall", title = "Inflation-Linked Bond Holdings",
+                    grob = ilb_bar_grob
+                )
+
+                # Page 8: ILB Changes (3-month diverging)
+                ilb_div_grob <- render_chart_to_grob(
+                    generate_holdings_change_diverging(treasury_bonds, 3, "ILB", 12),
+                    width = 10, height = 8
+                )
+                pages[[length(pages) + 1]] <- list(
+                    type = "chart", title = "ILB Ownership Changes (3-Month)",
+                    grob = ilb_div_grob
+                )
+            }
+        }
+    }
+
+    total_pages <- length(pages)
+
+    message(sprintf("[TREASURY PDF] Pre-rendering complete. %d pages to generate.", total_pages))
+
+    # Determine data date range for the cover page
+    data_date_range <- tryCatch({
+        if (!is.null(treasury_ts) && nrow(treasury_ts) > 0) {
+            dr <- range(treasury_ts$date, na.rm = TRUE)
+            sprintf("%s to %s", format(dr[1], "%b %Y"), format(dr[2], "%b %Y"))
+        } else if (!is.null(treasury_bonds) && nrow(treasury_bonds) > 0) {
+            dr <- range(treasury_bonds$file_date, na.rm = TRUE)
+            sprintf("%s to %s", format(dr[1], "%b %Y"), format(dr[2], "%b %Y"))
+        } else {
+            format(Sys.Date(), "%B %Y")
+        }
+    }, error = function(e) format(Sys.Date(), "%B %Y"))
+
+    # ══════════════════════════════════════════════════════════════════
+    # GENERATE PDF
+    # ══════════════════════════════════════════════════════════════════
+    tryCatch({
+        pdf(temp_pdf, width = 11, height = 8.5)
+
+        for (pg_idx in seq_along(pages)) {
+            pg <- pages[[pg_idx]]
+
+            if (pg$type == "cover") {
+                # ─── COVER PAGE (same style as Pre-Auction) ──────────────────
+                grid.newpage()
+
+                # Navy left panel (35% width)
+                grid.rect(x = unit(0.175, "npc"), y = unit(0.53, "npc"),
+                          width = unit(0.35, "npc"), height = unit(0.94, "npc"),
+                          gp = gpar(fill = "#1B3A6B", col = NA))
+
+                # Decorative circle
+                grid.circle(x = unit(-0.02, "npc"), y = unit(0.08, "npc"),
+                            r = unit(0.22, "npc"),
+                            gp = gpar(fill = adjustcolor("#2B4F7F", alpha.f = 0.25), col = NA))
+
+                # Orange accent line in navy panel
+                grid.lines(x = c(0.03, 0.32), y = c(0.15, 0.15),
+                           gp = gpar(col = adjustcolor("#E8913A", alpha.f = 0.6), lwd = 3))
+
+                # Logo
+                if (!is.null(logo_grob)) {
+                    pushViewport(viewport(x = 0.42, y = 0.90, width = 0.42, height = 0.14,
+                                          just = c("left", "center")))
+                    grid.draw(logo_grob)
+                    popViewport()
+                } else {
+                    grid.text("INSELE CAPITAL PARTNERS",
+                              x = 0.42, y = 0.89, just = "left",
+                              gp = gpar(fontsize = 20, fontface = 2, col = "#1B3A6B"))
+                    grid.text("BROKING SERVICES",
+                              x = 0.42, y = 0.85, just = "left",
+                              gp = gpar(fontsize = 12, col = "#5B7B8A"))
+                }
+
+                # Orange accent line (separator below logo)
+                grid.lines(x = c(0.38, 0.92), y = c(0.81, 0.81),
+                           gp = gpar(col = "#E8913A", lwd = 3))
+
+                # Title: TREASURY HOLDINGS REPORT (stacked)
+                grid.text("TREASURY", x = 0.42, y = 0.72, just = "left",
+                          gp = gpar(fontsize = 36, fontface = 2, col = "#1B3A6B"))
+                grid.text("HOLDINGS", x = 0.42, y = 0.64, just = "left",
+                          gp = gpar(fontsize = 36, fontface = 2, col = "#1B3A6B"))
+                grid.text("REPORT", x = 0.42, y = 0.56, just = "left",
+                          gp = gpar(fontsize = 36, fontface = 2, col = "#1B3A6B"))
+
+                # Data date range (in brand orange)
+                grid.text(data_date_range,
+                          x = 0.42, y = 0.46, just = "left",
+                          gp = gpar(fontsize = 16, col = "#E8913A"))
+
+                # Subtitle
+                grid.text("SA Government Bond Institutional Ownership Analysis",
+                          x = 0.42, y = 0.38, just = "left",
+                          gp = gpar(fontsize = 14, col = "#333333"))
+
+                # Client name (conditional)
+                if (nchar(client_name) > 0) {
+                    grid.text(paste("Prepared for:", client_name),
+                              x = 0.42, y = 0.31, just = "left",
+                              gp = gpar(fontsize = 13, fontface = 3, col = "#666666"))
+                }
+
+                # Navy footer bar (full width)
+                grid.rect(x = unit(0.5, "npc"), y = unit(0.03, "npc"),
+                          width = unit(1, "npc"), height = unit(0.06, "npc"),
+                          gp = gpar(fill = "#1B3A6B", col = NA))
+
+                grid.text("www.insele.capital",
+                          x = 0.10, y = 0.03, just = "left",
+                          gp = gpar(fontsize = 9, col = "white"))
+                grid.text("+27 11 286 1949",
+                          x = 0.35, y = 0.03,
+                          gp = gpar(fontsize = 9, col = "white"))
+                grid.text("bonds@insele.capital",
+                          x = 0.60, y = 0.03,
+                          gp = gpar(fontsize = 9, col = "white"))
+                grid.text("Prepared by: Insele Capital Partners",
+                          x = 0.90, y = 0.03, just = "right",
+                          gp = gpar(fontsize = 9, col = "white"))
+
+            } else if (pg$type == "chart_tall") {
+                # Tall charts (bond holdings bar charts) — preserve aspect ratio
+                grid.newpage()
+                draw_page_header(pg$title)
+
+                if (!is.null(pg$grob)) {
+                    pushViewport(viewport(x = 0.5, y = 0.45, width = 0.60, height = 0.82))
+                    grid.draw(pg$grob)
+                    popViewport()
+                } else {
+                    draw_placeholder(paste(pg$title, "- chart unavailable"))
+                }
+
+                add_footer(pg_idx, total_pages)
+
+            } else {
+                # Standard chart pages
+                grid.newpage()
+                draw_page_header(pg$title)
+
+                if (!is.null(pg$grob)) {
+                    pushViewport(viewport(x = 0.5, y = 0.47, width = 0.92, height = 0.82))
+                    grid.draw(pg$grob)
+                    popViewport()
+                } else {
+                    draw_placeholder(paste(pg$title, "- chart unavailable"))
+                }
+
+                add_footer(pg_idx, total_pages)
+            }
+        }
+
+        dev.off()
+
+        # Copy to output path
+        if (temp_pdf != file) {
+            file.copy(temp_pdf, file, overwrite = TRUE)
+        }
+
+        message("[TREASURY PDF] PDF generation complete.")
+
+    }, error = function(e) {
+        message(sprintf("[TREASURY PDF] Error: %s", e$message))
+        # Clean up any lingering PDF devices
+        while (dev.cur() > 1) { try(dev.off(), silent = TRUE) }
+
+        # Write fallback error PDF
+        tryCatch({
+            pdf(file, width = 11, height = 8.5)
+            grid.newpage()
+            grid.text("Treasury Holdings Report",
+                      x = 0.5, y = 0.6,
+                      gp = gpar(fontsize = 24, fontface = 2, col = "#1B3A6B"))
+            grid.text(paste("Error generating report:", e$message),
+                      x = 0.5, y = 0.4,
+                      gp = gpar(fontsize = 14, col = "#C62828"))
+            dev.off()
+        }, error = function(e2) {
+            while (dev.cur() > 1) { try(dev.off(), silent = TRUE) }
+        })
+    })
+}
+
+
+# ================================================================================
+# TREASURY EMAIL HTML BUILDER
+# ================================================================================
+
+#' Build Outlook-compatible HTML email body for treasury holdings reports
+#'
+#' @param page_labels Character vector of labels for each page. NULL uses defaults.
+#' @param n_pages Number of pages in the PDF report
+#' @param data_date_range Character string of the data date range (e.g., "Jan 2023 to Dec 2025")
+#' @param client_name Client name for header
+#' @param primary_color Navy color for header/footer
+#' @param accent_color Orange accent color
+#' @param tagline Company tagline
+#' @return Character string of HTML email body
+build_treasury_email_html <- function(page_labels, n_pages, data_date_range = NULL,
+                                       client_name = "Insele Capital Partners",
+                                       primary_color = "#1B3A6B",
+                                       accent_color = "#E8913A",
+                                       tagline = "The Power of Partnership") {
+
+    # Default page labels for treasury report
+    default_treasury_labels <- c(
+        "Cover Page",
+        "Aggregate Holdings Over Time",
+        "Sector Trend Analysis",
+        "Ownership Changes",
+        "Fixed Rate Bond Holdings",
+        "Fixed Rate Changes (3-Month)",
+        "Inflation-Linked Bond Holdings",
+        "ILB Changes (3-Month)"
+    )
+
+    if (is.null(page_labels)) {
+        page_labels <- default_treasury_labels
+    }
+
+    # Pad labels if n_pages exceeds the list
+    if (n_pages > length(page_labels)) {
+        extra <- n_pages - length(page_labels)
+        page_labels <- c(page_labels, paste("Page", seq(length(page_labels) + 1, n_pages)))
+    }
+
+    # Truncate if fewer pages than labels
+    if (n_pages < length(page_labels)) {
+        page_labels <- page_labels[seq_len(n_pages)]
+    }
+
+    # Pre-compute formatted values
+    current_year <- format(Sys.Date(), "%Y")
+    date_range_str <- if (!is.null(data_date_range)) data_date_range else format(Sys.Date(), "%B %Y")
+
+    # Build chart sections
+    chart_sections <- ""
+    for (i in seq_len(n_pages)) {
+        cid_ref <- sprintf("chart%02d", i)
+        label <- page_labels[i]
+        chart_sections <- paste0(chart_sections, sprintf(
+            '<tr><td style="padding: 15px 30px 5px 30px; font-family: Arial, Helvetica, sans-serif; font-size: 16px; font-weight: bold; color: %s;">%s</td></tr>
+<tr><td style="padding: 5px 30px 15px 30px; text-align: center;"><img src="cid:%s" width="840" style="display: block; margin: 0 auto; max-width: 840px;" /></td></tr>
+',
+            primary_color, label, cid_ref
+        ))
+    }
+
+    # Assemble complete HTML (no DOCTYPE - can cause Outlook issues)
+    html <- sprintf(
+'<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+</head>
+<body style="margin: 0; padding: 0; background-color: #f4f4f4; font-family: Arial, Helvetica, sans-serif;">
+<table width="900" align="center" cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto; background-color: #ffffff;">
+<!-- Header Bar -->
+<tr>
+<td style="background-color: %s; padding: 20px 30px;">
+<table width="100%%" cellpadding="0" cellspacing="0" border="0">
+<tr>
+<td style="font-family: Arial, Helvetica, sans-serif; font-size: 24px; font-weight: bold; color: #ffffff;">%s</td>
+<td style="font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #cccccc; text-align: right;">Treasury Holdings<br/>%s</td>
+</tr>
+<tr>
+<td colspan="2" style="font-family: Arial, Helvetica, sans-serif; font-size: 16px; color: %s; padding-top: 4px;">Treasury Holdings Report</td>
+</tr>
+</table>
+</td>
+</tr>
+<!-- Intro Paragraph -->
+<tr>
+<td style="padding: 20px 30px; background-color: #f8f9fa;">
+<table width="100%%" cellpadding="0" cellspacing="0" border="0">
+<tr>
+<td style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; color: #333333; line-height: 1.5;">
+Treasury holdings analysis covering <strong>%s</strong>.
+This report contains aggregate sector holdings, ownership change analysis, and bond-level
+institutional ownership data for SA Government bonds to support investment decision-making.
+</td>
+</tr>
+</table>
+</td>
+</tr>
+<!-- Chart Sections -->
+%s
+<!-- Footer -->
+<tr>
+<td style="background-color: %s; padding: 20px 30px;">
+<table width="100%%" cellpadding="0" cellspacing="0" border="0">
+<tr>
+<td style="font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #ffffff; text-align: center;">
+&copy; %s %s &nbsp;|&nbsp; <span style="color: %s;">%s</span><br/>
+<span style="font-size: 11px; color: #aaaaaa;">This report is confidential and intended solely for the recipient. Do not distribute without authorisation.</span>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+</body>
+</html>',
+        primary_color,                  # Header bg
+        client_name,                    # Header left: client name
+        date_range_str,                 # Header right: date range
+        accent_color,                   # "Treasury Holdings Report" subtitle color
+        date_range_str,                 # Intro: data period
+        chart_sections,                 # All chart sections
+        primary_color,                  # Footer bg
+        current_year,                   # Footer: year
+        client_name,                    # Footer: client name
+        accent_color,                   # Footer: tagline color
+        tagline                         # Footer: tagline
+    )
+
+    return(html)
 }
