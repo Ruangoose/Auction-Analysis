@@ -11943,6 +11943,7 @@ server <- function(input, output, session) {
                 }
 
                 if (FALSE) { # Legacy block replaced by generate_custom_report_pdf()
+                    tryCatch({
                     grid.newpage()
 
                     # Add logo at the top if available
