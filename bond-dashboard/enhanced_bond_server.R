@@ -10390,7 +10390,7 @@ server <- function(input, output, session) {
             }
         }
 
-        # Collect all 35 selected plots
+        # Collect all 38 selected plots
         plot_ids <- c(
             # Overview
             "regime_plot",
@@ -10403,11 +10403,12 @@ server <- function(input, output, session) {
             # Carry & Roll
             "carry_heatmap", "scenario_analysis", "butterfly_spread", "forward_curve",
             # Auction
-            "auction_performance", "auction_patterns", "auction_forecast",
-            "demand_elasticity", "success_probability", "bid_distribution",
-            "ytd_issuance", "auction_sentiment", "auction_success_factors",
-            # Intelligence
-            "correlation", "term_structure",
+            "auction_performance", "auction_patterns", "concession_trend",
+            "auction_forecast", "demand_elasticity", "success_probability",
+            "bid_distribution", "ytd_issuance", "auction_sentiment",
+            # Market Intelligence
+            "yield_percentile", "rate_of_change", "curve_comparison",
+            "curve_steepness", "regime_probability",
             # Treasury
             "holdings_area", "sector_trend", "holdings_fixed", "holdings_ilb",
             "holdings_frn", "holdings_sukuk", "ownership_changes",
@@ -10604,9 +10605,12 @@ server <- function(input, output, session) {
             bid_distribution = "\U2728 Bid Distribution",
             ytd_issuance = "\U2728 YTD Issuance",
             auction_sentiment = "\U2728 Auction Sentiment",
-            auction_success_factors = "\U2728 Success Factors",
-            correlation = "Correlation Matrix",
-            term_structure = "3D Term Structure",
+            concession_trend = "Auction Demand Trend",
+            yield_percentile = "Yield Percentile Heatmap",
+            rate_of_change = "Rate of Change Monitor",
+            curve_comparison = "Curve Comparison",
+            curve_steepness = "Curve Steepness Gauge",
+            regime_probability = "Regime Probability Gauge",
             holdings_area = "\U0001F3DB Holdings Time Series",
             sector_trend = "\U0001F3DB Sector Trend",
             holdings_fixed = "\U0001F3DB Fixed Rate Holdings",
@@ -10627,8 +10631,10 @@ server <- function(input, output, session) {
             carry_heatmap = "carry", scenario_analysis = "carry", butterfly_spread = "carry", forward_curve = "carry",
             auction_performance = "auction", auction_patterns = "auction", auction_forecast = "auction",
             demand_elasticity = "auction", success_probability = "auction", bid_distribution = "auction",
-            ytd_issuance = "auction", auction_sentiment = "auction", auction_success_factors = "auction",
-            correlation = "intelligence", term_structure = "intelligence",
+            ytd_issuance = "auction", auction_sentiment = "auction", concession_trend = "auction",
+            yield_percentile = "intelligence", rate_of_change = "intelligence",
+            curve_comparison = "intelligence", curve_steepness = "intelligence",
+            regime_probability = "intelligence",
             holdings_area = "treasury", sector_trend = "treasury", holdings_fixed = "treasury", holdings_ilb = "treasury",
             holdings_frn = "treasury", holdings_sukuk = "treasury", ownership_changes = "treasury",
             holdings_diverging_fixed = "treasury", holdings_diverging_ilb = "treasury"
