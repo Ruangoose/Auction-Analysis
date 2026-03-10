@@ -11920,133 +11920,29 @@ server <- function(input, output, session) {
                     return(invisible(NULL))
                 }
 
-                proc_data <- report_data$proc_data
-                filt_data <- report_data$filt_data
-                var_data_val <- report_data$var_data_val
-                regime_data_val <- report_data$regime_data_val
-                carry_data_val <- report_data$carry_data_val
-                filt_data_with_tech <- report_data$filt_data_with_tech
+                incProgress(0.2, detail = "Generating custom report PDF")
 
-                incProgress(0.2, detail = "Collecting charts")
+                # Use shared generate_custom_report_pdf() for all non-pre-auction reports
+                temp_dir <- tempdir()
+                temp_pdf <- file.path(temp_dir, paste0("temp_report_", Sys.getpid(), ".pdf"))
 
-                # Collect charts with error handling
-                charts <- list()
-                chart_collection <- NULL
-                tryCatch({
-                    chart_collection <- collect_report_charts(
-                        proc_data,
-                        filt_data,
-                        filt_data_with_tech,
-                        var_data_val,
-                        regime_data_val,
-                        carry_data_val,
-                        report_data$treasury_ts,
-                        report_data$treasury_bonds,
-                        config$input_params
-                    )
-
-                    # Load charts from paths
-                    for(name in names(chart_collection$charts)) {
-                        chart_path <- chart_collection$charts[[name]]
-                        if(is.character(chart_path) && file.exists(chart_path)) {
-                            charts[[name]] <- readRDS(chart_path)
-                        } else if(!is.character(chart_path)) {
-                            charts[[name]] <- chart_path
-                        }
-                    }
-                }, error = function(e) {
-                    log_error(e, context = "chart_collection", session_id = session$token)
-                })
-
-                # Ensure cleanup happens when PDF generation is done
-                on.exit({
-                    if(!is.null(chart_collection) && !is.null(chart_collection$cleanup)) {
-                        chart_collection$cleanup()
-                    }
-                }, add = TRUE)
-
-                incProgress(0.3, detail = "Generating summaries")
-
-                # Generate summaries with error handling
-                summaries <- tryCatch({
-                    generate_report_summaries(
-                        proc_data,
-                        filt_data,
-                        var_data_val,
-                        regime_data_val,
-                        carry_data_val,
-                        report_data$treasury_ts,
-                        report_data$treasury_bonds
-                    )
-                }, error = function(e) {
-                    log_error(e, context = "summary_generation")
-                    list(executive = "Report generation in progress.")
-                })
-
-                # Get auction data
-                auction_data <- tryCatch({
-                    list(upcoming_bonds = data.frame(), summary_text = NULL)
-                }, error = function(e) {
-                    list(upcoming_bonds = data.frame(), summary_text = NULL)
-                })
-
-                incProgress(0.5, detail = "Creating PDF")
-
-                # Section display names and chart-to-section mapping
-                section_names <- c(
-                    overview = "Market Overview",
-                    relative = "Relative Value Analysis",
-                    risk = "Risk Analytics",
-                    technical = "Technical Analysis",
-                    carry = "Carry & Roll Analysis",
-                    auction = "Auction Intelligence",
-                    intelligence = "Market Intelligence",
-                    treasury = "Treasury Holdings",
-                    recommendations = "Trading Recommendations"
+                pdf_result <- generate_custom_report_pdf(
+                    temp_pdf, config, report_data, logo_grob
                 )
 
-                chart_sections_map <- list(
-                    overview = c("regime_plot"),
-                    relative = c("yield_curve", "relative_heatmap", "zscore_plot", "convexity"),
-                    risk = c("var_distribution", "var_ladder", "dv01_ladder"),
-                    technical = c("technical_plot", "signal_matrix"),
-                    carry = c("carry_heatmap", "scenario_analysis", "butterfly_spread", "forward_curve"),
-                    auction = c("auction_performance", "auction_patterns", "auction_forecast",
-                                 "demand_elasticity", "success_probability", "bid_distribution",
-                                 "ytd_issuance", "auction_sentiment", "auction_success_factors"),
-                    intelligence = c("correlation", "term_structure"),
-                    treasury = c("holdings_area", "sector_trend", "holdings_fixed", "holdings_ilb",
-                                  "holdings_frn", "holdings_sukuk", "ownership_changes",
-                                  "holdings_diverging_fixed", "holdings_diverging_ilb")
-                )
+                if (!pdf_result$success) {
+                    # Fallback: create minimal error PDF
+                    pdf(file, width = 11, height = 8.5)
+                    plot.new()
+                    text(0.5, 0.5, "Report generation encountered an error. Please try again.", cex = 1.5)
+                    dev.off()
+                } else {
+                    # Copy generated PDF to output location
+                    file.copy(temp_pdf, file, overwrite = TRUE)
+                    unlink(temp_pdf)
+                }
 
-                tryCatch({
-                    # PRE-RENDER all ggplot charts to grobs BEFORE opening PDF device
-                    message("Pre-rendering charts to grobs...")
-                    chart_grobs <- list()
-                    for (name in names(charts)) {
-                        chart_obj <- charts[[name]]
-                        if ("ggplot" %in% class(chart_obj)) {
-                            tryCatch({
-                                temp_png <- tempfile(fileext = ".png")
-                                ggsave(temp_png, chart_obj, width = 10, height = 6, dpi = 150, bg = "white")
-                                chart_img <- png::readPNG(temp_png)
-                                chart_grobs[[name]] <- grid::rasterGrob(chart_img, interpolate = TRUE)
-                                unlink(temp_png)
-                                message(sprintf("  ✓ Pre-rendered: %s", name))
-                            }, error = function(e) {
-                                message(sprintf("  ✗ Failed to pre-render: %s (%s)", name, e$message))
-                                chart_grobs[[name]] <<- NULL  # Mark as failed
-                            })
-                        } else {
-                            chart_grobs[[name]] <- chart_obj  # Already a grob, keep as-is
-                        }
-                    }
-
-                    pdf(temp_pdf, width = 11, height = 8.5)
-
-                    # ENHANCED TITLE PAGE WITH LOGO
-                    tryCatch({
+                if (FALSE) { # Legacy block replaced by generate_custom_report_pdf()
                     grid.newpage()
 
                     # Add logo at the top if available
@@ -12479,20 +12375,7 @@ server <- function(input, output, session) {
                         unlink(temp_pdf)
                     }
 
-                }, error = function(e) {
-                    message("═══ PDF GENERATION ERROR ═══")
-                    message(paste("Error:", e$message))
-                    message(paste("Call:", deparse(e$call)))
-                    message("═══════════════════════════")
-                    # Close ALL open devices to reset the stack
-                    while (dev.cur() > 1) { try(dev.off(), silent = TRUE) }
-                    log_error(e, context = "pdf_generation")
-                    # Create minimal PDF as fallback
-                    pdf(file, width = 11, height = 8.5)
-                    plot.new()
-                    text(0.5, 0.5, "Report generation encountered an error. Please try again.", cex = 1.5)
-                    dev.off()
-                })
+                } # End if(FALSE) legacy block
 
                 incProgress(1, detail = "Complete")
                 showNotification("PDF report generated successfully", type = "message")
@@ -12944,25 +12827,26 @@ $$Net Return = Carry + Roll - Funding Cost$$
     output$download_email_draft <- downloadHandler(
         filename = function() {
             config <- report_config()
-            if (config$report_type == "treasury") {
-                sprintf("Insele_Treasury_Holdings_%s.eml", format(Sys.Date(), "%Y%m%d"))
-            } else {
+            # Report type display names for filenames
+            type_labels <- c(
+                pre_auction = "Pre_Auction",
+                treasury = "Treasury_Holdings",
+                executive = "Executive_Summary",
+                trading = "Trading_Desk",
+                risk = "Risk_Committee",
+                client = "Client_Portfolio",
+                custom = "Custom_Report"
+            )
+            type_label <- type_labels[[config$report_type]] %||% "Report"
+            if (config$report_type == "pre_auction") {
                 auction_date <- config$auction_date %||% Sys.Date()
-                sprintf("Insele_Pre_Auction_Draft_%s.eml", format(auction_date, "%Y%m%d"))
+                sprintf("Insele_%s_Draft_%s.eml", type_label, format(auction_date, "%Y%m%d"))
+            } else {
+                sprintf("Insele_%s_%s.eml", type_label, format(Sys.Date(), "%Y%m%d"))
             }
         },
         content = function(file) {
             config <- report_config()
-
-            # Validate: supported report types for .eml generation
-            supported_types <- c("pre_auction", "treasury")
-            if (!config$report_type %in% supported_types) {
-                showNotification(
-                    "Email draft is currently available for Pre-Auction and Treasury Holdings reports.",
-                    type = "warning", duration = 5
-                )
-                return(NULL)
-            }
 
             if (config$report_type == "pre_auction") {
 
@@ -13167,6 +13051,125 @@ $$Net Return = Carry + Roll - Funding Cost$$
                 incProgress(1, detail = "Complete")
                 showNotification(
                     "Treasury Holdings email draft ready! Double-click the .eml file to open in Outlook.",
+                    type = "message", duration = 6
+                )
+            })
+
+            } else {
+            # ══════════════════════════════════════════════════════════════════
+            # CUSTOM / DYNAMIC REPORT EMAIL PIPELINE
+            # Supports: Executive, Trading, Risk, Client, Custom report types
+            # Uses the same PDF→PNG→HTML→EML pipeline as pre-auction/treasury
+            # ══════════════════════════════════════════════════════════════════
+
+            # Report type display names
+            type_labels <- c(
+                executive = "Executive Summary",
+                trading = "Trading Desk Report",
+                risk = "Risk Committee Report",
+                client = "Client Portfolio Review",
+                custom = "Custom Report"
+            )
+            report_type_label <- type_labels[[config$report_type]] %||% "Custom Report"
+
+            # Validate at least one section selected
+            if (is.null(config$sections) || length(config$sections) == 0) {
+                showNotification(
+                    "Please select at least one report section before generating the email draft.",
+                    type = "warning", duration = 5
+                )
+                return(NULL)
+            }
+
+            withProgress(message = "Building custom email draft...", value = 0, {
+
+                temp_dir <- tempdir()
+
+                # -- Stage 1: Generate PDF using shared function --------------------
+                incProgress(0.1, detail = "Generating report PDF")
+
+                temp_pdf <- file.path(temp_dir, paste0("eml_custom_", Sys.getpid(), ".pdf"))
+
+                # Load logo
+                logo_path <- load_logo_for_pdf()
+                logo_grob <- NULL
+                if (!is.null(logo_path) && file.exists(logo_path)) {
+                    tryCatch({
+                        logo_img <- png::readPNG(logo_path)
+                        logo_grob <- rasterGrob(logo_img, interpolate = TRUE)
+                    }, error = function(e) { logo_grob <- NULL })
+                }
+
+                report_data <- collect_report_data()
+
+                pdf_result <- generate_custom_report_pdf(
+                    temp_pdf, config, report_data, logo_grob
+                )
+
+                if (!pdf_result$success || !file.exists(temp_pdf)) {
+                    showNotification("PDF generation failed. Cannot create email draft.",
+                                    type = "error", duration = 5)
+                    return(NULL)
+                }
+
+                # -- Stage 2: Convert PDF pages to PNGs ----------------------------
+                incProgress(0.4, detail = "Converting pages to images")
+
+                n_pages <- pdftools::pdf_info(temp_pdf)$pages
+                png_paths <- character(n_pages)
+                png_base64_list <- vector("list", n_pages)
+
+                for (i in seq_len(n_pages)) {
+                    png_path <- file.path(temp_dir, sprintf("eml_custom_%02d_%d.png", i, Sys.getpid()))
+                    bitmap <- pdftools::pdf_render_page(temp_pdf, page = i, dpi = 150)
+                    png::writePNG(bitmap, png_path)
+                    png_paths[i] <- png_path
+                    png_base64_list[[i]] <- base64enc::base64encode(png_path)
+                }
+
+                # -- Stage 3: Build HTML body and assemble .EML --------------------
+                incProgress(0.7, detail = "Assembling email draft")
+
+                email_html <- build_custom_email_html(
+                    page_labels = pdf_result$page_labels,
+                    n_pages = n_pages,
+                    report_title = config$report_title %||% "SA Government Bond Analysis",
+                    report_type_label = report_type_label,
+                    sections_included = pdf_result$sections_included,
+                    client_name = if (nchar(config$client_name %||% "") > 0)
+                        config$client_name else "Insele Capital Partners",
+                    report_date = config$report_date %||% Sys.Date()
+                )
+
+                # PDF attachment filename
+                pdf_filename <- sprintf("Insele_%s_%s.pdf",
+                    gsub(" ", "_", report_type_label),
+                    format(config$report_date %||% Sys.Date(), "%Y%m%d"))
+
+                eml_lines <- build_eml_file(
+                    html_body = email_html,
+                    png_paths = png_paths,
+                    png_base64_list = png_base64_list,
+                    pdf_path = temp_pdf,
+                    auction_bonds = NULL,
+                    auction_date = config$report_date %||% Sys.Date(),
+                    subject_prefix = paste("Insele", report_type_label),
+                    pdf_attachment_name = pdf_filename
+                )
+
+                # -- Write .eml with CRITICAL writeBin for CRLF -------------------
+                eml_raw <- charToRaw(paste(eml_lines, collapse = "\r\n"))
+                con <- file(file, "wb")
+                writeBin(eml_raw, con)
+                close(con)
+
+                # -- Cleanup -------------------------------------------------------
+                unlink(png_paths, force = TRUE)
+                unlink(temp_pdf, force = TRUE)
+
+                incProgress(1, detail = "Complete")
+                showNotification(
+                    paste(report_type_label, "email draft ready! Double-click the .eml file to open in Outlook."),
                     type = "message", duration = 6
                 )
             })
