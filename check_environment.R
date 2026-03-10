@@ -139,7 +139,7 @@ required_packages <- c(
     "htmltools", "blastula", "openxlsx", "base64enc",
     "webshot2", "htmlwidgets", "stringr", "officer", "flextable",
     "future", "promises", "magick", "shinyjs", "jsonlite",
-    "ggrepel", "ggridges", "extrafont", "R6"
+    "ggrepel", "ggridges", "extrafont", "R6", "pdftools", "png"
 )
 
 missing_pkgs <- c()
