@@ -2978,6 +2978,7 @@ ui <- dashboardPage(
                                                               # Existing plots
                                                               checkboxInput("plot_auction_performance", "Enhanced Auction Analytics", value = TRUE),
                                                               checkboxInput("plot_auction_patterns", "Historical Auction Patterns", value = TRUE),
+                                                              checkboxInput("plot_concession_trend", "Auction Demand Trend (Concession)", value = TRUE),
 
                                                               # NEW plots
                                                               tags$hr(style = "margin: 10px 0; border-color: #ddd;"),
@@ -2989,7 +2990,6 @@ ui <- dashboardPage(
                                                               checkboxInput("plot_bid_distribution", HTML("&#10024; Bid Distribution"), value = FALSE),
                                                               checkboxInput("plot_ytd_issuance", HTML("&#10024; YTD Bond Issuance Chart"), value = FALSE),
                                                               checkboxInput("plot_auction_sentiment", HTML("&#10024; Auction Sentiment Gauge"), value = FALSE),
-                                                              checkboxInput("plot_auction_success_factors", HTML("&#10024; Auction Success Factors"), value = FALSE)
                                                           )
                                                       ),
 
@@ -3005,8 +3005,11 @@ ui <- dashboardPage(
                                                           conditionalPanel(
                                                               condition = "input.section_intelligence == true",
                                                               style = "margin-left: 20px; margin-top: 10px;",
-                                                              checkboxInput("plot_correlation", "Cross-Bond Correlation Matrix", value = TRUE),
-                                                              checkboxInput("plot_term_structure", "3D Term Structure Evolution", value = TRUE)
+                                                              checkboxInput("plot_yield_percentile", "Yield Percentile Heatmap", value = TRUE),
+                                                              checkboxInput("plot_rate_of_change", "Rate of Change Monitor", value = TRUE),
+                                                              checkboxInput("plot_curve_comparison", "Curve Comparison", value = TRUE),
+                                                              checkboxInput("plot_curve_steepness", "Curve Steepness Gauge", value = FALSE),
+                                                              checkboxInput("plot_regime_probability", "Regime Probability Gauge", value = FALSE)
                                                           )
                                                       ),
 
@@ -3055,7 +3058,7 @@ ui <- dashboardPage(
                                                       tags$hr(style = "margin: 15px 0;"),
                                                       tags$div(
                                                           style = "background: #e8f4f8; padding: 10px; border-radius: 5px; border-left: 4px solid #1B3A6B;",
-                                                          tags$strong(style = "color: #1B3A6B;", HTML("&#128204; Total Available: 35 Plots")),
+                                                          tags$strong(style = "color: #1B3A6B;", HTML("&#128204; Total Available: 38 Plots")),
                                                           tags$br(),
                                                           tags$small(style = "color: #666;", HTML("&#10024; = Newly added to report generation")),
                                                           tags$br(),

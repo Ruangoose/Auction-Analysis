@@ -233,22 +233,37 @@ collect_report_charts <- function(processed_data, filtered_data, filtered_data_w
                     generate_auction_sentiment_gauge(filtered_data, list())
                 } else { NULL }
             },
-            # ✨ NEW PLOT
-            auction_success_factors = function() {
+            # Auction Demand Trend (Concession)
+            concession_trend = function() {
                 if(!is.null(filtered_data) && nrow(filtered_data) > 0) {
-                    generate_auction_success_factors_plot(filtered_data, list())
+                    create_concession_trend_chart(filtered_data, list())
                 } else { NULL }
             }
         ),
         intelligence = list(
-            correlation = function() {
-                if(!is.null(filtered_data) && length(unique(filtered_data$bond)) > 2) {
-                    generate_enhanced_correlation_plot(filtered_data, list())
+            yield_percentile = function() {
+                if(!is.null(filtered_data) && nrow(filtered_data) > 0) {
+                    generate_yield_percentile_heatmap(filtered_data, list())
                 } else { NULL }
             },
-            term_structure = function() {
-                if(!is.null(filtered_data) && nrow(filtered_data) > 10) {
-                    generate_term_structure_3d_plot(filtered_data, list())
+            rate_of_change = function() {
+                if(!is.null(filtered_data) && nrow(filtered_data) > 0) {
+                    generate_rate_of_change_monitor(filtered_data, list())
+                } else { NULL }
+            },
+            curve_comparison = function() {
+                if(!is.null(filtered_data) && nrow(filtered_data) > 0) {
+                    generate_curve_comparison_plot(filtered_data, list())
+                } else { NULL }
+            },
+            curve_steepness = function() {
+                if(!is.null(filtered_data) && nrow(filtered_data) > 0) {
+                    generate_curve_steepness_gauge(filtered_data, list())
+                } else { NULL }
+            },
+            regime_probability = function() {
+                if(!is.null(regime_data) && nrow(regime_data) > 0) {
+                    generate_regime_probability_gauge(regime_data, list())
                 } else { NULL }
             }
         ),
@@ -1333,10 +1348,11 @@ create_html_report_template <- function(charts, summaries, sections, config, auc
         risk = c("var_distribution", "var_ladder", "dv01_ladder"),
         technical = c("technical_plot", "signal_matrix"),
         carry = c("carry_heatmap", "scenario_analysis", "butterfly_spread", "forward_curve"),
-        auction = c("auction_performance", "auction_patterns", "auction_forecast",
-                     "demand_elasticity", "success_probability", "bid_distribution",
-                     "ytd_issuance", "auction_sentiment", "auction_success_factors"),
-        intelligence = c("correlation", "term_structure"),
+        auction = c("auction_performance", "auction_patterns", "concession_trend",
+                     "auction_forecast", "demand_elasticity", "success_probability",
+                     "bid_distribution", "ytd_issuance", "auction_sentiment"),
+        intelligence = c("yield_percentile", "rate_of_change", "curve_comparison",
+                          "curve_steepness", "regime_probability"),
         treasury = c("holdings_area", "sector_trend", "holdings_fixed", "holdings_ilb",
                       "holdings_frn", "holdings_sukuk", "ownership_changes",
                       "holdings_diverging_fixed", "holdings_diverging_ilb")
@@ -3956,10 +3972,11 @@ generate_custom_report_pdf <- function(output_path, config, report_data, logo_gr
         risk = c("var_distribution", "var_ladder", "dv01_ladder"),
         technical = c("technical_plot", "signal_matrix"),
         carry = c("carry_heatmap", "scenario_analysis", "butterfly_spread", "forward_curve"),
-        auction = c("auction_performance", "auction_patterns", "auction_forecast",
-                     "demand_elasticity", "success_probability", "bid_distribution",
-                     "ytd_issuance", "auction_sentiment", "auction_success_factors"),
-        intelligence = c("correlation", "term_structure"),
+        auction = c("auction_performance", "auction_patterns", "concession_trend",
+                     "auction_forecast", "demand_elasticity", "success_probability",
+                     "bid_distribution", "ytd_issuance", "auction_sentiment"),
+        intelligence = c("yield_percentile", "rate_of_change", "curve_comparison",
+                          "curve_steepness", "regime_probability"),
         treasury = c("holdings_area", "sector_trend", "holdings_fixed", "holdings_ilb",
                       "holdings_frn", "holdings_sukuk", "ownership_changes",
                       "holdings_diverging_fixed", "holdings_diverging_ilb")
@@ -3989,9 +4006,12 @@ generate_custom_report_pdf <- function(output_path, config, report_data, logo_gr
         bid_distribution = "Bid Distribution",
         ytd_issuance = "YTD Issuance",
         auction_sentiment = "Auction Sentiment",
-        auction_success_factors = "Auction Success Factors",
-        correlation = "Correlation Matrix",
-        term_structure = "Term Structure Evolution",
+        concession_trend = "Auction Demand Trend",
+        yield_percentile = "Yield Percentile Heatmap",
+        rate_of_change = "Rate of Change Monitor",
+        curve_comparison = "Curve Comparison",
+        curve_steepness = "Curve Steepness Gauge",
+        regime_probability = "Regime Probability Gauge",
         holdings_area = "Aggregate Holdings",
         sector_trend = "Sector Trend",
         holdings_fixed = "Fixed Rate Holdings",
