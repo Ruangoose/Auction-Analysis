@@ -2045,12 +2045,21 @@ server <- function(input, output, session) {
         zscore_thresh <- input$butterfly_report_zscore %||% 2.0
         show_neutral <- isTRUE(input$butterfly_report_show_neutral)
 
-        # Filter and sort
-        filtered <- summary_df
+        # Filter and sort — also remove rows with NA in key columns to prevent
+        # "NAs are not allowed in subscripted assignments" error in updatePickerInput
+        filtered <- summary_df %>%
+            dplyr::filter(!is.na(Trade), !is.na(Z_Score), !is.na(Signal))
         if (!show_neutral) {
             filtered <- filtered %>% dplyr::filter(abs(Z_Score) >= zscore_thresh)
         }
         filtered <- filtered %>% dplyr::arrange(desc(abs(Z_Score)))
+
+        # If no valid butterflies remain after filtering, clear the picker
+        if (nrow(filtered) == 0) {
+            shinyWidgets::updatePickerInput(session, "butterfly_report_spreads",
+                          choices = character(0), selected = character(0))
+            return()
+        }
 
         # Build choices: "R2032-R2035-R2040 (Z: -2.3, SELL WINGS)"
         spread_names <- gsub("Butterfly: ", "", filtered$Trade)
