@@ -2048,15 +2048,15 @@ server <- function(input, output, session) {
         # Filter and sort
         filtered <- summary_df
         if (!show_neutral) {
-            filtered <- filtered %>% dplyr::filter(abs(`Z-Score`) >= zscore_thresh)
+            filtered <- filtered %>% dplyr::filter(abs(Z_Score) >= zscore_thresh)
         }
-        filtered <- filtered %>% dplyr::arrange(desc(abs(`Z-Score`)))
+        filtered <- filtered %>% dplyr::arrange(desc(abs(Z_Score)))
 
         # Build choices: "R2032-R2035-R2040 (Z: -2.3, SELL WINGS)"
         spread_names <- gsub("Butterfly: ", "", filtered$Trade)
         choice_labels <- sprintf("%s (Z: %.1f, %s)",
                                  spread_names,
-                                 filtered$`Z-Score`,
+                                 filtered$Z_Score,
                                  filtered$Signal)
         choices <- setNames(spread_names, choice_labels)
 
