@@ -3951,6 +3951,8 @@ This report covers %s to support investment decision-making.
 #' @param logo_grob Pre-loaded logo grob (or NULL)
 #' @return List with success (logical), page_labels (character vector), sections_included (character vector), n_pages (integer)
 generate_custom_report_pdf <- function(output_path, config, report_data, logo_grob) {
+    require(gridExtra)
+    require(grid)
 
     # Section display names
     section_names <- c(
