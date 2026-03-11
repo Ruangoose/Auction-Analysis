@@ -2045,6 +2045,16 @@ server <- function(input, output, session) {
         zscore_thresh <- input$butterfly_report_zscore %||% 2.0
         show_neutral <- isTRUE(input$butterfly_report_show_neutral)
 
+        # Derive Signal from Z_Score (same logic as butterfly DT table rendering)
+        summary_df <- summary_df %>%
+            dplyr::mutate(
+                Signal = dplyr::case_when(
+                    Z_Score > zscore_thresh ~ "SELL WINGS / BUY BODY",
+                    Z_Score < -zscore_thresh ~ "BUY WINGS / SELL BODY",
+                    TRUE ~ "NEUTRAL"
+                )
+            )
+
         # Filter and sort — also remove rows with NA in key columns to prevent
         # "NAs are not allowed in subscripted assignments" error in updatePickerInput
         filtered <- summary_df %>%
