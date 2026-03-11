@@ -2799,11 +2799,10 @@ ui <- dashboardPage(
                                                   selectInput("report_type", "Report Type:",
                                                               choices = list(
                                                                   "Pre-Auction Report" = "pre_auction",
-                                                                  "Executive Summary" = "executive",
-                                                                  "Trading Desk Report" = "trading",
-                                                                  "Risk Committee Report" = "risk",
-                                                                  "Client Portfolio Review" = "client",
                                                                   "Treasury Holdings Report" = "treasury",
+                                                                  "Technical Analysis Report" = "technical_report",
+                                                                  "Butterfly Spread Report" = "butterfly_report",
+                                                                  "Relative Value Report" = "relative_value_report",
                                                                   "Custom Report" = "custom"
                                                               ),
                                                               selected = "pre_auction"),
@@ -2867,8 +2866,163 @@ ui <- dashboardPage(
 
                                                   # Enhanced section/plot selector with nested checkboxes
                                                   # Hidden when pre_auction report type is selected
+                                                  # ═══════════════════════════════════════════════════════════
+                                                  # TECHNICAL ANALYSIS REPORT CONFIGURATION
+                                                  # ═══════════════════════════════════════════════════════════
                                                   conditionalPanel(
-                                                      condition = "input.report_type != 'pre_auction'",
+                                                      condition = "input.report_type == 'technical_report'",
+
+                                                      # Bond selector — dynamic, multi-select from available bonds
+                                                      shinyWidgets::pickerInput("tech_report_bonds", "Select Bonds:",
+                                                          choices = NULL,
+                                                          multiple = TRUE,
+                                                          options = list(`actions-box` = TRUE, `live-search` = TRUE)),
+
+                                                      # Chart type selector — which technical charts to include
+                                                      checkboxGroupInput("tech_report_charts", "Include Charts:",
+                                                          choices = list(
+                                                              "Advanced Technical Plot (per bond)" = "technical_plot",
+                                                              "Trading Signal Matrix" = "signal_matrix"
+                                                          ),
+                                                          selected = c("technical_plot", "signal_matrix")),
+
+                                                      # Indicator type for per-bond plots
+                                                      selectInput("tech_report_indicator", "Indicator Type:",
+                                                          choices = list(
+                                                              "All Indicators" = "all",
+                                                              "Volatility (Bollinger Bands)" = "volatility",
+                                                              "Mean Reversion (Moving Averages)" = "mean_reversion",
+                                                              "Momentum (RSI/MACD)" = "momentum"
+                                                          ),
+                                                          selected = "all"),
+
+                                                      # Optional commentary section
+                                                      tags$hr(),
+                                                      h5("Commentary (optional)"),
+                                                      radioButtons("tech_report_commentary_mode", NULL,
+                                                          choices = list(
+                                                              "No commentary" = "none",
+                                                              "Manual write-up" = "manual",
+                                                              "Auto-generated summary" = "auto"
+                                                          ),
+                                                          selected = "none"),
+
+                                                      conditionalPanel(
+                                                          condition = "input.tech_report_commentary_mode == 'manual'",
+                                                          textAreaInput("tech_report_commentary", "Your Commentary:",
+                                                              placeholder = "Enter your technical analysis commentary here...",
+                                                              rows = 6, width = "100%")
+                                                      )
+                                                  ),
+
+                                                  # ═══════════════════════════════════════════════════════════
+                                                  # BUTTERFLY SPREAD REPORT CONFIGURATION
+                                                  # ═══════════════════════════════════════════════════════════
+                                                  conditionalPanel(
+                                                      condition = "input.report_type == 'butterfly_report'",
+
+                                                      # Info text
+                                                      tags$p(style = "color: #666; font-style: italic;",
+                                                          "Generates report from Butterfly Spread Analyzer. ",
+                                                          "Run the analyzer first in the Carry & Roll tab."),
+
+                                                      # Butterfly spread selector
+                                                      shinyWidgets::pickerInput("butterfly_report_spreads", "Select Spreads:",
+                                                          choices = NULL,
+                                                          multiple = TRUE,
+                                                          options = list(`actions-box` = TRUE, `live-search` = TRUE,
+                                                                         `max-options` = 10)),
+
+                                                      # Filter toggle
+                                                      checkboxInput("butterfly_report_show_neutral",
+                                                          "Include neutral signals", value = FALSE),
+
+                                                      # Z-Score threshold
+                                                      numericInput("butterfly_report_zscore", "Z-Score Threshold:",
+                                                          value = 2.0, min = 0.5, max = 4.0, step = 0.25),
+
+                                                      # Include summary table page
+                                                      checkboxInput("butterfly_report_include_table",
+                                                          "Include summary statistics table", value = TRUE),
+
+                                                      # Optional commentary
+                                                      tags$hr(),
+                                                      h5("Commentary (optional)"),
+                                                      radioButtons("butterfly_report_commentary_mode", NULL,
+                                                          choices = list(
+                                                              "No commentary" = "none",
+                                                              "Manual write-up" = "manual",
+                                                              "Auto-generated summary" = "auto"
+                                                          ),
+                                                          selected = "none"),
+
+                                                      conditionalPanel(
+                                                          condition = "input.butterfly_report_commentary_mode == 'manual'",
+                                                          textAreaInput("butterfly_report_commentary", "Your Commentary:",
+                                                              placeholder = "Enter your butterfly spread commentary here...",
+                                                              rows = 6, width = "100%")
+                                                      )
+                                                  ),
+
+                                                  # ═══════════════════════════════════════════════════════════
+                                                  # RELATIVE VALUE REPORT CONFIGURATION
+                                                  # ═══════════════════════════════════════════════════════════
+                                                  conditionalPanel(
+                                                      condition = "input.report_type == 'relative_value_report'",
+
+                                                      # Chart selection
+                                                      checkboxGroupInput("rv_report_charts", "Include Charts:",
+                                                          choices = list(
+                                                              "Yield Curve (fitted)" = "yield_curve",
+                                                              "Relative Value Heatmap" = "relative_heatmap",
+                                                              "Z-Score Distribution" = "zscore_plot",
+                                                              "Convexity Profile" = "convexity",
+                                                              "Relative Value Scanner (Rich/Cheap)" = "rv_scanner",
+                                                              "RV Summary Table" = "rv_table"
+                                                          ),
+                                                          selected = c("yield_curve", "relative_heatmap",
+                                                                       "zscore_plot", "rv_scanner", "rv_table")),
+
+                                                      # Curve model
+                                                      selectInput("rv_report_curve_model", "Curve Model:",
+                                                          choices = list(
+                                                              "LOESS" = "loess",
+                                                              "Polynomial (2nd degree)" = "poly2",
+                                                              "Polynomial (3rd degree)" = "poly3",
+                                                              "Nelson-Siegel" = "ns"
+                                                          ),
+                                                          selected = "loess"),
+
+                                                      # X-axis choice
+                                                      selectInput("rv_report_xaxis", "X-Axis:",
+                                                          choices = list(
+                                                              "Modified Duration" = "modified_duration",
+                                                              "Duration" = "duration",
+                                                              "Maturity (years)" = "maturity"
+                                                          ),
+                                                          selected = "modified_duration"),
+
+                                                      # Optional commentary
+                                                      tags$hr(),
+                                                      h5("Commentary (optional)"),
+                                                      radioButtons("rv_report_commentary_mode", NULL,
+                                                          choices = list(
+                                                              "No commentary" = "none",
+                                                              "Manual write-up" = "manual",
+                                                              "Auto-generated summary" = "auto"
+                                                          ),
+                                                          selected = "none"),
+
+                                                      conditionalPanel(
+                                                          condition = "input.rv_report_commentary_mode == 'manual'",
+                                                          textAreaInput("rv_report_commentary", "Your Commentary:",
+                                                              placeholder = "Enter your relative value commentary here...",
+                                                              rows = 6, width = "100%")
+                                                      )
+                                                  ),
+
+                                                  conditionalPanel(
+                                                      condition = "input.report_type == 'custom' || input.report_type == 'treasury'",
                                                   tags$div(
                                                       id = "section_plot_selector",
                                                       style = "max-height: 600px; overflow-y: auto; background: #f8f9fa; padding: 10px; border-radius: 5px;",
@@ -3065,7 +3219,7 @@ ui <- dashboardPage(
                                                           tags$small(style = "color: #666;", HTML("&#127974; = Treasury Holdings section"))
                                                       )
                                                   )
-                                                  ) # End conditionalPanel for non-pre_auction section checkboxes
+                                                  ) # End conditionalPanel for custom report section checkboxes
                                               )
                                        ),
                                        column(6,

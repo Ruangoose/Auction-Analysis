@@ -4460,3 +4460,1069 @@ generate_custom_report_pdf <- function(output_path, config, report_data, logo_gr
         ))
     })
 }
+
+
+# ================================================================================
+# AUTO-GENERATED COMMENTARY HELPER
+# ================================================================================
+#' Generate auto-commentary for new report types
+#'
+#' @param type Character: "technical", "butterfly", or "relative_value"
+#' @param data_list List of relevant data for that report type
+#' @return Character string of commentary paragraphs
+generate_auto_commentary <- function(type, data_list) {
+    lines <- character()
+
+    if (type == "technical") {
+        data <- data_list$data
+        selected_bonds <- data_list$selected_bonds
+
+        if (!is.null(data) && nrow(data) > 0) {
+            latest <- data %>%
+                dplyr::filter(bond %in% selected_bonds) %>%
+                dplyr::group_by(bond) %>%
+                dplyr::slice_max(date, n = 1) %>%
+                dplyr::ungroup()
+
+            if (nrow(latest) > 0) {
+                # Signal summary
+                if ("signal_strength" %in% names(latest)) {
+                    signal_counts <- table(latest$signal_strength)
+                    signal_str <- paste(sprintf("%s: %d", names(signal_counts), signal_counts), collapse = ", ")
+                    lines <- c(lines, sprintf("Technical Signal Summary: %s across %d bonds analysed.",
+                                              signal_str, nrow(latest)))
+                }
+
+                # RSI extremes
+                if ("rsi_14" %in% names(latest)) {
+                    overbought <- latest %>% dplyr::filter(rsi_14 > 70)
+                    oversold <- latest %>% dplyr::filter(rsi_14 < 30)
+                    if (nrow(overbought) > 0) {
+                        lines <- c(lines, sprintf("Overbought (RSI > 70): %s.",
+                                                  paste(overbought$bond, collapse = ", ")))
+                    }
+                    if (nrow(oversold) > 0) {
+                        lines <- c(lines, sprintf("Oversold (RSI < 30): %s.",
+                                                  paste(oversold$bond, collapse = ", ")))
+                    }
+                    if (nrow(overbought) == 0 && nrow(oversold) == 0) {
+                        lines <- c(lines, "No bonds showing extreme RSI readings (all within 30-70 range).")
+                    }
+                }
+
+                # Bollinger Band positioning
+                if ("bb_position" %in% names(latest)) {
+                    above_upper <- latest %>% dplyr::filter(bb_position > 1)
+                    below_lower <- latest %>% dplyr::filter(bb_position < 0)
+                    if (nrow(above_upper) > 0) {
+                        lines <- c(lines, sprintf("Trading above upper Bollinger Band: %s.",
+                                                  paste(above_upper$bond, collapse = ", ")))
+                    }
+                    if (nrow(below_lower) > 0) {
+                        lines <- c(lines, sprintf("Trading below lower Bollinger Band: %s.",
+                                                  paste(below_lower$bond, collapse = ", ")))
+                    }
+                }
+
+                # Overall posture
+                if ("signal_strength" %in% names(latest)) {
+                    bullish <- sum(latest$signal_strength %in% c("Strong Buy", "Buy"))
+                    bearish <- sum(latest$signal_strength %in% c("Strong Sell", "Sell"))
+                    neutral <- sum(latest$signal_strength == "Neutral")
+                    if (bullish > bearish) {
+                        lines <- c(lines, sprintf("Overall market posture: Bullish (%d bullish vs %d bearish signals).", bullish, bearish))
+                    } else if (bearish > bullish) {
+                        lines <- c(lines, sprintf("Overall market posture: Bearish (%d bearish vs %d bullish signals).", bearish, bullish))
+                    } else {
+                        lines <- c(lines, sprintf("Overall market posture: Mixed (%d bullish, %d bearish, %d neutral).", bullish, bearish, neutral))
+                    }
+                }
+            }
+        }
+    }
+
+    if (type == "butterfly") {
+        summary_df <- data_list$butterfly_summary
+        zscore_threshold <- data_list$zscore_threshold %||% 2.0
+
+        if (!is.null(summary_df) && nrow(summary_df) > 0) {
+            actionable <- summary_df %>% dplyr::filter(abs(`Z-Score`) >= zscore_threshold)
+            neutral <- summary_df %>% dplyr::filter(abs(`Z-Score`) < zscore_threshold)
+
+            lines <- c(lines, sprintf("Butterfly Spread Analysis: %d total spreads analysed, %d actionable (|Z-Score| >= %.1f), %d neutral.",
+                                      nrow(summary_df), nrow(actionable), zscore_threshold, nrow(neutral)))
+
+            if (nrow(actionable) > 0) {
+                top_spread <- actionable %>% dplyr::arrange(desc(abs(`Z-Score`))) %>% dplyr::slice(1)
+                trade_name <- gsub("Butterfly: ", "", top_spread$Trade)
+                lines <- c(lines, sprintf("Strongest signal: %s with Z-Score of %.2f (%s).",
+                                          trade_name, top_spread$`Z-Score`, top_spread$Signal))
+
+                buy_wings <- actionable %>% dplyr::filter(grepl("BUY", Signal, ignore.case = TRUE))
+                sell_wings <- actionable %>% dplyr::filter(grepl("SELL", Signal, ignore.case = TRUE))
+                if (nrow(buy_wings) > 0 && nrow(sell_wings) > 0) {
+                    lines <- c(lines, sprintf("Signal split: %d BUY WINGS, %d SELL WINGS.", nrow(buy_wings), nrow(sell_wings)))
+                } else if (nrow(buy_wings) > 0) {
+                    lines <- c(lines, sprintf("All %d actionable spreads signal BUY WINGS.", nrow(buy_wings)))
+                } else if (nrow(sell_wings) > 0) {
+                    lines <- c(lines, sprintf("All %d actionable spreads signal SELL WINGS.", nrow(sell_wings)))
+                }
+            }
+
+            # Stationarity check
+            if ("Stationary" %in% names(summary_df)) {
+                stationary_count <- sum(grepl("Yes", summary_df$Stationary, ignore.case = TRUE))
+                lines <- c(lines, sprintf("Mean-reversion reliability: %d of %d spreads are stationary (ADF test), supporting mean-reversion strategies.",
+                                          stationary_count, nrow(summary_df)))
+            }
+        }
+    }
+
+    if (type == "relative_value") {
+        processed_data <- data_list$processed_data
+        rv_table <- data_list$rv_table
+
+        if (!is.null(rv_table) && nrow(rv_table) > 0) {
+            # Count rich/cheap/fair
+            if ("Recommendation" %in% names(rv_table)) {
+                buys <- rv_table %>% dplyr::filter(grepl("Buy|Strong Buy", Recommendation))
+                sells <- rv_table %>% dplyr::filter(grepl("Underweight|Avoid", Recommendation))
+                neutrals <- rv_table %>% dplyr::filter(grepl("Neutral", Recommendation))
+
+                lines <- c(lines, sprintf("Relative Value Summary: %d cheap (buy candidates), %d rich (underweight), %d fair value across %d bonds.",
+                                          nrow(buys), nrow(sells), nrow(neutrals), nrow(rv_table)))
+
+                # Top rich and cheap
+                if ("RV Score" %in% names(rv_table)) {
+                    top_cheap <- rv_table %>% dplyr::arrange(desc(`RV Score`)) %>% dplyr::slice(1)
+                    top_rich <- rv_table %>% dplyr::arrange(`RV Score`) %>% dplyr::slice(1)
+                    lines <- c(lines, sprintf("Most attractive: %s (RV Score: %.2f, %s).",
+                                              top_cheap$Bond, top_cheap$`RV Score`, top_cheap$Recommendation))
+                    lines <- c(lines, sprintf("Most expensive: %s (RV Score: %.2f, %s).",
+                                              top_rich$Bond, top_rich$`RV Score`, top_rich$Recommendation))
+                }
+            }
+
+            # Curve spread (vs Curve bps)
+            if ("vs Curve (bps)" %in% names(rv_table)) {
+                avg_spread <- mean(rv_table$`vs Curve (bps)`, na.rm = TRUE)
+                if (avg_spread > 5) {
+                    lines <- c(lines, sprintf("Average spread to curve: +%.1f bps. Market appears cheap vs fitted curve.", avg_spread))
+                } else if (avg_spread < -5) {
+                    lines <- c(lines, sprintf("Average spread to curve: %.1f bps. Market appears rich vs fitted curve.", avg_spread))
+                } else {
+                    lines <- c(lines, "Bonds are generally trading close to the fitted curve.")
+                }
+            }
+        }
+
+        # Z-score extremes
+        if (!is.null(processed_data) && "z_score" %in% names(processed_data)) {
+            latest <- processed_data %>%
+                dplyr::group_by(bond) %>%
+                dplyr::slice_max(date, n = 1) %>%
+                dplyr::ungroup()
+            extreme <- latest %>% dplyr::filter(abs(z_score) >= 2)
+            if (nrow(extreme) > 0) {
+                lines <- c(lines, sprintf("Notable Z-score extremes: %s.",
+                    paste(sprintf("%s (%.1f)", extreme$bond, extreme$z_score), collapse = ", ")))
+            }
+        }
+    }
+
+    if (length(lines) == 0) {
+        lines <- "Auto-generated commentary not available — insufficient data for analysis."
+    }
+
+    return(paste(lines, collapse = "\n\n"))
+}
+
+
+# ================================================================================
+# TECHNICAL ANALYSIS REPORT PDF GENERATOR
+# ================================================================================
+#' Generate a Technical Analysis Report PDF
+#'
+#' @param file Output file path
+#' @param selected_bonds Character vector of bond names
+#' @param indicator_type "all", "volatility", "mean_reversion", "momentum"
+#' @param include_signal_matrix Logical
+#' @param include_technical_plots Logical
+#' @param commentary_mode "none", "manual", "auto"
+#' @param commentary_text Character (for manual mode)
+#' @param data Full data with technical indicators
+#' @param logo_grob Pre-loaded logo grob
+generate_technical_analysis_pdf <- function(file, selected_bonds, indicator_type = "all",
+                                            include_signal_matrix = TRUE,
+                                            include_technical_plots = TRUE,
+                                            commentary_mode = "none",
+                                            commentary_text = "",
+                                            data, logo_grob) {
+    require(gridExtra)
+    require(grid)
+
+    temp_dir <- tempdir()
+    temp_pdf <- file.path(temp_dir, paste0("technical_report_", Sys.getpid(), ".pdf"))
+
+    # Helper: add footer to each page
+    add_footer <- function(page_num, total) {
+        grid.text(
+            sprintf("(c) %s Insele Capital Partners - Confidential", format(Sys.Date(), "%Y")),
+            x = 0.5, y = 0.02,
+            gp = gpar(fontsize = 8, col = "#999999")
+        )
+        grid.text(
+            sprintf("Page %d of %d", page_num, total),
+            x = 0.95, y = 0.02,
+            gp = gpar(fontsize = 8, col = "#999999")
+        )
+    }
+
+    # Helper: draw page header bar
+    draw_page_header <- function(title) {
+        grid.rect(x = 0.5, y = 0.96, width = 1, height = 0.06,
+                  gp = gpar(fill = "#1B3A6B", col = NA))
+        grid.text(title, x = 0.5, y = 0.96,
+                  gp = gpar(fontsize = 16, fontface = 2, col = "white"))
+    }
+
+    # Helper: safely render a ggplot to a rasterGrob via temp PNG
+    render_chart_to_grob <- function(chart_expr, width = 10, height = 6, dpi = 150) {
+        tryCatch({
+            p <- chart_expr
+            if (is.null(p)) return(NULL)
+            temp_png <- tempfile(fileext = ".png")
+            ggsave(temp_png, p, width = width, height = height, dpi = dpi, bg = "white")
+            img <- png::readPNG(temp_png)
+            grob <- grid::rasterGrob(img, interpolate = TRUE)
+            unlink(temp_png)
+            return(grob)
+        }, error = function(e) {
+            message(sprintf("[TECHNICAL PDF] Chart render error: %s", e$message))
+            return(NULL)
+        })
+    }
+
+    # ══════════════════════════════════════════════════════════════════
+    # PRE-RENDER all charts BEFORE opening PDF device
+    # ══════════════════════════════════════════════════════════════════
+    message("[TECHNICAL PDF] Pre-rendering charts...")
+
+    pages <- list()
+
+    # Cover page (always)
+    pages[[length(pages) + 1]] <- list(type = "cover", label = "Cover Page")
+
+    # Signal matrix
+    signal_matrix_grob <- NULL
+    if (include_signal_matrix) {
+        signal_matrix_grob <- tryCatch({
+            # Filter data to selected bonds
+            matrix_data <- data %>% dplyr::filter(bond %in% selected_bonds)
+            render_chart_to_grob(generate_signal_matrix_heatmap(matrix_data), width = 11, height = 7)
+        }, error = function(e) {
+            message(sprintf("[TECHNICAL PDF] Signal matrix error: %s", e$message))
+            NULL
+        })
+        if (!is.null(signal_matrix_grob)) {
+            pages[[length(pages) + 1]] <- list(type = "chart", grob = signal_matrix_grob,
+                                                label = "Trading Signal Matrix")
+        }
+    }
+
+    # Per-bond technical plots
+    bond_grobs <- list()
+    if (include_technical_plots) {
+        for (bond_name in selected_bonds) {
+            grob <- tryCatch({
+                render_chart_to_grob(
+                    generate_advanced_technical_plot(data, bond_name, indicator_type),
+                    width = 11, height = 7
+                )
+            }, error = function(e) {
+                message(sprintf("[TECHNICAL PDF] Bond %s chart error: %s", bond_name, e$message))
+                NULL
+            })
+            if (!is.null(grob)) {
+                bond_grobs[[bond_name]] <- grob
+                pages[[length(pages) + 1]] <- list(type = "chart", grob = grob,
+                                                    label = paste("Technical Analysis:", bond_name))
+            }
+        }
+    }
+
+    # Commentary page
+    has_commentary <- commentary_mode != "none"
+    commentary_final <- ""
+    if (commentary_mode == "manual" && nchar(commentary_text) > 0) {
+        commentary_final <- commentary_text
+    } else if (commentary_mode == "auto") {
+        commentary_final <- generate_auto_commentary("technical", list(
+            data = data, selected_bonds = selected_bonds
+        ))
+    }
+    if (has_commentary && nchar(commentary_final) > 0) {
+        pages[[length(pages) + 1]] <- list(type = "commentary", label = "Commentary")
+    }
+
+    # Disclaimer page
+    pages[[length(pages) + 1]] <- list(type = "disclaimer", label = "Disclaimer")
+
+    total_pages <- length(pages)
+
+    # ══════════════════════════════════════════════════════════════════
+    # RENDER PDF
+    # ══════════════════════════════════════════════════════════════════
+    tryCatch({
+        pdf(temp_pdf, width = 11, height = 8.5)
+
+        page_num <- 0
+        page_labels <- character()
+
+        for (pg in pages) {
+            grid.newpage()
+            page_num <- page_num + 1
+            page_labels <- c(page_labels, pg$label)
+
+            if (pg$type == "cover") {
+                # ─── COVER PAGE ───
+                grid.rect(x = unit(0.175, "npc"), y = unit(0.53, "npc"),
+                          width = unit(0.35, "npc"), height = unit(0.94, "npc"),
+                          gp = gpar(fill = "#1B3A6B", col = NA))
+                grid.circle(x = unit(-0.02, "npc"), y = unit(0.08, "npc"),
+                            r = unit(0.22, "npc"),
+                            gp = gpar(fill = adjustcolor("#2B4F7F", alpha.f = 0.25), col = NA))
+                grid.lines(x = c(0.03, 0.32), y = c(0.15, 0.15),
+                           gp = gpar(col = adjustcolor("#E8913A", alpha.f = 0.6), lwd = 3))
+
+                if (!is.null(logo_grob)) {
+                    pushViewport(viewport(x = 0.42, y = 0.90, width = 0.42, height = 0.14,
+                                          just = c("left", "center")))
+                    grid.draw(logo_grob)
+                    popViewport()
+                } else {
+                    grid.text("INSELE CAPITAL PARTNERS", x = 0.42, y = 0.89, just = "left",
+                              gp = gpar(fontsize = 20, fontface = 2, col = "#1B3A6B"))
+                    grid.text("BROKING SERVICES", x = 0.42, y = 0.85, just = "left",
+                              gp = gpar(fontsize = 12, col = "#5B7B8A"))
+                }
+
+                grid.lines(x = c(0.38, 0.92), y = c(0.81, 0.81),
+                           gp = gpar(col = "#E8913A", lwd = 3))
+
+                grid.text("TECHNICAL", x = 0.42, y = 0.72, just = "left",
+                          gp = gpar(fontsize = 36, fontface = 2, col = "#1B3A6B"))
+                grid.text("ANALYSIS", x = 0.42, y = 0.64, just = "left",
+                          gp = gpar(fontsize = 36, fontface = 2, col = "#1B3A6B"))
+                grid.text("REPORT", x = 0.42, y = 0.56, just = "left",
+                          gp = gpar(fontsize = 36, fontface = 2, col = "#1B3A6B"))
+
+                grid.text(format(Sys.Date(), "%A, %B %d, %Y"),
+                          x = 0.42, y = 0.46, just = "left",
+                          gp = gpar(fontsize = 16, col = "#E8913A"))
+                grid.text(paste("Bonds:", paste(selected_bonds, collapse = ", ")),
+                          x = 0.42, y = 0.38, just = "left",
+                          gp = gpar(fontsize = 14, col = "#333333"))
+                grid.text(paste("Indicator:", switch(indicator_type,
+                    "all" = "All Indicators", "volatility" = "Volatility (Bollinger Bands)",
+                    "mean_reversion" = "Mean Reversion (Moving Averages)",
+                    "momentum" = "Momentum (RSI/MACD)", indicator_type)),
+                    x = 0.42, y = 0.31, just = "left",
+                    gp = gpar(fontsize = 13, fontface = 3, col = "#666666"))
+
+                # Navy footer bar
+                grid.rect(x = unit(0.5, "npc"), y = unit(0.03, "npc"),
+                          width = unit(1, "npc"), height = unit(0.06, "npc"),
+                          gp = gpar(fill = "#1B3A6B", col = NA))
+                grid.text("www.insele.capital", x = 0.10, y = 0.03, just = "left",
+                          gp = gpar(fontsize = 9, col = "white"))
+                grid.text("+27 11 286 1949", x = 0.35, y = 0.03,
+                          gp = gpar(fontsize = 9, col = "white"))
+                grid.text("bonds@insele.capital", x = 0.60, y = 0.03,
+                          gp = gpar(fontsize = 9, col = "white"))
+                grid.text("Prepared by: Insele Capital Partners", x = 0.90, y = 0.03, just = "right",
+                          gp = gpar(fontsize = 9, col = "white"))
+
+            } else if (pg$type == "chart") {
+                draw_page_header(pg$label)
+                pushViewport(viewport(x = 0.5, y = 0.47, width = 0.92, height = 0.82))
+                grid.draw(pg$grob)
+                popViewport()
+                add_footer(page_num, total_pages)
+
+            } else if (pg$type == "commentary") {
+                draw_page_header("Commentary")
+                wrapped <- strwrap(commentary_final, width = 90)
+                commentary_formatted <- paste(wrapped, collapse = "\n")
+                grid.text(commentary_formatted,
+                          x = 0.08, y = 0.85, just = c("left", "top"),
+                          gp = gpar(fontsize = 11, col = "#333333", lineheight = 1.4,
+                                    fontfamily = "sans"))
+                add_footer(page_num, total_pages)
+
+            } else if (pg$type == "disclaimer") {
+                draw_page_header("Disclaimer")
+                disclaimer_text <- paste(
+                    "This report is produced by Insele Capital Partners for informational purposes only.",
+                    "It does not constitute investment advice, a solicitation, or an offer to buy or sell any securities.",
+                    "The information contained herein is based on sources believed to be reliable, but no representation",
+                    "or warranty, express or implied, is made as to its accuracy or completeness.",
+                    "",
+                    "Past performance is not indicative of future results. Technical indicators and signals are",
+                    "mathematical calculations based on historical price and volume data and should not be relied upon",
+                    "as the sole basis for investment decisions.",
+                    "",
+                    "Insele Capital Partners, its directors, employees and associates may have positions in securities",
+                    "discussed in this report. This report is confidential and intended solely for the recipient.",
+                    "Do not distribute without authorisation.",
+                    sep = "\n"
+                )
+                wrapped <- strwrap(disclaimer_text, width = 90)
+                grid.text(paste(wrapped, collapse = "\n"),
+                          x = 0.08, y = 0.82, just = c("left", "top"),
+                          gp = gpar(fontsize = 10, col = "#666666", lineheight = 1.5,
+                                    fontfamily = "sans"))
+                add_footer(page_num, total_pages)
+            }
+        }
+
+        dev.off()
+
+        # Copy to output location
+        file.copy(temp_pdf, file, overwrite = TRUE)
+        unlink(temp_pdf)
+
+        message(sprintf("[TECHNICAL PDF] Generated %d pages successfully.", total_pages))
+        return(list(success = TRUE, page_labels = page_labels, n_pages = total_pages))
+
+    }, error = function(e) {
+        message(sprintf("[TECHNICAL PDF] Error: %s", e$message))
+        while (dev.cur() > 1) { try(dev.off(), silent = TRUE) }
+        return(list(success = FALSE, page_labels = character(), n_pages = 0))
+    })
+}
+
+
+# ================================================================================
+# BUTTERFLY SPREAD REPORT PDF GENERATOR
+# ================================================================================
+#' Generate a Butterfly Spread Report PDF
+#'
+#' @param file Output file path
+#' @param selected_spreads Character vector of spread names
+#' @param butterfly_details List from butterfly_data()$details
+#' @param butterfly_summary Data frame from butterfly_data()$summary
+#' @param zscore_threshold Z-Score threshold for signals
+#' @param include_table Logical, include summary table
+#' @param commentary_mode "none", "manual", "auto"
+#' @param commentary_text Character (for manual mode)
+#' @param logo_grob Pre-loaded logo grob
+generate_butterfly_report_pdf <- function(file, selected_spreads, butterfly_details,
+                                          butterfly_summary, zscore_threshold = 2.0,
+                                          include_table = TRUE,
+                                          commentary_mode = "none",
+                                          commentary_text = "",
+                                          logo_grob) {
+    require(gridExtra)
+    require(grid)
+
+    temp_dir <- tempdir()
+    temp_pdf <- file.path(temp_dir, paste0("butterfly_report_", Sys.getpid(), ".pdf"))
+
+    # Helper: add footer
+    add_footer <- function(page_num, total) {
+        grid.text(
+            sprintf("(c) %s Insele Capital Partners - Confidential", format(Sys.Date(), "%Y")),
+            x = 0.5, y = 0.02,
+            gp = gpar(fontsize = 8, col = "#999999")
+        )
+        grid.text(
+            sprintf("Page %d of %d", page_num, total),
+            x = 0.95, y = 0.02,
+            gp = gpar(fontsize = 8, col = "#999999")
+        )
+    }
+
+    # Helper: draw page header bar
+    draw_page_header <- function(title) {
+        grid.rect(x = 0.5, y = 0.96, width = 1, height = 0.06,
+                  gp = gpar(fill = "#1B3A6B", col = NA))
+        grid.text(title, x = 0.5, y = 0.96,
+                  gp = gpar(fontsize = 16, fontface = 2, col = "white"))
+    }
+
+    # Helper: render chart to grob
+    render_chart_to_grob <- function(chart_expr, width = 10, height = 6, dpi = 150) {
+        tryCatch({
+            p <- chart_expr
+            if (is.null(p)) return(NULL)
+            temp_png <- tempfile(fileext = ".png")
+            ggsave(temp_png, p, width = width, height = height, dpi = dpi, bg = "white")
+            img <- png::readPNG(temp_png)
+            grob <- grid::rasterGrob(img, interpolate = TRUE)
+            unlink(temp_png)
+            return(grob)
+        }, error = function(e) {
+            message(sprintf("[BUTTERFLY PDF] Chart render error: %s", e$message))
+            return(NULL)
+        })
+    }
+
+    # ══════════════════════════════════════════════════════════════════
+    # PRE-RENDER all charts BEFORE opening PDF device
+    # ══════════════════════════════════════════════════════════════════
+    message("[BUTTERFLY PDF] Pre-rendering charts...")
+
+    pages <- list()
+
+    # Cover page
+    pages[[length(pages) + 1]] <- list(type = "cover", label = "Cover Page")
+
+    # Summary table page
+    table_grob <- NULL
+    if (include_table && !is.null(butterfly_summary) && nrow(butterfly_summary) > 0) {
+        tryCatch({
+            # Filter to selected spreads
+            spread_names_full <- gsub("Butterfly: ", "", butterfly_summary$Trade)
+            selected_rows <- butterfly_summary[spread_names_full %in% selected_spreads, ]
+
+            if (nrow(selected_rows) > 0) {
+                selected_rows <- selected_rows %>% dplyr::arrange(desc(abs(`Z-Score`)))
+
+                # Prepare display data
+                display_cols <- intersect(
+                    c("Trade", "Z-Score", "Signal", "Current Spread", "Mean", "Std Dev", "Stationary"),
+                    names(selected_rows)
+                )
+                display_df <- selected_rows[, display_cols, drop = FALSE]
+
+                # Convert to character for tableGrob
+                for (col in names(display_df)) {
+                    if (is.numeric(display_df[[col]])) {
+                        display_df[[col]] <- sprintf("%.2f", display_df[[col]])
+                    } else {
+                        display_df[[col]] <- as.character(display_df[[col]])
+                    }
+                }
+
+                # Determine signal colors for rows
+                signals <- selected_rows$Signal
+                row_colors <- ifelse(grepl("BUY", signals, ignore.case = TRUE), "#E8F5E9",
+                              ifelse(grepl("SELL", signals, ignore.case = TRUE), "#FFEBEE", "white"))
+                # Interleave with header
+                bg_fills <- rep(row_colors, length.out = nrow(display_df))
+
+                tt <- ttheme_minimal(
+                    core = list(fg_params = list(fontsize = 9),
+                                bg_params = list(fill = bg_fills)),
+                    colhead = list(fg_params = list(fontsize = 10, fontface = 2, col = "white"),
+                                   bg_params = list(fill = "#1B3A6B"))
+                )
+                table_grob <- tableGrob(display_df, rows = NULL, theme = tt)
+
+                pages[[length(pages) + 1]] <- list(type = "table", grob = table_grob,
+                                                    label = "Butterfly Spread Summary")
+            }
+        }, error = function(e) {
+            message(sprintf("[BUTTERFLY PDF] Table render error: %s", e$message))
+        })
+    }
+
+    # Per-spread chart pages
+    spread_grobs <- list()
+    for (spread_name in selected_spreads) {
+        bf <- butterfly_details[[spread_name]]
+        if (!is.null(bf)) {
+            grob <- tryCatch({
+                render_chart_to_grob(
+                    generate_butterfly_chart(bf, zscore_threshold),
+                    width = 11, height = 7
+                )
+            }, error = function(e) {
+                message(sprintf("[BUTTERFLY PDF] Spread %s chart error: %s", spread_name, e$message))
+                NULL
+            })
+            if (!is.null(grob)) {
+                spread_grobs[[spread_name]] <- grob
+                pages[[length(pages) + 1]] <- list(type = "chart", grob = grob,
+                                                    label = paste("Butterfly:", spread_name))
+            }
+        }
+    }
+
+    # Commentary page
+    has_commentary <- commentary_mode != "none"
+    commentary_final <- ""
+    if (commentary_mode == "manual" && nchar(commentary_text) > 0) {
+        commentary_final <- commentary_text
+    } else if (commentary_mode == "auto") {
+        commentary_final <- generate_auto_commentary("butterfly", list(
+            butterfly_summary = butterfly_summary,
+            zscore_threshold = zscore_threshold
+        ))
+    }
+    if (has_commentary && nchar(commentary_final) > 0) {
+        pages[[length(pages) + 1]] <- list(type = "commentary", label = "Commentary")
+    }
+
+    # Disclaimer page
+    pages[[length(pages) + 1]] <- list(type = "disclaimer", label = "Disclaimer")
+
+    total_pages <- length(pages)
+
+    # ══════════════════════════════════════════════════════════════════
+    # RENDER PDF
+    # ══════════════════════════════════════════════════════════════════
+    tryCatch({
+        pdf(temp_pdf, width = 11, height = 8.5)
+
+        page_num <- 0
+        page_labels <- character()
+
+        for (pg in pages) {
+            grid.newpage()
+            page_num <- page_num + 1
+            page_labels <- c(page_labels, pg$label)
+
+            if (pg$type == "cover") {
+                # ─── COVER PAGE ───
+                grid.rect(x = unit(0.175, "npc"), y = unit(0.53, "npc"),
+                          width = unit(0.35, "npc"), height = unit(0.94, "npc"),
+                          gp = gpar(fill = "#1B3A6B", col = NA))
+                grid.circle(x = unit(-0.02, "npc"), y = unit(0.08, "npc"),
+                            r = unit(0.22, "npc"),
+                            gp = gpar(fill = adjustcolor("#2B4F7F", alpha.f = 0.25), col = NA))
+                grid.lines(x = c(0.03, 0.32), y = c(0.15, 0.15),
+                           gp = gpar(col = adjustcolor("#E8913A", alpha.f = 0.6), lwd = 3))
+
+                if (!is.null(logo_grob)) {
+                    pushViewport(viewport(x = 0.42, y = 0.90, width = 0.42, height = 0.14,
+                                          just = c("left", "center")))
+                    grid.draw(logo_grob)
+                    popViewport()
+                } else {
+                    grid.text("INSELE CAPITAL PARTNERS", x = 0.42, y = 0.89, just = "left",
+                              gp = gpar(fontsize = 20, fontface = 2, col = "#1B3A6B"))
+                    grid.text("BROKING SERVICES", x = 0.42, y = 0.85, just = "left",
+                              gp = gpar(fontsize = 12, col = "#5B7B8A"))
+                }
+
+                grid.lines(x = c(0.38, 0.92), y = c(0.81, 0.81),
+                           gp = gpar(col = "#E8913A", lwd = 3))
+
+                grid.text("BUTTERFLY", x = 0.42, y = 0.72, just = "left",
+                          gp = gpar(fontsize = 36, fontface = 2, col = "#1B3A6B"))
+                grid.text("SPREAD", x = 0.42, y = 0.64, just = "left",
+                          gp = gpar(fontsize = 36, fontface = 2, col = "#1B3A6B"))
+                grid.text("ANALYSIS", x = 0.42, y = 0.56, just = "left",
+                          gp = gpar(fontsize = 36, fontface = 2, col = "#1B3A6B"))
+
+                grid.text(format(Sys.Date(), "%A, %B %d, %Y"),
+                          x = 0.42, y = 0.46, just = "left",
+                          gp = gpar(fontsize = 16, col = "#E8913A"))
+                grid.text(sprintf("%d Spreads | Z-Score Threshold: %.1f",
+                                  length(selected_spreads), zscore_threshold),
+                          x = 0.42, y = 0.38, just = "left",
+                          gp = gpar(fontsize = 14, col = "#333333"))
+
+                # Navy footer bar
+                grid.rect(x = unit(0.5, "npc"), y = unit(0.03, "npc"),
+                          width = unit(1, "npc"), height = unit(0.06, "npc"),
+                          gp = gpar(fill = "#1B3A6B", col = NA))
+                grid.text("www.insele.capital", x = 0.10, y = 0.03, just = "left",
+                          gp = gpar(fontsize = 9, col = "white"))
+                grid.text("+27 11 286 1949", x = 0.35, y = 0.03,
+                          gp = gpar(fontsize = 9, col = "white"))
+                grid.text("bonds@insele.capital", x = 0.60, y = 0.03,
+                          gp = gpar(fontsize = 9, col = "white"))
+                grid.text("Prepared by: Insele Capital Partners", x = 0.90, y = 0.03, just = "right",
+                          gp = gpar(fontsize = 9, col = "white"))
+
+            } else if (pg$type == "table") {
+                draw_page_header(pg$label)
+                pushViewport(viewport(x = 0.5, y = 0.47, width = 0.92, height = 0.80))
+                grid.draw(pg$grob)
+                popViewport()
+                add_footer(page_num, total_pages)
+
+            } else if (pg$type == "chart") {
+                draw_page_header(pg$label)
+                pushViewport(viewport(x = 0.5, y = 0.47, width = 0.92, height = 0.82))
+                grid.draw(pg$grob)
+                popViewport()
+                add_footer(page_num, total_pages)
+
+            } else if (pg$type == "commentary") {
+                draw_page_header("Commentary")
+                wrapped <- strwrap(commentary_final, width = 90)
+                commentary_formatted <- paste(wrapped, collapse = "\n")
+                grid.text(commentary_formatted,
+                          x = 0.08, y = 0.85, just = c("left", "top"),
+                          gp = gpar(fontsize = 11, col = "#333333", lineheight = 1.4,
+                                    fontfamily = "sans"))
+                add_footer(page_num, total_pages)
+
+            } else if (pg$type == "disclaimer") {
+                draw_page_header("Disclaimer")
+                disclaimer_text <- paste(
+                    "This report is produced by Insele Capital Partners for informational purposes only.",
+                    "It does not constitute investment advice, a solicitation, or an offer to buy or sell any securities.",
+                    "The information contained herein is based on sources believed to be reliable, but no representation",
+                    "or warranty, express or implied, is made as to its accuracy or completeness.",
+                    "",
+                    "Past performance is not indicative of future results. Butterfly spread analysis is based on",
+                    "historical yield relationships and statistical measures. Mean reversion is not guaranteed.",
+                    "",
+                    "Insele Capital Partners, its directors, employees and associates may have positions in securities",
+                    "discussed in this report. This report is confidential and intended solely for the recipient.",
+                    "Do not distribute without authorisation.",
+                    sep = "\n"
+                )
+                wrapped <- strwrap(disclaimer_text, width = 90)
+                grid.text(paste(wrapped, collapse = "\n"),
+                          x = 0.08, y = 0.82, just = c("left", "top"),
+                          gp = gpar(fontsize = 10, col = "#666666", lineheight = 1.5,
+                                    fontfamily = "sans"))
+                add_footer(page_num, total_pages)
+            }
+        }
+
+        dev.off()
+
+        file.copy(temp_pdf, file, overwrite = TRUE)
+        unlink(temp_pdf)
+
+        message(sprintf("[BUTTERFLY PDF] Generated %d pages successfully.", total_pages))
+        return(list(success = TRUE, page_labels = page_labels, n_pages = total_pages))
+
+    }, error = function(e) {
+        message(sprintf("[BUTTERFLY PDF] Error: %s", e$message))
+        while (dev.cur() > 1) { try(dev.off(), silent = TRUE) }
+        return(list(success = FALSE, page_labels = character(), n_pages = 0))
+    })
+}
+
+
+# ================================================================================
+# RELATIVE VALUE REPORT PDF GENERATOR
+# ================================================================================
+#' Generate a Relative Value Analysis Report PDF
+#'
+#' @param file Output file path
+#' @param selected_charts Character vector of chart IDs
+#' @param curve_model "loess", "poly2", "poly3", "ns"
+#' @param xaxis_choice "modified_duration", "duration", "maturity"
+#' @param commentary_mode "none", "manual", "auto"
+#' @param commentary_text Character (for manual mode)
+#' @param processed_data From processed_data() reactive
+#' @param filtered_data From filtered_data() reactive
+#' @param fitted_curve_data From fitted_curve_data() reactive
+#' @param logo_grob Pre-loaded logo grob
+generate_relative_value_pdf <- function(file, selected_charts, curve_model = "loess",
+                                        xaxis_choice = "modified_duration",
+                                        commentary_mode = "none",
+                                        commentary_text = "",
+                                        processed_data, filtered_data,
+                                        fitted_curve_data = NULL,
+                                        logo_grob) {
+    require(gridExtra)
+    require(grid)
+
+    temp_dir <- tempdir()
+    temp_pdf <- file.path(temp_dir, paste0("rv_report_", Sys.getpid(), ".pdf"))
+
+    # Helper: add footer
+    add_footer <- function(page_num, total) {
+        grid.text(
+            sprintf("(c) %s Insele Capital Partners - Confidential", format(Sys.Date(), "%Y")),
+            x = 0.5, y = 0.02,
+            gp = gpar(fontsize = 8, col = "#999999")
+        )
+        grid.text(
+            sprintf("Page %d of %d", page_num, total),
+            x = 0.95, y = 0.02,
+            gp = gpar(fontsize = 8, col = "#999999")
+        )
+    }
+
+    # Helper: draw page header bar
+    draw_page_header <- function(title) {
+        grid.rect(x = 0.5, y = 0.96, width = 1, height = 0.06,
+                  gp = gpar(fill = "#1B3A6B", col = NA))
+        grid.text(title, x = 0.5, y = 0.96,
+                  gp = gpar(fontsize = 16, fontface = 2, col = "white"))
+    }
+
+    # Helper: render chart to grob
+    render_chart_to_grob <- function(chart_expr, width = 10, height = 6, dpi = 150) {
+        tryCatch({
+            p <- chart_expr
+            if (is.null(p)) return(NULL)
+            temp_png <- tempfile(fileext = ".png")
+            ggsave(temp_png, p, width = width, height = height, dpi = dpi, bg = "white")
+            img <- png::readPNG(temp_png)
+            grob <- grid::rasterGrob(img, interpolate = TRUE)
+            unlink(temp_png)
+            return(grob)
+        }, error = function(e) {
+            message(sprintf("[RV PDF] Chart render error: %s", e$message))
+            return(NULL)
+        })
+    }
+
+    # Build params for chart generators
+    params <- list(
+        curve_model = curve_model,
+        xaxis_choice = xaxis_choice
+    )
+
+    # ══════════════════════════════════════════════════════════════════
+    # PRE-RENDER all charts BEFORE opening PDF device
+    # ══════════════════════════════════════════════════════════════════
+    message("[RV PDF] Pre-rendering charts...")
+
+    pages <- list()
+
+    # Cover page
+    pages[[length(pages) + 1]] <- list(type = "cover", label = "Cover Page")
+
+    # RV Summary Table
+    rv_table_data <- NULL
+    if ("rv_table" %in% selected_charts) {
+        tryCatch({
+            rv_table_data <- generate_rv_summary_table(processed_data, params)
+            if (!is.null(rv_table_data) && nrow(rv_table_data) > 0) {
+                # Convert to character for tableGrob
+                display_df <- rv_table_data
+                for (col in names(display_df)) {
+                    if (is.numeric(display_df[[col]])) {
+                        display_df[[col]] <- sprintf("%.2f", display_df[[col]])
+                    } else {
+                        display_df[[col]] <- as.character(display_df[[col]])
+                    }
+                }
+
+                # Color-code recommendation rows
+                recs <- rv_table_data$Recommendation
+                row_colors <- ifelse(grepl("Strong Buy", recs), "#C8E6C9",
+                              ifelse(grepl("Buy", recs), "#E8F5E9",
+                              ifelse(grepl("Avoid", recs), "#FFCDD2",
+                              ifelse(grepl("Underweight", recs), "#FFEBEE", "white"))))
+
+                tt <- ttheme_minimal(
+                    core = list(fg_params = list(fontsize = 9),
+                                bg_params = list(fill = row_colors)),
+                    colhead = list(fg_params = list(fontsize = 10, fontface = 2, col = "white"),
+                                   bg_params = list(fill = "#1B3A6B"))
+                )
+                tbl_grob <- tableGrob(display_df, rows = NULL, theme = tt)
+
+                pages[[length(pages) + 1]] <- list(type = "table", grob = tbl_grob,
+                                                    label = "Relative Value Summary")
+            }
+        }, error = function(e) {
+            message(sprintf("[RV PDF] Table render error: %s", e$message))
+        })
+    }
+
+    # Chart pages
+    chart_configs <- list(
+        yield_curve = list(
+            label = "Yield Curve (Fitted)",
+            gen = function() render_chart_to_grob(generate_enhanced_yield_curve(processed_data, params), width = 11, height = 7)
+        ),
+        relative_heatmap = list(
+            label = "Relative Value Heatmap",
+            gen = function() render_chart_to_grob(generate_relative_value_heatmap(filtered_data, params), width = 11, height = 7)
+        ),
+        zscore_plot = list(
+            label = "Z-Score Distribution",
+            gen = function() render_chart_to_grob(generate_enhanced_zscore_plot(processed_data, params), width = 11, height = 7)
+        ),
+        convexity = list(
+            label = "Convexity Profile",
+            gen = function() render_chart_to_grob(generate_enhanced_convexity_plot(processed_data, params), width = 11, height = 7)
+        ),
+        rv_scanner = list(
+            label = "Relative Value Scanner",
+            gen = function() render_chart_to_grob(generate_relative_value_scanner(processed_data, params), width = 11, height = 7)
+        )
+    )
+
+    for (chart_id in selected_charts) {
+        if (chart_id == "rv_table") next  # Already handled above
+        cfg <- chart_configs[[chart_id]]
+        if (!is.null(cfg)) {
+            grob <- tryCatch(cfg$gen(), error = function(e) {
+                message(sprintf("[RV PDF] Chart %s error: %s", chart_id, e$message))
+                NULL
+            })
+            if (!is.null(grob)) {
+                pages[[length(pages) + 1]] <- list(type = "chart", grob = grob, label = cfg$label)
+            }
+        }
+    }
+
+    # Commentary page
+    has_commentary <- commentary_mode != "none"
+    commentary_final <- ""
+    if (commentary_mode == "manual" && nchar(commentary_text) > 0) {
+        commentary_final <- commentary_text
+    } else if (commentary_mode == "auto") {
+        commentary_final <- generate_auto_commentary("relative_value", list(
+            processed_data = processed_data,
+            rv_table = rv_table_data
+        ))
+    }
+    if (has_commentary && nchar(commentary_final) > 0) {
+        pages[[length(pages) + 1]] <- list(type = "commentary", label = "Commentary")
+    }
+
+    # Disclaimer page
+    pages[[length(pages) + 1]] <- list(type = "disclaimer", label = "Disclaimer")
+
+    total_pages <- length(pages)
+
+    # Determine curve model label for cover
+    curve_label <- switch(curve_model,
+        "loess" = "LOESS",
+        "poly2" = "Polynomial (2nd degree)",
+        "poly3" = "Polynomial (3rd degree)",
+        "ns" = "Nelson-Siegel",
+        curve_model
+    )
+
+    # ══════════════════════════════════════════════════════════════════
+    # RENDER PDF
+    # ══════════════════════════════════════════════════════════════════
+    tryCatch({
+        pdf(temp_pdf, width = 11, height = 8.5)
+
+        page_num <- 0
+        page_labels <- character()
+
+        for (pg in pages) {
+            grid.newpage()
+            page_num <- page_num + 1
+            page_labels <- c(page_labels, pg$label)
+
+            if (pg$type == "cover") {
+                # ─── COVER PAGE ───
+                grid.rect(x = unit(0.175, "npc"), y = unit(0.53, "npc"),
+                          width = unit(0.35, "npc"), height = unit(0.94, "npc"),
+                          gp = gpar(fill = "#1B3A6B", col = NA))
+                grid.circle(x = unit(-0.02, "npc"), y = unit(0.08, "npc"),
+                            r = unit(0.22, "npc"),
+                            gp = gpar(fill = adjustcolor("#2B4F7F", alpha.f = 0.25), col = NA))
+                grid.lines(x = c(0.03, 0.32), y = c(0.15, 0.15),
+                           gp = gpar(col = adjustcolor("#E8913A", alpha.f = 0.6), lwd = 3))
+
+                if (!is.null(logo_grob)) {
+                    pushViewport(viewport(x = 0.42, y = 0.90, width = 0.42, height = 0.14,
+                                          just = c("left", "center")))
+                    grid.draw(logo_grob)
+                    popViewport()
+                } else {
+                    grid.text("INSELE CAPITAL PARTNERS", x = 0.42, y = 0.89, just = "left",
+                              gp = gpar(fontsize = 20, fontface = 2, col = "#1B3A6B"))
+                    grid.text("BROKING SERVICES", x = 0.42, y = 0.85, just = "left",
+                              gp = gpar(fontsize = 12, col = "#5B7B8A"))
+                }
+
+                grid.lines(x = c(0.38, 0.92), y = c(0.81, 0.81),
+                           gp = gpar(col = "#E8913A", lwd = 3))
+
+                grid.text("RELATIVE", x = 0.42, y = 0.72, just = "left",
+                          gp = gpar(fontsize = 36, fontface = 2, col = "#1B3A6B"))
+                grid.text("VALUE", x = 0.42, y = 0.64, just = "left",
+                          gp = gpar(fontsize = 36, fontface = 2, col = "#1B3A6B"))
+                grid.text("ANALYSIS", x = 0.42, y = 0.56, just = "left",
+                          gp = gpar(fontsize = 36, fontface = 2, col = "#1B3A6B"))
+
+                grid.text(format(Sys.Date(), "%A, %B %d, %Y"),
+                          x = 0.42, y = 0.46, just = "left",
+                          gp = gpar(fontsize = 16, col = "#E8913A"))
+                grid.text(paste("Curve Model:", curve_label),
+                          x = 0.42, y = 0.38, just = "left",
+                          gp = gpar(fontsize = 14, col = "#333333"))
+                grid.text("SA Government Bond Relative Value Assessment",
+                          x = 0.42, y = 0.31, just = "left",
+                          gp = gpar(fontsize = 13, fontface = 3, col = "#666666"))
+
+                # Navy footer bar
+                grid.rect(x = unit(0.5, "npc"), y = unit(0.03, "npc"),
+                          width = unit(1, "npc"), height = unit(0.06, "npc"),
+                          gp = gpar(fill = "#1B3A6B", col = NA))
+                grid.text("www.insele.capital", x = 0.10, y = 0.03, just = "left",
+                          gp = gpar(fontsize = 9, col = "white"))
+                grid.text("+27 11 286 1949", x = 0.35, y = 0.03,
+                          gp = gpar(fontsize = 9, col = "white"))
+                grid.text("bonds@insele.capital", x = 0.60, y = 0.03,
+                          gp = gpar(fontsize = 9, col = "white"))
+                grid.text("Prepared by: Insele Capital Partners", x = 0.90, y = 0.03, just = "right",
+                          gp = gpar(fontsize = 9, col = "white"))
+
+            } else if (pg$type == "table") {
+                draw_page_header(pg$label)
+                pushViewport(viewport(x = 0.5, y = 0.47, width = 0.92, height = 0.80))
+                grid.draw(pg$grob)
+                popViewport()
+                add_footer(page_num, total_pages)
+
+            } else if (pg$type == "chart") {
+                draw_page_header(pg$label)
+                pushViewport(viewport(x = 0.5, y = 0.47, width = 0.92, height = 0.82))
+                grid.draw(pg$grob)
+                popViewport()
+                add_footer(page_num, total_pages)
+
+            } else if (pg$type == "commentary") {
+                draw_page_header("Commentary")
+                wrapped <- strwrap(commentary_final, width = 90)
+                commentary_formatted <- paste(wrapped, collapse = "\n")
+                grid.text(commentary_formatted,
+                          x = 0.08, y = 0.85, just = c("left", "top"),
+                          gp = gpar(fontsize = 11, col = "#333333", lineheight = 1.4,
+                                    fontfamily = "sans"))
+                add_footer(page_num, total_pages)
+
+            } else if (pg$type == "disclaimer") {
+                draw_page_header("Disclaimer")
+                disclaimer_text <- paste(
+                    "This report is produced by Insele Capital Partners for informational purposes only.",
+                    "It does not constitute investment advice, a solicitation, or an offer to buy or sell any securities.",
+                    "The information contained herein is based on sources believed to be reliable, but no representation",
+                    "or warranty, express or implied, is made as to its accuracy or completeness.",
+                    "",
+                    "Past performance is not indicative of future results. Relative value analysis reflects point-in-time",
+                    "deviations from a fitted yield curve model and may not persist. Model outputs depend on methodology",
+                    "and bond universe selection.",
+                    "",
+                    "Insele Capital Partners, its directors, employees and associates may have positions in securities",
+                    "discussed in this report. This report is confidential and intended solely for the recipient.",
+                    "Do not distribute without authorisation.",
+                    sep = "\n"
+                )
+                wrapped <- strwrap(disclaimer_text, width = 90)
+                grid.text(paste(wrapped, collapse = "\n"),
+                          x = 0.08, y = 0.82, just = c("left", "top"),
+                          gp = gpar(fontsize = 10, col = "#666666", lineheight = 1.5,
+                                    fontfamily = "sans"))
+                add_footer(page_num, total_pages)
+            }
+        }
+
+        dev.off()
+
+        file.copy(temp_pdf, file, overwrite = TRUE)
+        unlink(temp_pdf)
+
+        message(sprintf("[RV PDF] Generated %d pages successfully.", total_pages))
+        return(list(success = TRUE, page_labels = page_labels, n_pages = total_pages))
+
+    }, error = function(e) {
+        message(sprintf("[RV PDF] Error: %s", e$message))
+        while (dev.cur() > 1) { try(dev.off(), silent = TRUE) }
+        return(list(success = FALSE, page_labels = character(), n_pages = 0))
+    })
+}
