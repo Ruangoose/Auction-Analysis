@@ -11987,7 +11987,8 @@ server <- function(input, output, session) {
 
                     # Report title — large bold navy text
                     report_title_text <- if (!is.null(input$report_title)) input$report_title else "SA Government Bond\nAnalysis Report"
-                    grid.text(toupper(report_title_text),
+                    report_title_wrapped <- paste(strwrap(toupper(report_title_text), width = 30), collapse = "\n")
+                    grid.text(report_title_wrapped,
                               x = 0.42, y = 0.68, just = "left",
                               gp = gpar(fontsize = 28, fontface = 2, col = "#1B3A6B", lineheight = 1.2))
 

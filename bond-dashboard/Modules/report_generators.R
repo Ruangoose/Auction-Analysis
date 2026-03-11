@@ -4168,7 +4168,8 @@ generate_custom_report_pdf <- function(output_path, config, report_data, logo_gr
 
         # Report title — large bold navy text
         report_title_text <- config$report_title %||% "SA Government Bond\nAnalysis Report"
-        grid.text(toupper(report_title_text),
+        report_title_wrapped <- paste(strwrap(toupper(report_title_text), width = 30), collapse = "\n")
+        grid.text(report_title_wrapped,
                   x = 0.42, y = 0.68, just = "left",
                   gp = gpar(fontsize = 28, fontface = 2, col = "#1B3A6B", lineheight = 1.2))
 
