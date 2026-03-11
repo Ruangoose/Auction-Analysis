@@ -2023,6 +2023,50 @@ server <- function(input, output, session) {
         }
     })
 
+    # ================================================================================
+    # DYNAMIC OBSERVERS FOR NEW REPORT TYPE CONTROLS
+    # ================================================================================
+
+    # Technical Analysis Report — populate bond picker from filtered data
+    observe({
+        req(filtered_data())
+        bonds <- sort(unique(filtered_data()$bond))
+        shinyWidgets::updatePickerInput(session, "tech_report_bonds",
+                      choices = bonds,
+                      selected = head(bonds, 3))
+    })
+
+    # Butterfly Spread Report — populate spread picker from butterfly_data()
+    observe({
+        req(butterfly_data())
+        summary_df <- butterfly_data()$summary
+        req(nrow(summary_df) > 0)
+
+        zscore_thresh <- input$butterfly_report_zscore %||% 2.0
+        show_neutral <- isTRUE(input$butterfly_report_show_neutral)
+
+        # Filter and sort
+        filtered <- summary_df
+        if (!show_neutral) {
+            filtered <- filtered %>% dplyr::filter(abs(`Z-Score`) >= zscore_thresh)
+        }
+        filtered <- filtered %>% dplyr::arrange(desc(abs(`Z-Score`)))
+
+        # Build choices: "R2032-R2035-R2040 (Z: -2.3, SELL WINGS)"
+        spread_names <- gsub("Butterfly: ", "", filtered$Trade)
+        choice_labels <- sprintf("%s (Z: %.1f, %s)",
+                                 spread_names,
+                                 filtered$`Z-Score`,
+                                 filtered$Signal)
+        choices <- setNames(spread_names, choice_labels)
+
+        # Default: select top 5 non-neutral
+        default_sel <- head(spread_names, 5)
+
+        shinyWidgets::updatePickerInput(session, "butterfly_report_spreads",
+                      choices = choices, selected = default_sel)
+    })
+
     # Update Predictions Button Handler
     observeEvent(input$update_predictions, {
         req(input$auction_bonds_select, input$next_auction_date)
@@ -10450,7 +10494,7 @@ server <- function(input, output, session) {
             selected_plots = selected_plots,
             input_params = input_params,
             report_title = input$report_title %||% paste("SA Government Bond Analysis -", format(Sys.Date(), "%B %Y")),
-            report_type = input$report_type %||% "executive",
+            report_type = input$report_type %||% "pre_auction",
             client_name = input$auction_report_client %||% input$client_name %||% "",
             report_date = input$report_date %||% Sys.Date(),
             pre_auction_bonds = pre_auction_bonds,
@@ -11873,6 +11917,12 @@ server <- function(input, output, session) {
         filename = function() {
             if (input$report_type == "pre_auction") {
                 paste0("insele_pre_auction_report_", format(input$auction_report_date %||% Sys.Date(), "%Y%m%d"), ".pdf")
+            } else if (input$report_type == "technical_report") {
+                paste0("insele_technical_analysis_", format(Sys.Date(), "%Y%m%d"), ".pdf")
+            } else if (input$report_type == "butterfly_report") {
+                paste0("insele_butterfly_spread_", format(Sys.Date(), "%Y%m%d"), ".pdf")
+            } else if (input$report_type == "relative_value_report") {
+                paste0("insele_relative_value_", format(Sys.Date(), "%Y%m%d"), ".pdf")
             } else {
                 paste0("insele_bond_report_", format(input$report_date, "%Y%m%d"), ".pdf")
             }
@@ -11926,9 +11976,75 @@ server <- function(input, output, session) {
                     return(invisible(NULL))
                 }
 
+                # ── Technical Analysis Report ──
+                if (config$report_type == "technical_report") {
+                    incProgress(0.3, detail = "Generating Technical Analysis PDF")
+                    generate_technical_analysis_pdf(
+                        file,
+                        selected_bonds = input$tech_report_bonds,
+                        indicator_type = input$tech_report_indicator %||% "all",
+                        include_signal_matrix = "signal_matrix" %in% input$tech_report_charts,
+                        include_technical_plots = "technical_plot" %in% input$tech_report_charts,
+                        commentary_mode = input$tech_report_commentary_mode %||% "none",
+                        commentary_text = input$tech_report_commentary %||% "",
+                        data = report_data$filt_data_with_tech,
+                        logo_grob = logo_grob
+                    )
+                    incProgress(1, detail = "Complete")
+                    showNotification("Technical Analysis PDF generated successfully", type = "message")
+                    return(invisible(NULL))
+                }
+
+                # ── Butterfly Spread Report ──
+                if (config$report_type == "butterfly_report") {
+                    bf_data <- butterfly_data()
+                    if (is.null(bf_data) || length(bf_data$details) == 0) {
+                        showNotification(
+                            "Please run the Butterfly Spread Analyzer first (Carry & Roll tab)",
+                            type = "warning", duration = 8
+                        )
+                        return(NULL)
+                    }
+                    incProgress(0.3, detail = "Generating Butterfly Spread PDF")
+                    generate_butterfly_report_pdf(
+                        file,
+                        selected_spreads = input$butterfly_report_spreads,
+                        butterfly_details = bf_data$details,
+                        butterfly_summary = bf_data$summary,
+                        zscore_threshold = input$butterfly_report_zscore %||% 2.0,
+                        include_table = isTRUE(input$butterfly_report_include_table),
+                        commentary_mode = input$butterfly_report_commentary_mode %||% "none",
+                        commentary_text = input$butterfly_report_commentary %||% "",
+                        logo_grob = logo_grob
+                    )
+                    incProgress(1, detail = "Complete")
+                    showNotification("Butterfly Spread PDF generated successfully", type = "message")
+                    return(invisible(NULL))
+                }
+
+                # ── Relative Value Report ──
+                if (config$report_type == "relative_value_report") {
+                    incProgress(0.3, detail = "Generating Relative Value PDF")
+                    generate_relative_value_pdf(
+                        file,
+                        selected_charts = input$rv_report_charts,
+                        curve_model = input$rv_report_curve_model %||% "loess",
+                        xaxis_choice = input$rv_report_xaxis %||% "modified_duration",
+                        commentary_mode = input$rv_report_commentary_mode %||% "none",
+                        commentary_text = input$rv_report_commentary %||% "",
+                        processed_data = report_data$proc_data,
+                        filtered_data = report_data$filt_data,
+                        fitted_curve_data = tryCatch(fitted_curve_data(), error = function(e) NULL),
+                        logo_grob = logo_grob
+                    )
+                    incProgress(1, detail = "Complete")
+                    showNotification("Relative Value PDF generated successfully", type = "message")
+                    return(invisible(NULL))
+                }
+
                 incProgress(0.2, detail = "Generating custom report PDF")
 
-                # Use shared generate_custom_report_pdf() for all non-pre-auction reports
+                # Use shared generate_custom_report_pdf() for custom reports
                 temp_dir <- tempdir()
                 temp_pdf <- file.path(temp_dir, paste0("temp_report_", Sys.getpid(), ".pdf"))
 
@@ -12813,10 +12929,9 @@ $$Net Return = Carry + Roll - Funding Cost$$
             type_labels <- c(
                 pre_auction = "Pre_Auction",
                 treasury = "Treasury_Holdings",
-                executive = "Executive_Summary",
-                trading = "Trading_Desk",
-                risk = "Risk_Committee",
-                client = "Client_Portfolio",
+                technical_report = "Technical_Analysis",
+                butterfly_report = "Butterfly_Spread",
+                relative_value_report = "Relative_Value",
                 custom = "Custom_Report"
             )
             type_label <- type_labels[[config$report_type]] %||% "Report"
@@ -13037,19 +13152,351 @@ $$Net Return = Carry + Roll - Funding Cost$$
                 )
             })
 
+            } else if (config$report_type == "technical_report") {
+            # ══════════════════════════════════════════════════════════════════
+            # TECHNICAL ANALYSIS REPORT EMAIL PIPELINE
+            # ══════════════════════════════════════════════════════════════════
+            withProgress(message = "Building Technical Analysis email draft...", value = 0, {
+
+                temp_dir <- tempdir()
+                temp_pdf <- file.path(temp_dir, paste0("eml_technical_", Sys.getpid(), ".pdf"))
+
+                # Load logo
+                logo_path <- load_logo_for_pdf()
+                logo_grob <- NULL
+                if (!is.null(logo_path) && file.exists(logo_path)) {
+                    tryCatch({
+                        logo_img <- png::readPNG(logo_path)
+                        logo_grob <- rasterGrob(logo_img, interpolate = TRUE)
+                    }, error = function(e) { logo_grob <- NULL })
+                }
+
+                report_data <- collect_report_data()
+
+                incProgress(0.1, detail = "Generating Technical Analysis PDF")
+                pdf_result <- generate_technical_analysis_pdf(
+                    temp_pdf,
+                    selected_bonds = input$tech_report_bonds,
+                    indicator_type = input$tech_report_indicator %||% "all",
+                    include_signal_matrix = "signal_matrix" %in% input$tech_report_charts,
+                    include_technical_plots = "technical_plot" %in% input$tech_report_charts,
+                    commentary_mode = input$tech_report_commentary_mode %||% "none",
+                    commentary_text = input$tech_report_commentary %||% "",
+                    data = report_data$filt_data_with_tech,
+                    logo_grob = logo_grob
+                )
+
+                if (!pdf_result$success || !file.exists(temp_pdf)) {
+                    showNotification("Technical Analysis PDF generation failed.", type = "error", duration = 5)
+                    return(NULL)
+                }
+
+                # Convert PDF to PNGs
+                incProgress(0.4, detail = "Converting pages to images")
+                n_pages <- pdftools::pdf_info(temp_pdf)$pages
+                png_paths <- character(n_pages)
+                png_base64_list <- vector("list", n_pages)
+                for (i in seq_len(n_pages)) {
+                    png_path <- file.path(temp_dir, sprintf("eml_tech_%02d_%d.png", i, Sys.getpid()))
+                    bitmap <- pdftools::pdf_render_page(temp_pdf, page = i, dpi = 150)
+                    png::writePNG(bitmap, png_path)
+                    png_paths[i] <- png_path
+                    png_base64_list[[i]] <- base64enc::base64encode(png_path)
+                }
+
+                # Build HTML and .EML
+                incProgress(0.7, detail = "Assembling email draft")
+                selected_bonds <- input$tech_report_bonds
+                subject_line <- sprintf("Insele Technical Analysis — %s — %s",
+                    paste(selected_bonds, collapse = ", "), format(Sys.Date(), "%d %b %Y"))
+
+                # Build commentary for email body
+                commentary_html <- ""
+                commentary_mode <- input$tech_report_commentary_mode %||% "none"
+                if (commentary_mode == "manual" && nchar(input$tech_report_commentary %||% "") > 0) {
+                    commentary_html <- sprintf('<tr><td style="padding: 15px 30px; font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #333333; line-height: 1.5; background-color: #f8f9fa;"><strong>Commentary:</strong><br/>%s</td></tr>',
+                        gsub("\n", "<br/>", htmltools::htmlEscape(input$tech_report_commentary)))
+                } else if (commentary_mode == "auto") {
+                    auto_text <- generate_auto_commentary("technical", list(
+                        data = report_data$filt_data_with_tech, selected_bonds = selected_bonds))
+                    commentary_html <- sprintf('<tr><td style="padding: 15px 30px; font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #333333; line-height: 1.5; background-color: #f8f9fa;"><strong>Auto-Generated Summary:</strong><br/>%s</td></tr>',
+                        gsub("\n", "<br/>", htmltools::htmlEscape(auto_text)))
+                }
+
+                email_html <- build_custom_email_html(
+                    page_labels = pdf_result$page_labels,
+                    n_pages = n_pages,
+                    report_title = "Technical Analysis Report",
+                    report_type_label = "Technical Analysis Report",
+                    sections_included = paste(selected_bonds, collapse = ", "),
+                    report_date = Sys.Date()
+                )
+
+                # Inject commentary into email HTML if present
+                if (nchar(commentary_html) > 0) {
+                    email_html <- sub("<!-- Chart Sections -->", paste0(commentary_html, "\n<!-- Chart Sections -->"), email_html)
+                }
+
+                pdf_filename <- sprintf("Insele_Technical_Analysis_%s.pdf", format(Sys.Date(), "%Y%m%d"))
+                eml_lines <- build_eml_file(
+                    html_body = email_html,
+                    png_paths = png_paths,
+                    png_base64_list = png_base64_list,
+                    pdf_path = temp_pdf,
+                    auction_bonds = NULL,
+                    auction_date = Sys.Date(),
+                    subject_prefix = subject_line,
+                    pdf_attachment_name = pdf_filename
+                )
+
+                eml_raw <- charToRaw(paste(eml_lines, collapse = "\r\n"))
+                con <- file(file, "wb")
+                writeBin(eml_raw, con)
+                close(con)
+
+                unlink(png_paths, force = TRUE)
+                unlink(temp_pdf, force = TRUE)
+
+                incProgress(1, detail = "Complete")
+                showNotification("Technical Analysis email draft ready!", type = "message", duration = 6)
+            })
+
+            } else if (config$report_type == "butterfly_report") {
+            # ══════════════════════════════════════════════════════════════════
+            # BUTTERFLY SPREAD REPORT EMAIL PIPELINE
+            # ══════════════════════════════════════════════════════════════════
+            bf_data <- butterfly_data()
+            if (is.null(bf_data) || length(bf_data$details) == 0) {
+                showNotification(
+                    "Please run the Butterfly Spread Analyzer first (Carry & Roll tab)",
+                    type = "warning", duration = 8
+                )
+                return(NULL)
+            }
+
+            withProgress(message = "Building Butterfly Spread email draft...", value = 0, {
+
+                temp_dir <- tempdir()
+                temp_pdf <- file.path(temp_dir, paste0("eml_butterfly_", Sys.getpid(), ".pdf"))
+
+                # Load logo
+                logo_path <- load_logo_for_pdf()
+                logo_grob <- NULL
+                if (!is.null(logo_path) && file.exists(logo_path)) {
+                    tryCatch({
+                        logo_img <- png::readPNG(logo_path)
+                        logo_grob <- rasterGrob(logo_img, interpolate = TRUE)
+                    }, error = function(e) { logo_grob <- NULL })
+                }
+
+                incProgress(0.1, detail = "Generating Butterfly Spread PDF")
+                pdf_result <- generate_butterfly_report_pdf(
+                    temp_pdf,
+                    selected_spreads = input$butterfly_report_spreads,
+                    butterfly_details = bf_data$details,
+                    butterfly_summary = bf_data$summary,
+                    zscore_threshold = input$butterfly_report_zscore %||% 2.0,
+                    include_table = isTRUE(input$butterfly_report_include_table),
+                    commentary_mode = input$butterfly_report_commentary_mode %||% "none",
+                    commentary_text = input$butterfly_report_commentary %||% "",
+                    logo_grob = logo_grob
+                )
+
+                if (!pdf_result$success || !file.exists(temp_pdf)) {
+                    showNotification("Butterfly Spread PDF generation failed.", type = "error", duration = 5)
+                    return(NULL)
+                }
+
+                # Convert PDF to PNGs
+                incProgress(0.4, detail = "Converting pages to images")
+                n_pages <- pdftools::pdf_info(temp_pdf)$pages
+                png_paths <- character(n_pages)
+                png_base64_list <- vector("list", n_pages)
+                for (i in seq_len(n_pages)) {
+                    png_path <- file.path(temp_dir, sprintf("eml_bf_%02d_%d.png", i, Sys.getpid()))
+                    bitmap <- pdftools::pdf_render_page(temp_pdf, page = i, dpi = 150)
+                    png::writePNG(bitmap, png_path)
+                    png_paths[i] <- png_path
+                    png_base64_list[[i]] <- base64enc::base64encode(png_path)
+                }
+
+                # Build HTML and .EML
+                incProgress(0.7, detail = "Assembling email draft")
+                n_spreads <- length(input$butterfly_report_spreads)
+                subject_line <- sprintf("Insele Butterfly Analysis — %d Spreads — %s",
+                    n_spreads, format(Sys.Date(), "%d %b %Y"))
+
+                # Build commentary for email body
+                commentary_html <- ""
+                commentary_mode <- input$butterfly_report_commentary_mode %||% "none"
+                if (commentary_mode == "manual" && nchar(input$butterfly_report_commentary %||% "") > 0) {
+                    commentary_html <- sprintf('<tr><td style="padding: 15px 30px; font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #333333; line-height: 1.5; background-color: #f8f9fa;"><strong>Commentary:</strong><br/>%s</td></tr>',
+                        gsub("\n", "<br/>", htmltools::htmlEscape(input$butterfly_report_commentary)))
+                } else if (commentary_mode == "auto") {
+                    auto_text <- generate_auto_commentary("butterfly", list(
+                        butterfly_summary = bf_data$summary,
+                        zscore_threshold = input$butterfly_report_zscore %||% 2.0))
+                    commentary_html <- sprintf('<tr><td style="padding: 15px 30px; font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #333333; line-height: 1.5; background-color: #f8f9fa;"><strong>Auto-Generated Summary:</strong><br/>%s</td></tr>',
+                        gsub("\n", "<br/>", htmltools::htmlEscape(auto_text)))
+                }
+
+                email_html <- build_custom_email_html(
+                    page_labels = pdf_result$page_labels,
+                    n_pages = n_pages,
+                    report_title = "Butterfly Spread Analysis",
+                    report_type_label = "Butterfly Spread Report",
+                    sections_included = sprintf("%d butterfly spreads analysed", n_spreads),
+                    report_date = Sys.Date()
+                )
+
+                if (nchar(commentary_html) > 0) {
+                    email_html <- sub("<!-- Chart Sections -->", paste0(commentary_html, "\n<!-- Chart Sections -->"), email_html)
+                }
+
+                pdf_filename <- sprintf("Insele_Butterfly_Spread_%s.pdf", format(Sys.Date(), "%Y%m%d"))
+                eml_lines <- build_eml_file(
+                    html_body = email_html,
+                    png_paths = png_paths,
+                    png_base64_list = png_base64_list,
+                    pdf_path = temp_pdf,
+                    auction_bonds = NULL,
+                    auction_date = Sys.Date(),
+                    subject_prefix = subject_line,
+                    pdf_attachment_name = pdf_filename
+                )
+
+                eml_raw <- charToRaw(paste(eml_lines, collapse = "\r\n"))
+                con <- file(file, "wb")
+                writeBin(eml_raw, con)
+                close(con)
+
+                unlink(png_paths, force = TRUE)
+                unlink(temp_pdf, force = TRUE)
+
+                incProgress(1, detail = "Complete")
+                showNotification("Butterfly Spread email draft ready!", type = "message", duration = 6)
+            })
+
+            } else if (config$report_type == "relative_value_report") {
+            # ══════════════════════════════════════════════════════════════════
+            # RELATIVE VALUE REPORT EMAIL PIPELINE
+            # ══════════════════════════════════════════════════════════════════
+            withProgress(message = "Building Relative Value email draft...", value = 0, {
+
+                temp_dir <- tempdir()
+                temp_pdf <- file.path(temp_dir, paste0("eml_rv_", Sys.getpid(), ".pdf"))
+
+                # Load logo
+                logo_path <- load_logo_for_pdf()
+                logo_grob <- NULL
+                if (!is.null(logo_path) && file.exists(logo_path)) {
+                    tryCatch({
+                        logo_img <- png::readPNG(logo_path)
+                        logo_grob <- rasterGrob(logo_img, interpolate = TRUE)
+                    }, error = function(e) { logo_grob <- NULL })
+                }
+
+                report_data <- collect_report_data()
+
+                incProgress(0.1, detail = "Generating Relative Value PDF")
+                pdf_result <- generate_relative_value_pdf(
+                    temp_pdf,
+                    selected_charts = input$rv_report_charts,
+                    curve_model = input$rv_report_curve_model %||% "loess",
+                    xaxis_choice = input$rv_report_xaxis %||% "modified_duration",
+                    commentary_mode = input$rv_report_commentary_mode %||% "none",
+                    commentary_text = input$rv_report_commentary %||% "",
+                    processed_data = report_data$proc_data,
+                    filtered_data = report_data$filt_data,
+                    fitted_curve_data = tryCatch(fitted_curve_data(), error = function(e) NULL),
+                    logo_grob = logo_grob
+                )
+
+                if (!pdf_result$success || !file.exists(temp_pdf)) {
+                    showNotification("Relative Value PDF generation failed.", type = "error", duration = 5)
+                    return(NULL)
+                }
+
+                # Convert PDF to PNGs
+                incProgress(0.4, detail = "Converting pages to images")
+                n_pages <- pdftools::pdf_info(temp_pdf)$pages
+                png_paths <- character(n_pages)
+                png_base64_list <- vector("list", n_pages)
+                for (i in seq_len(n_pages)) {
+                    png_path <- file.path(temp_dir, sprintf("eml_rv_%02d_%d.png", i, Sys.getpid()))
+                    bitmap <- pdftools::pdf_render_page(temp_pdf, page = i, dpi = 150)
+                    png::writePNG(bitmap, png_path)
+                    png_paths[i] <- png_path
+                    png_base64_list[[i]] <- base64enc::base64encode(png_path)
+                }
+
+                # Build HTML and .EML
+                incProgress(0.7, detail = "Assembling email draft")
+                subject_line <- sprintf("Insele Relative Value Analysis — %s", format(Sys.Date(), "%d %b %Y"))
+
+                # Build commentary for email body
+                commentary_html <- ""
+                commentary_mode <- input$rv_report_commentary_mode %||% "none"
+                if (commentary_mode == "manual" && nchar(input$rv_report_commentary %||% "") > 0) {
+                    commentary_html <- sprintf('<tr><td style="padding: 15px 30px; font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #333333; line-height: 1.5; background-color: #f8f9fa;"><strong>Commentary:</strong><br/>%s</td></tr>',
+                        gsub("\n", "<br/>", htmltools::htmlEscape(input$rv_report_commentary)))
+                } else if (commentary_mode == "auto") {
+                    rv_table_data <- tryCatch(
+                        generate_rv_summary_table(report_data$proc_data, list(
+                            curve_model = input$rv_report_curve_model %||% "loess",
+                            xaxis_choice = input$rv_report_xaxis %||% "modified_duration")),
+                        error = function(e) NULL)
+                    auto_text <- generate_auto_commentary("relative_value", list(
+                        processed_data = report_data$proc_data, rv_table = rv_table_data))
+                    commentary_html <- sprintf('<tr><td style="padding: 15px 30px; font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #333333; line-height: 1.5; background-color: #f8f9fa;"><strong>Auto-Generated Summary:</strong><br/>%s</td></tr>',
+                        gsub("\n", "<br/>", htmltools::htmlEscape(auto_text)))
+                }
+
+                email_html <- build_custom_email_html(
+                    page_labels = pdf_result$page_labels,
+                    n_pages = n_pages,
+                    report_title = "Relative Value Analysis",
+                    report_type_label = "Relative Value Report",
+                    sections_included = paste(input$rv_report_charts, collapse = ", "),
+                    report_date = Sys.Date()
+                )
+
+                if (nchar(commentary_html) > 0) {
+                    email_html <- sub("<!-- Chart Sections -->", paste0(commentary_html, "\n<!-- Chart Sections -->"), email_html)
+                }
+
+                pdf_filename <- sprintf("Insele_Relative_Value_%s.pdf", format(Sys.Date(), "%Y%m%d"))
+                eml_lines <- build_eml_file(
+                    html_body = email_html,
+                    png_paths = png_paths,
+                    png_base64_list = png_base64_list,
+                    pdf_path = temp_pdf,
+                    auction_bonds = NULL,
+                    auction_date = Sys.Date(),
+                    subject_prefix = subject_line,
+                    pdf_attachment_name = pdf_filename
+                )
+
+                eml_raw <- charToRaw(paste(eml_lines, collapse = "\r\n"))
+                con <- file(file, "wb")
+                writeBin(eml_raw, con)
+                close(con)
+
+                unlink(png_paths, force = TRUE)
+                unlink(temp_pdf, force = TRUE)
+
+                incProgress(1, detail = "Complete")
+                showNotification("Relative Value email draft ready!", type = "message", duration = 6)
+            })
+
             } else {
             # ══════════════════════════════════════════════════════════════════
-            # CUSTOM / DYNAMIC REPORT EMAIL PIPELINE
-            # Supports: Executive, Trading, Risk, Client, Custom report types
+            # CUSTOM REPORT EMAIL PIPELINE
             # Uses the same PDF→PNG→HTML→EML pipeline as pre-auction/treasury
             # ══════════════════════════════════════════════════════════════════
 
             # Report type display names
             type_labels <- c(
-                executive = "Executive Summary",
-                trading = "Trading Desk Report",
-                risk = "Risk Committee Report",
-                client = "Client Portfolio Review",
                 custom = "Custom Report"
             )
             report_type_label <- type_labels[[config$report_type]] %||% "Custom Report"
