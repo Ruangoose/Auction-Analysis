@@ -11952,69 +11952,74 @@ server <- function(input, output, session) {
                     tryCatch({
                     grid.newpage()
 
-                    # Add logo at the top if available
-                    if(!is.null(logo_grob)) {
-                        pushViewport(viewport(x = 0.5, y = 0.9, width = 0.3, height = 0.15))
+                    # Navy left panel (35% width)
+                    grid.rect(x = unit(0.175, "npc"), y = unit(0.53, "npc"),
+                              width = unit(0.35, "npc"), height = unit(0.94, "npc"),
+                              gp = gpar(fill = "#1B3A6B", col = NA))
+
+                    # Decorative partial circle (bottom-left of navy panel)
+                    grid.circle(x = unit(-0.02, "npc"), y = unit(0.08, "npc"),
+                                r = unit(0.22, "npc"),
+                                gp = gpar(fill = adjustcolor("#2B4F7F", alpha.f = 0.25), col = NA))
+
+                    # Orange accent line on navy panel
+                    grid.lines(x = c(0.03, 0.32), y = c(0.15, 0.15),
+                               gp = gpar(col = adjustcolor("#E8913A", alpha.f = 0.6), lwd = 3))
+
+                    # Logo in white area (right side, upper portion)
+                    if (!is.null(logo_grob)) {
+                        pushViewport(viewport(x = 0.42, y = 0.90, width = 0.42, height = 0.14,
+                                              just = c("left", "center")))
                         grid.draw(logo_grob)
                         popViewport()
-
-                        # Adjust title position if logo is present
-                        title_y <- 0.7
-                        subtitle_y <- 0.6
-                        date_y <- 0.5
-                        client_y <- 0.4
                     } else {
-                        # Original positions without logo
-                        title_y <- 0.7
-                        subtitle_y <- 0.6
-                        date_y <- 0.5
-                        client_y <- 0.4
+                        grid.text("INSELE CAPITAL PARTNERS",
+                                  x = 0.42, y = 0.89, just = "left",
+                                  gp = gpar(fontsize = 20, fontface = 2, col = "#1B3A6B"))
+                        grid.text("BROKING SERVICES",
+                                  x = 0.42, y = 0.85, just = "left",
+                                  gp = gpar(fontsize = 12, col = "#5B7B8A"))
                     }
 
-                    # Title elements
-                    title_grob <- textGrob(
-                        "SA Government Bond Analysis Report",
-                        x = 0.5, y = title_y,
-                        gp = gpar(fontsize = 24, fontface = 2, col = "#1B3A6B")
-                    )
-                    subtitle_grob <- textGrob(
-                        if(!is.null(input$report_title)) input$report_title else "Market Analysis",
-                        x = 0.5, y = subtitle_y,
-                        gp = gpar(fontsize = 18, col = "#333333")
-                    )
-                    date_grob <- textGrob(
-                        format(if(!is.null(input$report_date)) input$report_date else Sys.Date(), "%B %d, %Y"),
-                        x = 0.5, y = date_y,
-                        gp = gpar(fontsize = 14, col = "#666666")
-                    )
-                    client_grob <- if(!is.null(input$client_name) && input$client_name != "") {
-                        textGrob(
-                            paste("Prepared for:", input$client_name),
-                            x = 0.5, y = client_y,
-                            gp = gpar(fontsize = 12, fontface = 3, col = "#666666")
-                        )
-                    } else { nullGrob() }
+                    # Orange horizontal rule below logo
+                    grid.lines(x = c(0.38, 0.92), y = c(0.81, 0.81),
+                               gp = gpar(col = "#E8913A", lwd = 3))
 
-                    # Add decorative line under logo
-                    if(!is.null(logo_grob)) {
-                        grid.lines(x = c(0.2, 0.8), y = c(0.82, 0.82),
-                                   gp = gpar(col = "#1B3A6B", lwd = 2))
+                    # Report title — large bold navy text
+                    report_title_text <- if (!is.null(input$report_title)) input$report_title else "SA Government Bond\nAnalysis Report"
+                    grid.text(toupper(report_title_text),
+                              x = 0.42, y = 0.68, just = "left",
+                              gp = gpar(fontsize = 28, fontface = 2, col = "#1B3A6B", lineheight = 1.2))
+
+                    # Date in orange
+                    grid.text(format(if (!is.null(input$report_date)) input$report_date else Sys.Date(), "%B %d, %Y"),
+                              x = 0.42, y = 0.52, just = "left",
+                              gp = gpar(fontsize = 16, col = "#E8913A"))
+
+                    # Client name if provided
+                    if (!is.null(input$client_name) && input$client_name != "") {
+                        grid.text(paste("Prepared for:", input$client_name),
+                                  x = 0.42, y = 0.44, just = "left",
+                                  gp = gpar(fontsize = 13, fontface = 3, col = "#666666"))
                     }
 
-                    grid.draw(title_grob)
-                    grid.draw(subtitle_grob)
-                    grid.draw(date_grob)
-                    grid.draw(client_grob)
+                    # Footer bar (full width navy)
+                    grid.rect(x = unit(0.5, "npc"), y = unit(0.03, "npc"),
+                              width = unit(1, "npc"), height = unit(0.06, "npc"),
+                              gp = gpar(fill = "#1B3A6B", col = NA))
+                    grid.text("www.insele.capital",
+                              x = 0.10, y = 0.03, just = "left",
+                              gp = gpar(fontsize = 9, col = "white"))
+                    grid.text("+27 11 286 1949",
+                              x = 0.35, y = 0.03,
+                              gp = gpar(fontsize = 9, col = "white"))
+                    grid.text("bonds@insele.capital",
+                              x = 0.60, y = 0.03,
+                              gp = gpar(fontsize = 9, col = "white"))
+                    grid.text("Prepared by: Insele Capital Partners",
+                              x = 0.90, y = 0.03, just = "right",
+                              gp = gpar(fontsize = 9, col = "white"))
 
-                    # Add company name at bottom of title page if no logo
-                    if(is.null(logo_grob)) {
-                        company_grob <- textGrob(
-                            "INSELE CAPITAL PARTNERS",
-                            x = 0.5, y = 0.15,
-                            gp = gpar(fontsize = 16, fontface = 2, col = "#1B3A6B")
-                        )
-                        grid.draw(company_grob)
-                    }
                     }, error = function(e) {
                         message(sprintf("Title page error: %s", e$message))
                         grid.newpage()
@@ -12035,16 +12040,19 @@ server <- function(input, output, session) {
                     }))
                     total_pages <- 2 + total_chart_count + 1  # title + exec + charts (section headers combined with first chart) + footer
 
-                    # Helper to add page number footer
-                    add_page_number <- function(pn, tp) {
-                        if (pn > 1) {
-                            grid.text(
-                                label = paste0("Page ", pn, " of ", tp),
-                                x = 0.95, y = 0.02,
-                                just = c("right", "bottom"),
-                                gp = gpar(fontsize = 8, col = "#999999", fontface = 1)
-                            )
-                        }
+                    # Helper to add branded footer with copyright + page number
+                    add_footer <- function(page_num, total) {
+                        grid.text(
+                            sprintf("\u00A9 %s Insele Capital Partners - Confidential",
+                                    format(Sys.Date(), "%Y")),
+                            x = 0.5, y = 0.02,
+                            gp = gpar(fontsize = 8, col = "#999999")
+                        )
+                        grid.text(
+                            sprintf("Page %d of %d", page_num, total),
+                            x = 0.95, y = 0.02,
+                            gp = gpar(fontsize = 8, col = "#999999")
+                        )
                     }
 
                     # EXECUTIVE SUMMARY PAGE - DASHBOARD STYLE
@@ -12053,21 +12061,7 @@ server <- function(input, output, session) {
                         tryCatch({
                         grid.newpage()
 
-                        # Add small logo in header
-                        if(!is.null(logo_grob)) {
-                            pushViewport(viewport(x = 0.92, y = 0.95, width = 0.1, height = 0.06,
-                                                  just = c("right", "top")))
-                            grid.draw(logo_grob)
-                            popViewport()
-                        }
-
-                        # Header line
-                        grid.lines(x = c(0.05, 0.95), y = c(0.92, 0.92),
-                                   gp = gpar(col = "#E0E0E0", lwd = 1))
-
-                        grid.text("Executive Summary",
-                                  x = 0.05, y = 0.95, just = "left",
-                                  gp = gpar(fontsize = 18, fontface = 2, col = "#1B3A6B"))
+                        draw_page_header("Executive Summary")
 
                         # Dashboard-style metric cards
                         exec_metrics <- summaries$exec_metrics
@@ -12141,35 +12135,22 @@ server <- function(input, output, session) {
                             popViewport()
                         }
 
-                        add_page_number(page_number, total_pages)
+                        add_footer(page_number, total_pages)
                         }, error = function(e) {
                             message(sprintf("Executive summary page error: %s", e$message))
                             grid.newpage()
                             grid.text("Executive Summary", x = 0.5, y = 0.5,
                                       gp = gpar(fontsize = 18, fontface = 2, col = "#1B3A6B"))
-                            add_page_number(page_number, total_pages)
+                            add_footer(page_number, total_pages)
                         })
                     }
 
-                    # Function to add header with logo to each page
-                    add_page_header <- function(title_text = "") {
-                        if(!is.null(logo_grob)) {
-                            # Small logo in corner
-                            pushViewport(viewport(x = 0.92, y = 0.97, width = 0.12, height = 0.05))
-                            grid.draw(logo_grob)
-                            popViewport()
-                        }
-
-                        # Page title if provided
-                        if(title_text != "") {
-                            grid.text(title_text, x = 0.05, y = 0.97,
-                                      just = "left",
-                                      gp = gpar(fontsize = 12, fontface = 2, col = "#1B3A6B"))
-                        }
-
-                        # Separator line
-                        grid.lines(x = c(0.05, 0.95), y = c(0.94, 0.94),
-                                   gp = gpar(col = "#E0E0E0", lwd = 0.5))
+                    # Full-width navy header bar matching pre-auction/treasury style
+                    draw_page_header <- function(title) {
+                        grid.rect(x = 0.5, y = 0.96, width = 1, height = 0.06,
+                                  gp = gpar(fill = "#1B3A6B", col = NA))
+                        grid.text(title, x = 0.5, y = 0.96,
+                                  gp = gpar(fontsize = 16, fontface = 2, col = "white"))
                     }
 
                     # ══════════════════════════════════════════════════════════════
@@ -12204,7 +12185,7 @@ server <- function(input, output, session) {
                         if (section == "recommendations") {
                             page_number <- page_number + 1
                             grid.newpage()
-                            add_page_header("Trading Recommendations")
+                            draw_page_header("Trading Recommendations")
 
                             if (length(trading_recs) > 0) {
                                 y_pos <- 0.88
@@ -12246,7 +12227,7 @@ server <- function(input, output, session) {
                                           gp = gpar(fontsize = 11, col = "#333333", lineheight = 1.4))
                             }
 
-                            add_page_number(page_number, total_pages)
+                            add_footer(page_number, total_pages)
                             next
                         }
 
@@ -12269,59 +12250,41 @@ server <- function(input, output, session) {
                                     grid.newpage()
 
                                     if (first_chart_in_section) {
-                                        # Combined section header (top 22%) + chart (bottom 78%)
-                                        # Section header area
-                                        pushViewport(viewport(x = 0.5, y = 0.91, width = 0.92, height = 0.16))
-
-                                        # Logo top-right of header
-                                        if (!is.null(logo_grob)) {
-                                            pushViewport(viewport(x = 0.95, y = 0.85, width = 0.08, height = 0.5,
-                                                                  just = c("right", "top")))
-                                            grid.draw(logo_grob)
-                                            popViewport()
-                                        }
-
-                                        # Section title
-                                        grid.text(section_title, x = 0.02, y = 0.65, just = "left",
-                                                  gp = gpar(fontsize = 18, fontface = 2, col = "#1B3A6B"))
-
-                                        # Horizontal rule
-                                        grid.lines(x = c(0, 1), y = c(0.35, 0.35),
-                                                   gp = gpar(col = "#1B3A6B", lwd = 1.5))
-
-                                        # Section summary text (compact)
+                                        # Combined section header + first chart with navy bar
+                                        draw_page_header(section_title)
+                                        # Section summary text below bar
                                         sec_summary <- section_summaries[[section]] %||% ""
                                         if (nchar(sec_summary) > 0) {
-                                            wrapped_summary <- strwrap(sec_summary, width = 110)
+                                            wrapped_summary <- strwrap(sec_summary, width = 130)
                                             display_summary <- paste(wrapped_summary[1:min(2, length(wrapped_summary))], collapse = "\n")
-                                            grid.text(display_summary, x = 0.02, y = 0.1, just = "left",
+                                            grid.text(display_summary, x = 0.05, y = 0.89, just = "left",
                                                       gp = gpar(fontsize = 9, col = "#666666", lineheight = 1.3))
                                         }
-
-                                        popViewport()
-
-                                        # Chart area (below header)
-                                        pushViewport(viewport(x = 0.5, y = 0.39, width = 0.92, height = 0.72))
+                                        # Orange accent line under summary
+                                        grid.lines(x = c(0.04, 0.96), y = c(0.86, 0.86),
+                                                   gp = gpar(col = "#E8913A", lwd = 1))
+                                        # Chart in remaining space
+                                        pushViewport(viewport(x = 0.5, y = 0.42, width = 0.92, height = 0.78))
                                         grid.draw(chart_grob)
                                         popViewport()
 
                                         first_chart_in_section <- FALSE
                                     } else {
-                                        # Subsequent charts: full page with small header
-                                        add_page_header(gsub("_", " ", tools::toTitleCase(chart_name)))
+                                        # Subsequent charts: navy bar header
+                                        draw_page_header(gsub("_", " ", tools::toTitleCase(chart_name)))
                                         pushViewport(viewport(x = 0.5, y = 0.45, width = 0.92, height = 0.82))
                                         grid.draw(chart_grob)
                                         popViewport()
                                     }
 
-                                    add_page_number(page_number, total_pages)
+                                    add_footer(page_number, total_pages)
                                 }, error = function(e) {
                                     grid.newpage()
-                                    add_page_header()
+                                    draw_page_header("Chart Unavailable")
                                     grid.text(paste("Chart", chart_name, "temporarily unavailable"),
                                               x = 0.5, y = 0.5,
                                               gp = gpar(fontsize = 12, col = "#666666"))
-                                    add_page_number(page_number, total_pages)
+                                    add_footer(page_number, total_pages)
                                 })
                             }
                         }
@@ -12335,7 +12298,7 @@ server <- function(input, output, session) {
                             grid.text("No charts available for this section",
                                       x = 0.5, y = 0.45,
                                       gp = gpar(fontsize = 11, col = "#999999"))
-                            add_page_number(page_number, total_pages)
+                            add_footer(page_number, total_pages)
                         }
                     }
 
@@ -12344,28 +12307,39 @@ server <- function(input, output, session) {
                     tryCatch({
                     grid.newpage()
 
-                    # Add logo at bottom
-                    if(!is.null(logo_grob)) {
-                        pushViewport(viewport(x = 0.5, y = 0.7, width = 0.25, height = 0.1))
+                    # Navy header bar
+                    draw_page_header("Disclaimer")
+
+                    if (!is.null(logo_grob)) {
+                        pushViewport(viewport(x = 0.5, y = 0.65, width = 0.25, height = 0.1))
                         grid.draw(logo_grob)
                         popViewport()
                     }
 
-                    footer_grob <- textGrob(
-                        paste("© ", format(Sys.Date(), "%Y"),
-                              " Insele Capital Partners. All rights reserved.\n\n",
+                    # Orange rule
+                    grid.lines(x = c(0.25, 0.75), y = c(0.57, 0.57),
+                               gp = gpar(col = "#E8913A", lwd = 1.5))
+
+                    grid.text(
+                        paste("\u00A9", format(Sys.Date(), "%Y"),
+                              "Insele Capital Partners. All rights reserved.\n\n",
                               "This report is proprietary and confidential.\n",
-                              "Disclaimer: This report is for informational purposes only ",
+                              "Disclaimer: This report is for informational purposes only",
                               "and does not constitute investment advice."),
-                        x = 0.5, y = 0.4,
+                        x = 0.5, y = 0.42,
                         gp = gpar(fontsize = 10, col = "#666666", lineheight = 1.5)
                     )
-                    grid.draw(footer_grob)
-                    add_page_number(page_number, total_pages)
+
+                    # "The Power of Partnership" tagline
+                    grid.text("The Power of Partnership",
+                              x = 0.5, y = 0.25,
+                              gp = gpar(fontsize = 14, fontface = 3, col = "#E8913A"))
+
+                    add_footer(page_number, total_pages)
                     }, error = function(e) {
                         message(sprintf("Footer page error: %s", e$message))
                         grid.newpage()
-                        grid.text("© Insele Capital Partners", x = 0.5, y = 0.5,
+                        grid.text("\u00A9 Insele Capital Partners", x = 0.5, y = 0.5,
                                   gp = gpar(fontsize = 10, col = "#666666"))
                     })
 
