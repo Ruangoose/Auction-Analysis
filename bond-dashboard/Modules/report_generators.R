@@ -4546,17 +4546,27 @@ generate_auto_commentary <- function(type, data_list) {
         zscore_threshold <- data_list$zscore_threshold %||% 2.0
 
         if (!is.null(summary_df) && nrow(summary_df) > 0) {
-            actionable <- summary_df %>% dplyr::filter(abs(`Z-Score`) >= zscore_threshold)
-            neutral <- summary_df %>% dplyr::filter(abs(`Z-Score`) < zscore_threshold)
+            # Derive Signal column if not present (raw summary only has Z_Score)
+            if (!"Signal" %in% names(summary_df) && "Z_Score" %in% names(summary_df)) {
+                summary_df <- summary_df %>% dplyr::mutate(
+                    Signal = dplyr::case_when(
+                        Z_Score > zscore_threshold ~ "SELL WINGS / BUY BODY",
+                        Z_Score < -zscore_threshold ~ "BUY WINGS / SELL BODY",
+                        TRUE ~ "NEUTRAL"
+                    )
+                )
+            }
+            actionable <- summary_df %>% dplyr::filter(abs(Z_Score) >= zscore_threshold)
+            neutral <- summary_df %>% dplyr::filter(abs(Z_Score) < zscore_threshold)
 
             lines <- c(lines, sprintf("Butterfly Spread Analysis: %d total spreads analysed, %d actionable (|Z-Score| >= %.1f), %d neutral.",
                                       nrow(summary_df), nrow(actionable), zscore_threshold, nrow(neutral)))
 
             if (nrow(actionable) > 0) {
-                top_spread <- actionable %>% dplyr::arrange(desc(abs(`Z-Score`))) %>% dplyr::slice(1)
+                top_spread <- actionable %>% dplyr::arrange(desc(abs(Z_Score))) %>% dplyr::slice(1)
                 trade_name <- gsub("Butterfly: ", "", top_spread$Trade)
                 lines <- c(lines, sprintf("Strongest signal: %s with Z-Score of %.2f (%s).",
-                                          trade_name, top_spread$`Z-Score`, top_spread$Signal))
+                                          trade_name, top_spread$Z_Score, top_spread$Signal))
 
                 buy_wings <- actionable %>% dplyr::filter(grepl("BUY", Signal, ignore.case = TRUE))
                 sell_wings <- actionable %>% dplyr::filter(grepl("SELL", Signal, ignore.case = TRUE))
@@ -4570,7 +4580,11 @@ generate_auto_commentary <- function(type, data_list) {
             }
 
             # Stationarity check
-            if ("Stationary" %in% names(summary_df)) {
+            if ("Is_Stationary" %in% names(summary_df)) {
+                stationary_count <- sum(isTRUE(summary_df$Is_Stationary) | summary_df$Is_Stationary == TRUE, na.rm = TRUE)
+                lines <- c(lines, sprintf("Mean-reversion reliability: %d of %d spreads are stationary (ADF test), supporting mean-reversion strategies.",
+                                          stationary_count, nrow(summary_df)))
+            } else if ("Stationary" %in% names(summary_df)) {
                 stationary_count <- sum(grepl("Yes", summary_df$Stationary, ignore.case = TRUE))
                 lines <- c(lines, sprintf("Mean-reversion reliability: %d of %d spreads are stationary (ADF test), supporting mean-reversion strategies.",
                                           stationary_count, nrow(summary_df)))
@@ -4987,11 +5001,21 @@ generate_butterfly_report_pdf <- function(file, selected_spreads, butterfly_deta
             selected_rows <- butterfly_summary[spread_names_full %in% selected_spreads, ]
 
             if (nrow(selected_rows) > 0) {
-                selected_rows <- selected_rows %>% dplyr::arrange(desc(abs(`Z-Score`)))
+                # Derive Signal column if not present
+                if (!"Signal" %in% names(selected_rows) && "Z_Score" %in% names(selected_rows)) {
+                    selected_rows <- selected_rows %>% dplyr::mutate(
+                        Signal = dplyr::case_when(
+                            Z_Score > zscore_threshold ~ "SELL WINGS / BUY BODY",
+                            Z_Score < -zscore_threshold ~ "BUY WINGS / SELL BODY",
+                            TRUE ~ "NEUTRAL"
+                        )
+                    )
+                }
+                selected_rows <- selected_rows %>% dplyr::arrange(desc(abs(Z_Score)))
 
                 # Prepare display data
                 display_cols <- intersect(
-                    c("Trade", "Z-Score", "Signal", "Current Spread", "Mean", "Std Dev", "Stationary"),
+                    c("Trade", "Z_Score", "Signal", "Current", "Mean", "Diff", "Is_Stationary"),
                     names(selected_rows)
                 )
                 display_df <- selected_rows[, display_cols, drop = FALSE]
