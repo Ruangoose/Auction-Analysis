@@ -135,7 +135,7 @@ generate_ytd_bond_issuance_chart <- function(data, params = list()) {
 
         # Y-axis: format in millions
         scale_y_continuous(
-            labels = function(x) paste0(format(x, big.mark = ","), "m"),
+            labels = function(x) paste0("R", format(x, big.mark = ",", scientific = FALSE), "m"),
             expand = expansion(mult = c(0, 0.15))  # Add space for labels
         ) +
 
