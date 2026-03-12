@@ -1134,15 +1134,15 @@ generate_signal_matrix_heatmap <- function(data) {
             # MACD Signal (YIELD perspective, inverted for price)
             # Positive histogram = yields momentum UP = prices falling = SELL
             # Negative histogram = yields momentum DOWN = prices rising = BUY
-            # Dead zone ±0.02 to avoid false signals from near-zero values
+            # Dead zone ±0.03 to avoid false signals from near-zero values
             # ═══════════════════════════════════════════════════════════════
             macd_signal_score = case_when(
                 is.na(macd_histogram) ~ 0L,
-                macd_histogram > 0.05 ~ -2L,    # Strong bullish yields → Strong Sell
-                macd_histogram > 0.02 ~ -1L,    # Bullish yields → Sell
-                macd_histogram < -0.05 ~ 2L,    # Strong bearish yields → Strong Buy
-                macd_histogram < -0.02 ~ 1L,    # Bearish yields → Buy
-                TRUE ~ 0L                       # Dead zone (±0.02) → Neutral
+                macd_histogram > 0.08 ~ -2L,    # Strong bullish yields → Strong Sell
+                macd_histogram > 0.03 ~ -1L,    # Bullish yields → Sell
+                macd_histogram < -0.08 ~ 2L,    # Strong bearish yields → Strong Buy
+                macd_histogram < -0.03 ~ 1L,    # Bearish yields → Buy
+                TRUE ~ 0L                       # Dead zone (±0.03) → Neutral
             ),
 
             # ═══════════════════════════════════════════════════════════════
