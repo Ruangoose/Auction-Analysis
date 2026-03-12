@@ -729,10 +729,10 @@ calculate_advanced_technicals <- function(data) {
                 macd_signal_score = case_when(
                     is.na(macd_histogram) ~ 0L,
                     macd_histogram > 0.05 ~ -2L,   # Strong bullish yields = prices falling fast = Strong Sell
-                    macd_histogram > 0 ~ -1L,      # Bullish yields = prices falling = Sell
+                    macd_histogram > 0.02 ~ -1L,   # Bullish yields = prices falling = Sell
                     macd_histogram < -0.05 ~ 2L,   # Strong bearish yields = prices rising fast = Strong Buy
-                    macd_histogram < 0 ~ 1L,       # Bearish yields = prices rising = Buy
-                    TRUE ~ 0L
+                    macd_histogram < -0.02 ~ 1L,   # Bearish yields = prices rising = Buy
+                    TRUE ~ 0L                      # Dead zone (±0.02) = Neutral
                 ),
 
                 # Momentum/ROC Signal Score (-2 to +2)
