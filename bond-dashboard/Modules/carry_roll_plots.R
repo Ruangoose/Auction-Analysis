@@ -757,26 +757,72 @@ calculate_butterfly_spreads <- function(bond_data, lookback_days = 365) {
     date_range <- range(bond_data$date, na.rm = TRUE)
     message(sprintf("Date range: %s to %s", date_range[1], date_range[2]))
 
-    # Get unique bonds sorted by duration
-    bonds_by_duration <- bond_data %>%
-        group_by(bond) %>%
-        summarise(
-            avg_duration = mean(modified_duration, na.rm = TRUE),
-            n_obs = n(),
-            .groups = "drop"
-        ) %>%
-        filter(!is.na(avg_duration)) %>%
-        arrange(avg_duration)
+    # ══════════════════════════════════════════════════════════════════════
+    # SORT BONDS BY ACTUAL MATURITY DATE (not modified duration!)
+    # Modified duration fluctuates with yield levels and coupon rates,
+    # causing bonds with similar durations (e.g., R214/R2048/R2053) to
+    # swap rank. Maturity date is fixed and gives the correct curve ordering.
+    # Falls back to modified duration ONLY if mature_date is unavailable.
+    # ══════════════════════════════════════════════════════════════════════
+    has_maturity <- "mature_date" %in% names(bond_data)
 
-    message(sprintf("Bonds by duration: %d bonds", nrow(bonds_by_duration)))
+    if (has_maturity) {
+        bonds_ordered <- bond_data %>%
+            group_by(bond) %>%
+            summarise(
+                maturity_date = first(na.omit(mature_date)),
+                avg_duration = mean(modified_duration, na.rm = TRUE),
+                n_obs = n(),
+                .groups = "drop"
+            ) %>%
+            filter(!is.na(avg_duration)) %>%
+            # Sort by maturity date (primary), fall back to duration for bonds missing maturity
+            arrange(
+                ifelse(is.na(maturity_date), 1, 0),   # bonds WITH maturity first
+                maturity_date,                          # then by actual maturity
+                avg_duration                            # tiebreaker / fallback
+            )
+
+        n_with_maturity <- sum(!is.na(bonds_ordered$maturity_date))
+        n_without <- sum(is.na(bonds_ordered$maturity_date))
+        message(sprintf("Bond ordering: %d by maturity date, %d by duration fallback",
+                        n_with_maturity, n_without))
+        if (n_without > 0) {
+            missing_bonds <- bonds_ordered$bond[is.na(bonds_ordered$maturity_date)]
+            message(sprintf("  WARNING: Bonds missing maturity date (using duration): %s",
+                            paste(missing_bonds, collapse = ", ")))
+        }
+    } else {
+        message("WARNING: mature_date column not available — falling back to modified duration ordering")
+        message("  This may produce invalid butterflies for bonds with similar durations!")
+        bonds_ordered <- bond_data %>%
+            group_by(bond) %>%
+            summarise(
+                maturity_date = as.Date(NA),
+                avg_duration = mean(modified_duration, na.rm = TRUE),
+                n_obs = n(),
+                .groups = "drop"
+            ) %>%
+            filter(!is.na(avg_duration)) %>%
+            arrange(avg_duration)
+    }
+
+    message(sprintf("Bonds ordered: %d bonds", nrow(bonds_ordered)))
+    # Log the ordering for verification
+    for (i in seq_len(nrow(bonds_ordered))) {
+        mat_str <- if (!is.na(bonds_ordered$maturity_date[i]))
+            format(bonds_ordered$maturity_date[i], "%Y-%m-%d") else "N/A"
+        message(sprintf("  %d. %s (maturity: %s, avg_dur: %.2f)",
+                        i, bonds_ordered$bond[i], mat_str, bonds_ordered$avg_duration[i]))
+    }
 
     # Need at least 3 bonds
-    if (nrow(bonds_by_duration) < 3) {
+    if (nrow(bonds_ordered) < 3) {
         message("ERROR: Need at least 3 bonds with duration data")
         return(NULL)
     }
 
-    bond_names <- bonds_by_duration$bond
+    bond_names <- bonds_ordered$bond
 
     # Filter to lookback period
     max_date <- max(bond_data$date, na.rm = TRUE)
