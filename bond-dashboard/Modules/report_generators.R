@@ -4866,7 +4866,7 @@ generate_technical_analysis_pdf <- function(file, selected_bonds, indicator_type
 
             } else if (pg$type == "commentary") {
                 draw_page_header("Commentary")
-                wrapped <- strwrap(commentary_final, width = 90)
+                wrapped <- strwrap(commentary_final, width = 130)
                 commentary_formatted <- paste(wrapped, collapse = "\n")
                 grid.text(commentary_formatted,
                           x = 0.08, y = 0.85, just = c("left", "top"),
@@ -4891,7 +4891,7 @@ generate_technical_analysis_pdf <- function(file, selected_bonds, indicator_type
                     "Do not distribute without authorisation.",
                     sep = "\n"
                 )
-                wrapped <- strwrap(disclaimer_text, width = 90)
+                wrapped <- strwrap(disclaimer_text, width = 130)
                 grid.text(paste(wrapped, collapse = "\n"),
                           x = 0.08, y = 0.82, just = c("left", "top"),
                           gp = gpar(fontsize = 10, col = "#666666", lineheight = 1.5,
@@ -5178,7 +5178,7 @@ generate_butterfly_report_pdf <- function(file, selected_spreads, butterfly_deta
 
             } else if (pg$type == "commentary") {
                 draw_page_header("Commentary")
-                wrapped <- strwrap(commentary_final, width = 90)
+                wrapped <- strwrap(commentary_final, width = 130)
                 commentary_formatted <- paste(wrapped, collapse = "\n")
                 grid.text(commentary_formatted,
                           x = 0.08, y = 0.85, just = c("left", "top"),
@@ -5202,7 +5202,7 @@ generate_butterfly_report_pdf <- function(file, selected_spreads, butterfly_deta
                     "Do not distribute without authorisation.",
                     sep = "\n"
                 )
-                wrapped <- strwrap(disclaimer_text, width = 90)
+                wrapped <- strwrap(disclaimer_text, width = 130)
                 grid.text(paste(wrapped, collapse = "\n"),
                           x = 0.08, y = 0.82, just = c("left", "top"),
                           gp = gpar(fontsize = 10, col = "#666666", lineheight = 1.5,
@@ -5502,7 +5502,7 @@ generate_relative_value_pdf <- function(file, selected_charts, curve_model = "lo
 
             } else if (pg$type == "commentary") {
                 draw_page_header("Commentary")
-                wrapped <- strwrap(commentary_final, width = 90)
+                wrapped <- strwrap(commentary_final, width = 130)
                 commentary_formatted <- paste(wrapped, collapse = "\n")
                 grid.text(commentary_formatted,
                           x = 0.08, y = 0.85, just = c("left", "top"),
@@ -5527,7 +5527,7 @@ generate_relative_value_pdf <- function(file, selected_charts, curve_model = "lo
                     "Do not distribute without authorisation.",
                     sep = "\n"
                 )
-                wrapped <- strwrap(disclaimer_text, width = 90)
+                wrapped <- strwrap(disclaimer_text, width = 130)
                 grid.text(paste(wrapped, collapse = "\n"),
                           x = 0.08, y = 0.82, just = c("left", "top"),
                           gp = gpar(fontsize = 10, col = "#666666", lineheight = 1.5,
