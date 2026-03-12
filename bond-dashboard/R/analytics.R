@@ -203,13 +203,27 @@ decompose_curve <- function(df) {
 #' @param min_zscore Minimum z-score for trade signal
 #' @return Dataframe of butterfly trades
 identify_butterfly_trades <- function(df, min_zscore = 1.5) {
-    # Get latest data
+    # Get latest data — sort by MATURITY DATE for correct curve ordering
+    # Modified duration can swap rank for bonds with similar risk profiles
+    has_maturity <- "mature_date" %in% names(df)
+
     latest <- df %>%
         group_by(bond) %>%
         filter(date == max(date)) %>%
         ungroup() %>%
-        arrange(modified_duration) %>%
         filter(!is.na(yield_to_maturity))
+
+    if (has_maturity) {
+        latest <- latest %>%
+            arrange(
+                ifelse(is.na(mature_date), 1, 0),
+                mature_date,
+                modified_duration
+            )
+    } else {
+        latest <- latest %>%
+            arrange(modified_duration)
+    }
 
     if (nrow(latest) < 3) return(data.frame())
 
