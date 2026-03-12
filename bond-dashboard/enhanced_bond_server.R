@@ -954,38 +954,39 @@ server <- function(input, output, session) {
 
         # ════════════════════════════════════════════════════════════════════════
         # Calculate individual indicator signals (-2 to +2 scale)
-        # These are YIELD perspective signals that will be INVERTED for bond prices
+        # BOND PRICE perspective (trend-following on yields):
+        # Positive score = bullish for bond prices (yields falling)
+        # Negative score = bearish for bond prices (yields rising)
         # ════════════════════════════════════════════════════════════════════════
 
         result <- latest_data %>%
             mutate(
                 # ═══════════════════════════════════════════════════════════════
-                # RSI Signal (YIELD perspective)
-                # High RSI = overbought yields = yields may reverse DOWN
-                # For bonds: yields down = prices up = GOOD
-                # So: High RSI → POSITIVE signal (buy)
+                # RSI Signal (PRICE perspective, trend-following)
+                # Low RSI on yields = yields falling = bond prices rising = BUY
+                # High RSI on yields = yields rising = bond prices falling = SELL
                 # ═══════════════════════════════════════════════════════════════
                 rsi_signal_yield = case_when(
                     is.na(rsi_14) ~ 0L,
-                    rsi_14 > 80 ~ 2L,    # Extremely overbought yields → Strong Buy
-                    rsi_14 > 70 ~ 1L,    # Overbought yields → Buy
-                    rsi_14 < 20 ~ -2L,   # Extremely oversold yields → Strong Sell
-                    rsi_14 < 30 ~ -1L,   # Oversold yields → Sell
+                    rsi_14 < 20 ~ 2L,    # Extremely oversold yields = prices rising fast → Strong Buy
+                    rsi_14 < 30 ~ 1L,    # Oversold yields = prices rising → Buy
+                    rsi_14 > 80 ~ -2L,   # Extremely overbought yields = prices falling fast → Strong Sell
+                    rsi_14 > 70 ~ -1L,   # Overbought yields = prices falling → Sell
                     TRUE ~ 0L            # Neutral
                 ),
 
                 # ═══════════════════════════════════════════════════════════════
-                # BB Signal (YIELD perspective)
-                # bb_position > 1 = above upper band = yields extended high
-                # Yields extended high may reverse → GOOD for bond prices
+                # BB Signal (PRICE perspective, trend-following)
+                # bb_position < 0 = yields below lower band = yields falling = prices rising = BUY
+                # bb_position > 1 = yields above upper band = yields rising = prices falling = SELL
                 # ═══════════════════════════════════════════════════════════════
                 bb_signal_yield = case_when(
                     is.na(bb_position) ~ 0L,
-                    bb_position > 1.0 ~ 2L,    # Above upper band → Strong Buy
-                    bb_position > 0.8 ~ 1L,    # Near upper band → Buy
-                    bb_position < 0 ~ -2L,     # Below lower band → Strong Sell
-                    bb_position < 0.2 ~ -1L,   # Near lower band → Sell
-                    TRUE ~ 0L                   # Within bands → Neutral
+                    bb_position < 0 ~ 2L,       # Below lower band = yields falling strongly → Strong Buy
+                    bb_position < 0.2 ~ 1L,     # Near lower band = yields falling → Buy
+                    bb_position > 1.0 ~ -2L,    # Above upper band = yields rising strongly → Strong Sell
+                    bb_position > 0.8 ~ -1L,    # Near upper band = yields rising → Sell
+                    TRUE ~ 0L                    # Within bands → Neutral
                 ),
 
                 # ═══════════════════════════════════════════════════════════════
