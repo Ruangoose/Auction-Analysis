@@ -1092,204 +1092,82 @@ generate_signal_matrix_heatmap <- function(data) {
         ungroup()
 
     # ════════════════════════════════════════════════════════════════════════
-    # PHASE 1: CROSS-SECTIONAL PERCENTILE RANKING
+    # GENERATE SIGNALS - Fixed thresholds matching technical_signals_master
     # ════════════════════════════════════════════════════════════════════════
-    # Calculate where each bond ranks RELATIVE TO OTHER BONDS today
-    # This prevents uniform signals in trending markets
-
-    signal_matrix <- signal_matrix %>%
-        mutate(
-            # Cross-sectional rankings (0-1 scale, where 0 = lowest, 1 = highest)
-            rsi_rank_cross = percent_rank(rsi_14),
-            macd_rank_cross = percent_rank(macd_normalized),
-            bb_rank_cross = percent_rank(bb_position),
-            momentum_rank_cross = percent_rank(roc_20)
-        )
-
-    # ════════════════════════════════════════════════════════════════════════
-    # PHASE 2: GENERATE SIGNALS (Hybrid: Time-Series + Cross-Sectional)
-    # ════════════════════════════════════════════════════════════════════════
+    # Uses the same fixed thresholds as enhanced_bond_server.R to ensure
+    # consistency between the Trading Signal Matrix and the dashboard.
+    # BOND PRICE perspective (trend-following on yields):
+    # Positive score = bullish for bond prices (yields falling)
+    # Negative score = bearish for bond prices (yields rising)
 
     signal_scores <- signal_matrix %>%
         mutate(
             # ═══════════════════════════════════════════════════════════════
-            # RSI SIGNAL (Hybrid: 60% historical + 40% relative)
-            # PRICE PERSPECTIVE (trend-following):
-            # - Low RSI on yields = yields falling = bond prices rising = BUY
-            # - High RSI on yields = yields rising = bond prices falling = SELL
+            # RSI Signal (PRICE perspective, trend-following)
+            # Low RSI on yields = yields falling = bond prices rising = BUY
+            # High RSI on yields = yields rising = bond prices falling = SELL
             # ═══════════════════════════════════════════════════════════════
-
-            # Time-series signal (vs own history)
-            rsi_signal_timeseries = case_when(
-                is.na(rsi_14) ~ 0,
-                # Use bond-specific thresholds instead of fixed 30/70
-                !is.na(rsi_threshold_buy) & !is.na(rsi_threshold_sell) &
-                    rsi_14 < rsi_threshold_buy ~ 2,   # Low RSI = yields falling = Buy prices
-                !is.na(rsi_median) & rsi_14 < rsi_median * 0.9 ~ 1,
-                !is.na(rsi_threshold_sell) & rsi_14 > rsi_threshold_sell ~ -2,  # High RSI = yields rising = Sell prices
-                !is.na(rsi_median) & rsi_14 > rsi_median * 1.1 ~ -1,
-                # Fallback to traditional thresholds if dynamic ones unavailable
-                rsi_14 < 30 ~ 2,   # Oversold yields = Buy prices
-                rsi_14 < 40 ~ 1,
-                rsi_14 > 70 ~ -2,  # Overbought yields = Sell prices
-                rsi_14 > 60 ~ -1,
-                TRUE ~ 0
+            rsi_signal = case_when(
+                is.na(rsi_14) ~ 0L,
+                rsi_14 < 20 ~ 2L,    # Extremely oversold yields → Strong Buy
+                rsi_14 < 30 ~ 1L,    # Oversold yields → Buy
+                rsi_14 > 80 ~ -2L,   # Extremely overbought yields → Strong Sell
+                rsi_14 > 70 ~ -1L,   # Overbought yields → Sell
+                TRUE ~ 0L            # Neutral (30-70)
             ),
 
-            # Cross-sectional signal (vs other bonds - for price perspective)
-            # Lower RSI rank = yields more oversold relative to peers = Buy
-            rsi_signal_cross = case_when(
-                is.na(rsi_rank_cross) ~ 0,
-                rsi_rank_cross < 0.15 ~ 2,   # Bottom 15% RSI = relatively oversold yields = Buy prices
-                rsi_rank_cross < 0.35 ~ 1,   # Bottom 35%
-                rsi_rank_cross > 0.85 ~ -2,  # Top 15% RSI = relatively overbought yields = Sell prices
-                rsi_rank_cross > 0.65 ~ -1,  # Top 35%
-                TRUE ~ 0
+            # ═══════════════════════════════════════════════════════════════
+            # BB Signal (PRICE perspective, trend-following)
+            # bb_position < 0 = yields below lower band = prices rising = BUY
+            # bb_position > 1 = yields above upper band = prices falling = SELL
+            # ═══════════════════════════════════════════════════════════════
+            bb_signal = case_when(
+                is.na(bb_position) ~ 0L,
+                bb_position < 0 ~ 2L,       # Below lower band → Strong Buy
+                bb_position < 0.2 ~ 1L,     # Near lower band → Buy
+                bb_position > 1.0 ~ -2L,    # Above upper band → Strong Sell
+                bb_position > 0.8 ~ -1L,    # Near upper band → Sell
+                TRUE ~ 0L                   # Within bands → Neutral
             ),
 
-            # Blend: 60% time-series + 40% cross-sectional
-            rsi_signal = round(rsi_signal_timeseries * 0.6 + rsi_signal_cross * 0.4),
-
             # ═══════════════════════════════════════════════════════════════
-            # BOLLINGER BAND SIGNAL (Already relative within bands)
-            # PRICE PERSPECTIVE (trend-following):
-            # - bb_position < 0 = yields below lower band = yields falling = prices rising = BUY
-            # - bb_position > 1 = yields above upper band = yields rising = prices falling = SELL
+            # MACD Signal (YIELD perspective, inverted for price)
+            # Positive histogram = yields momentum UP = prices falling = SELL
+            # Negative histogram = yields momentum DOWN = prices rising = BUY
+            # Dead zone ±0.02 to avoid false signals from near-zero values
             # ═══════════════════════════════════════════════════════════════
-            bb_signal_timeseries = case_when(
-                is.na(bb_position) ~ 0,
-                # Strong signals at band extremes (price perspective)
-                bb_position < 0 ~ 2,        # Below lower band = yields falling strongly = Buy prices
-                bb_position < 0.2 ~ 1,      # Near lower band = yields falling = Buy prices
-                bb_position > 1 ~ -2,       # Above upper band = yields rising strongly = Sell prices
-                bb_position > 0.8 ~ -1,     # Near upper band = yields rising = Sell prices
-                TRUE ~ 0
+            macd_signal_score = case_when(
+                is.na(macd_histogram) ~ 0L,
+                macd_histogram > 0.05 ~ -2L,    # Strong bullish yields → Strong Sell
+                macd_histogram > 0.02 ~ -1L,    # Bullish yields → Sell
+                macd_histogram < -0.05 ~ 2L,    # Strong bearish yields → Strong Buy
+                macd_histogram < -0.02 ~ 1L,    # Bearish yields → Buy
+                TRUE ~ 0L                       # Dead zone (±0.02) → Neutral
             ),
 
-            # Cross-sectional Bollinger comparison (price perspective)
-            # Lower bb_rank = more oversold yields relative to peers = Buy
-            bb_signal_cross = case_when(
-                is.na(bb_rank_cross) ~ 0,
-                bb_rank_cross < 0.15 ~ 2,    # Relatively oversold yields vs peers = Buy prices
-                bb_rank_cross < 0.35 ~ 1,
-                bb_rank_cross > 0.85 ~ -2,   # Relatively overbought yields vs peers = Sell prices
-                bb_rank_cross > 0.65 ~ -1,
-                TRUE ~ 0
+            # ═══════════════════════════════════════════════════════════════
+            # Momentum Signal (ROC - YIELD perspective, inverted for price)
+            # Positive ROC = yields rising = prices falling = SELL
+            # Negative ROC = yields falling = prices rising = BUY
+            # ═══════════════════════════════════════════════════════════════
+            momentum_signal = case_when(
+                is.na(roc_20) ~ 0L,
+                roc_20 > 5 ~ -2L,       # Strong yield rise → Strong Sell
+                roc_20 > 2 ~ -1L,       # Yield rise → Sell
+                roc_20 < -5 ~ 2L,       # Strong yield fall → Strong Buy
+                roc_20 < -2 ~ 1L,       # Yield fall → Buy
+                TRUE ~ 0L
             ),
 
-            # Blend: 70% time-series + 30% cross-sectional (BB already relative)
-            bb_signal = round(bb_signal_timeseries * 0.7 + bb_signal_cross * 0.3),
-
             # ═══════════════════════════════════════════════════════════════
-            # MACD SIGNAL (Hybrid: normalized + relative)
-            # PRICE PERSPECTIVE:
-            # - Positive MACD on yields = yields have upward momentum = prices falling = SELL
-            # - Negative MACD on yields = yields have downward momentum = prices rising = BUY
+            # TOTAL Score (range: -8 to +8)
+            # Positive = Good for bond holders (yields falling)
+            # Negative = Bad for bond holders (yields rising)
             # ═══════════════════════════════════════════════════════════════
-            macd_signal_timeseries = case_when(
-                is.na(macd) | is.na(macd_signal) ~ 0,
-                # Use normalized MACD if available for better differentiation
-                # INVERTED for price perspective: negative MACD on yields = BUY for prices
-                !is.na(macd_normalized) & macd_normalized < -1.5 ~ 2,   # Strong bearish yields = Strong Buy prices
-                !is.na(macd_normalized) & macd_normalized < -0.5 ~ 1,   # Bearish yields = Buy prices
-                !is.na(macd_normalized) & macd_normalized > 1.5 ~ -2,   # Strong bullish yields = Strong Sell prices
-                !is.na(macd_normalized) & macd_normalized > 0.5 ~ -1,   # Bullish yields = Sell prices
-                # Fallback to traditional MACD crossover (inverted for price perspective)
-                !is.na(macd_histogram) & macd < macd_signal & macd_histogram < 0 ~ 2,   # Bearish yields = Buy prices
-                macd < macd_signal ~ 1,
-                !is.na(macd_histogram) & macd > macd_signal & macd_histogram > 0 ~ -2,  # Bullish yields = Sell prices
-                macd > macd_signal ~ -1,
-                TRUE ~ 0
-            ),
-
-            # Cross-sectional MACD (inverted for price perspective)
-            # Weakest yield momentum vs peers = strongest price momentum = BUY
-            macd_signal_cross = case_when(
-                is.na(macd_rank_cross) ~ 0,
-                macd_rank_cross < 0.15 ~ 2,   # Weakest yield momentum vs peers = Buy for prices
-                macd_rank_cross < 0.35 ~ 1,
-                macd_rank_cross > 0.85 ~ -2,  # Strongest yield momentum vs peers = Sell for prices
-                macd_rank_cross > 0.65 ~ -1,
-                TRUE ~ 0
-            ),
-
-            # Blend: 60% time-series + 40% cross-sectional
-            macd_signal_score = round(macd_signal_timeseries * 0.6 + macd_signal_cross * 0.4),
-
-            # ═══════════════════════════════════════════════════════════════
-            # MOMENTUM SIGNAL (rate of change with relative comparison)
-            # PRICE PERSPECTIVE:
-            # - Positive ROC on yields = yields rising = prices falling = SELL
-            # - Negative ROC on yields = yields falling = prices rising = BUY
-            # ═══════════════════════════════════════════════════════════════
-            momentum_signal_timeseries = case_when(
-                is.na(roc_20) ~ 0,
-                # Use bond-specific volatility to scale thresholds (inverted for price perspective)
-                !is.na(bond_volatility) & roc_20 < -(5 * bond_volatility / 0.1) ~ 2,   # Strong yield decline = Strong Buy prices
-                !is.na(bond_volatility) & roc_20 < -(2 * bond_volatility / 0.1) ~ 1,   # Yield decline = Buy prices
-                !is.na(bond_volatility) & roc_20 > (5 * bond_volatility / 0.1) ~ -2,   # Strong yield rise = Strong Sell prices
-                !is.na(bond_volatility) & roc_20 > (2 * bond_volatility / 0.1) ~ -1,   # Yield rise = Sell prices
-                # Fallback to fixed thresholds (inverted for price perspective)
-                roc_20 < -5 ~ 2,   # Strong yield decline = Strong Buy prices
-                roc_20 < -2 ~ 1,   # Yield decline = Buy prices
-                roc_20 > 5 ~ -2,   # Strong yield rise = Strong Sell prices
-                roc_20 > 2 ~ -1,   # Yield rise = Sell prices
-                TRUE ~ 0
-            ),
-
-            # Cross-sectional momentum (inverted for price perspective)
-            # Weakest yield momentum vs peers = strongest price momentum = BUY
-            momentum_signal_cross = case_when(
-                is.na(momentum_rank_cross) ~ 0,
-                momentum_rank_cross < 0.15 ~ 2,   # Weakest yield momentum vs peers = Buy for prices
-                momentum_rank_cross < 0.35 ~ 1,
-                momentum_rank_cross > 0.85 ~ -2,  # Strongest yield momentum vs peers = Sell for prices
-                momentum_rank_cross > 0.65 ~ -1,
-                TRUE ~ 0
-            ),
-
-            # Blend: 50% time-series + 50% cross-sectional
-            momentum_signal = round(momentum_signal_timeseries * 0.5 + momentum_signal_cross * 0.5),
-
-            # ═══════════════════════════════════════════════════════════════
-            # TOTAL SIGNAL & CONFIDENCE SCORING
-            # ═══════════════════════════════════════════════════════════════
-            total_signal = rsi_signal + bb_signal + macd_signal_score + momentum_signal,
-
-            # Signal confidence (0-100 scale)
-            signal_confidence = {
-                # Factor 1: Indicator agreement (30 points)
-                signal_vector <- c(rsi_signal, bb_signal, macd_signal_score, momentum_signal)
-                signal_agreement <- if(all(signal_vector == 0)) {
-                    0  # All neutral = no confidence
-                } else {
-                    non_zero <- signal_vector[signal_vector != 0]
-                    if(length(non_zero) > 0) {
-                        same_direction <- sum(sign(non_zero) == sign(total_signal))
-                        (same_direction / length(non_zero)) * 30
-                    } else {
-                        0
-                    }
-                }
-
-                # Factor 2: Signal strength (40 points)
-                strength_score <- (abs(total_signal) / 8) * 40
-
-                # Factor 3: Data quality (30 points)
-                # Penalize if using default values (vectorized operations)
-                quality_score <- 30 -
-                    ifelse(is.na(rsi_threshold_buy) | rsi_threshold_buy == 30, 10, 0) -
-                    ifelse(is.na(macd_normalized) | macd_normalized == 0, 10, 0) -
-                    ifelse(is.na(bond_volatility) | bond_volatility == 0.1, 10, 0)
-
-                # Combine and cap
-                pmin(100, pmax(0, signal_agreement + strength_score + quality_score))
-            }
+            total_signal = rsi_signal + bb_signal + macd_signal_score + momentum_signal
         ) %>%
         select(bond, rsi_signal, bb_signal, macd_signal_score, momentum_signal,
-               total_signal, signal_confidence,
-               duration_bucket, indicator_speed,
-               rsi_threshold_buy, rsi_threshold_sell, macd_normalized, bond_volatility)
+               total_signal)
 
     # Check for any remaining NAs in signal columns and replace with 0
     signal_cols <- c("rsi_signal", "bb_signal", "macd_signal_score", "momentum_signal", "total_signal")

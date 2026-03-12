@@ -997,10 +997,10 @@ server <- function(input, output, session) {
                 macd_signal_yield = case_when(
                     is.na(macd_histogram) ~ 0L,
                     macd_histogram > 0.05 ~ -2L,   # Strong bullish yields → Strong Sell
-                    macd_histogram > 0 ~ -1L,      # Bullish yields → Sell
+                    macd_histogram > 0.02 ~ -1L,   # Bullish yields → Sell
                     macd_histogram < -0.05 ~ 2L,   # Strong bearish yields → Strong Buy
-                    macd_histogram < 0 ~ 1L,       # Bearish yields → Buy
-                    TRUE ~ 0L
+                    macd_histogram < -0.02 ~ 1L,   # Bearish yields → Buy
+                    TRUE ~ 0L                      # Dead zone (±0.02) → Neutral
                 ),
 
                 # ═══════════════════════════════════════════════════════════════
