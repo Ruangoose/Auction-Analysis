@@ -1778,10 +1778,31 @@ generate_relative_value_scanner <- function(data, params) {
     # Ensure date columns are Date objects
     data <- ensure_date_columns(data)
 
+    # Get x-axis choice matching yield curve (default to modified_duration)
+    x_var <- if(!is.null(params$xaxis_choice)) params$xaxis_choice else "modified_duration"
+
+    # Add time_to_maturity calculation if needed
+    if(x_var == "time_to_maturity") {
+        if("mature_date" %in% names(data) && !all(is.na(data$mature_date))) {
+            data$time_to_maturity <- as.numeric(difftime(data$mature_date,
+                                                         Sys.Date(),
+                                                         units = "days")) / 365.25
+        } else {
+            data$macaulay_duration <- data$modified_duration * (1 + data$yield_to_maturity/200)
+            data$time_to_maturity <- data$macaulay_duration
+        }
+        data <- data %>% filter(!is.na(time_to_maturity) & is.finite(time_to_maturity))
+    }
+
+    # Ensure the selected variable exists, fallback to modified_duration
+    if(!x_var %in% names(data) || all(is.na(data[[x_var]]))) {
+        x_var <- "modified_duration"
+    }
+
     # Get latest date data
     latest_data <- data %>%
         filter(date == max(date)) %>%
-        filter(!is.na(yield_to_maturity), !is.na(modified_duration)) %>%
+        filter(!is.na(yield_to_maturity), !is.na(.data[[x_var]])) %>%
         # Get one row per bond (in case of duplicates)
         group_by(bond) %>%
         slice(1) %>%
@@ -1791,20 +1812,93 @@ generate_relative_value_scanner <- function(data, params) {
         return(NULL)
     }
 
-    # Fit a curve (quadratic polynomial)
-    fit <- tryCatch(
-        lm(yield_to_maturity ~ poly(modified_duration, 2), data = latest_data),
-        error = function(e) NULL
-    )
+    # Use pre-computed spread_to_curve if available (ensures consistency with yield curve)
+    # Otherwise fit using the same curve model as the yield curve
+    if("spread_to_curve" %in% names(latest_data) && !all(is.na(latest_data$spread_to_curve))) {
+        latest_data <- latest_data %>%
+            mutate(residual_bps = spread_to_curve)
+        # Compute R-squared from the pre-computed residuals
+        ss_res <- sum(latest_data$residual_bps^2, na.rm = TRUE)
+        ss_tot <- sum(((latest_data$yield_to_maturity - mean(latest_data$yield_to_maturity, na.rm = TRUE)) * 100)^2, na.rm = TRUE)
+        r_squared <- if(ss_tot > 0) 1 - ss_res / ss_tot else NA
+    } else {
+        # Fit curve using the same model as the yield curve
+        curve_model <- if(!is.null(params$curve_model)) params$curve_model else "loess"
+        x_data <- latest_data[[x_var]]
 
-    if(is.null(fit)) {
-        return(NULL)
+        fit_result <- tryCatch({
+            if (curve_model == "loess") {
+                n_unique <- length(unique(x_data))
+                adaptive_span <- max(0.75, min(1, 10/n_unique))
+                model <- loess(yield_to_maturity ~ x_var,
+                               data = data.frame(x_var = x_data,
+                                                 yield_to_maturity = latest_data$yield_to_maturity),
+                               span = adaptive_span)
+                list(fitted = predict(model, newdata = data.frame(x_var = x_data)),
+                     r_sq = 1 - sum(model$residuals^2) / sum((latest_data$yield_to_maturity - mean(latest_data$yield_to_maturity))^2))
+            } else if (curve_model == "spline" || curve_model == "smooth.spline") {
+                model <- smooth.spline(x = x_data, y = latest_data$yield_to_maturity, spar = 0.6)
+                fitted_vals <- predict(model, x_data)$y
+                ss_res <- sum((latest_data$yield_to_maturity - fitted_vals)^2)
+                ss_tot <- sum((latest_data$yield_to_maturity - mean(latest_data$yield_to_maturity))^2)
+                list(fitted = fitted_vals, r_sq = 1 - ss_res / ss_tot)
+            } else if (curve_model == "nss") {
+                # NSS fitting for RV scanner
+                x_values <- x_data
+                yields <- latest_data$yield_to_maturity / 100
+                valid_idx <- !is.na(x_values) & !is.na(yields) & is.finite(x_values) & is.finite(yields)
+                x_values <- x_values[valid_idx]
+                yields <- yields[valid_idx]
+                beta0 <- mean(yields, na.rm = TRUE)
+                beta1 <- yields[which.min(x_values)] - beta0
+                nss_objective <- function(p) {
+                    b0 <- p[1]; b1 <- p[2]; b2 <- p[3]; b3 <- p[4]
+                    l1 <- exp(p[5]); l2 <- exp(p[6])
+                    x_safe <- pmax(x_values, 0.01)
+                    fitted <- b0 + b1 * (1 - exp(-x_safe/l1)) / (x_safe/l1) +
+                        b2 * ((1 - exp(-x_safe/l1)) / (x_safe/l1) - exp(-x_safe/l1)) +
+                        b3 * ((1 - exp(-x_safe/l2)) / (x_safe/l2) - exp(-x_safe/l2))
+                    sum((yields - fitted)^2, na.rm = TRUE)
+                }
+                opt <- optim(c(beta0, beta1, 0, 0, log(0.0609), log(0.0609)),
+                             nss_objective, method = "BFGS", control = list(maxit = 500))
+                if (opt$convergence == 0) {
+                    p <- opt$par
+                    x_safe <- pmax(x_data, 0.01)
+                    fitted_vals <- (p[1] + p[2] * (1 - exp(-x_safe/exp(p[5]))) / (x_safe/exp(p[5])) +
+                        p[3] * ((1 - exp(-x_safe/exp(p[5]))) / (x_safe/exp(p[5])) - exp(-x_safe/exp(p[5]))) +
+                        p[4] * ((1 - exp(-x_safe/exp(p[6]))) / (x_safe/exp(p[6])) - exp(-x_safe/exp(p[6])))) * 100
+                    ss_res <- sum((latest_data$yield_to_maturity - fitted_vals)^2)
+                    ss_tot <- sum((latest_data$yield_to_maturity - mean(latest_data$yield_to_maturity))^2)
+                    list(fitted = fitted_vals, r_sq = 1 - ss_res / ss_tot)
+                } else {
+                    stop("NSS did not converge")
+                }
+            } else {
+                # Polynomial fallback (default)
+                n_unique <- length(unique(x_data))
+                poly_degree <- min(3, max(1, n_unique - 2))
+                model <- lm(yield_to_maturity ~ poly(x_var, poly_degree),
+                            data = data.frame(x_var = x_data,
+                                              yield_to_maturity = latest_data$yield_to_maturity))
+                list(fitted = predict(model, newdata = data.frame(x_var = x_data)),
+                     r_sq = summary(model)$r.squared)
+            }
+        }, error = function(e) {
+            # Ultimate fallback: quadratic polynomial on modified_duration
+            warning(paste("RV Scanner curve fit error:", e$message, "- using polynomial fallback"))
+            model <- lm(yield_to_maturity ~ poly(modified_duration, 2), data = latest_data)
+            list(fitted = predict(model, newdata = latest_data),
+                 r_sq = summary(model)$r.squared)
+        })
+
+        latest_data <- latest_data %>%
+            mutate(residual_bps = (yield_to_maturity - fit_result$fitted) * 100)
+        r_squared <- fit_result$r_sq
     }
 
     latest_data <- latest_data %>%
         mutate(
-            fitted_yield = predict(fit, newdata = .),
-            residual_bps = (yield_to_maturity - fitted_yield) * 100,
             rich_cheap = case_when(
                 residual_bps < -10 ~ "Rich (Expensive)",
                 residual_bps > 10 ~ "Cheap (Value)",
@@ -1813,11 +1907,15 @@ generate_relative_value_scanner <- function(data, params) {
             rich_cheap = factor(rich_cheap, levels = c("Rich (Expensive)", "Fair Value", "Cheap (Value)"))
         )
 
-    # Calculate R-squared for subtitle
-    r_squared <- summary(fit)$r.squared
+    # Dynamic x-axis label
+    x_label <- switch(x_var,
+                      "modified_duration" = "Modified Duration (years)",
+                      "duration" = "Duration (years)",
+                      "time_to_maturity" = "Time to Maturity (years)",
+                      "Modified Duration (years)")
 
     # Create scatter with residuals
-    p <- ggplot(latest_data, aes(x = modified_duration, y = residual_bps)) +
+    p <- ggplot(latest_data, aes(x = .data[[x_var]], y = residual_bps)) +
 
         # Zero line (fair value)
         geom_hline(yintercept = 0, linetype = "solid", color = "gray30", linewidth = 1) +
@@ -1866,7 +1964,7 @@ generate_relative_value_scanner <- function(data, params) {
             title = "Relative Value Scanner",
             subtitle = sprintf("Deviation from fitted curve (R² = %.2f) | %s",
                                r_squared, format(max(data$date), "%d %b %Y")),
-            x = "Modified Duration (years)",
+            x = x_label,
             y = "Rich ← → Cheap (bps vs fitted curve)",
             caption = "Above line = cheap (undervalued) | Below line = rich (overvalued)"
         ) +
@@ -1912,27 +2010,53 @@ generate_rv_summary_table <- function(data, params) {
         ))
     }
 
-    # Fit curve
-    fit <- tryCatch(
-        lm(yield_to_maturity ~ poly(modified_duration, 2), data = latest),
-        error = function(e) NULL
-    )
+    # Use pre-computed spread_to_curve if available (ensures consistency with yield curve)
+    if("spread_to_curve" %in% names(latest) && !all(is.na(latest$spread_to_curve))) {
+        latest$residual_bps <- latest$spread_to_curve
+    } else {
+        # Fit curve using the same model as the yield curve
+        curve_model <- if(!is.null(params$curve_model)) params$curve_model else "loess"
+        x_var <- if(!is.null(params$xaxis_choice)) params$xaxis_choice else "modified_duration"
+        if(!x_var %in% names(latest) || all(is.na(latest[[x_var]]))) x_var <- "modified_duration"
+        x_data <- latest[[x_var]]
 
-    if(is.null(fit)) {
-        return(data.frame(
-            Bond = character(),
-            `YTM (%)` = numeric(),
-            `Duration` = numeric(),
-            `vs Curve (bps)` = numeric(),
-            `RV Score` = numeric(),
-            Recommendation = character()
-        ))
+        fitted_vals <- tryCatch({
+            if (curve_model == "loess") {
+                n_unique <- length(unique(x_data))
+                adaptive_span <- max(0.75, min(1, 10/n_unique))
+                model <- loess(yield_to_maturity ~ x_var,
+                               data = data.frame(x_var = x_data, yield_to_maturity = latest$yield_to_maturity),
+                               span = adaptive_span)
+                predict(model, newdata = data.frame(x_var = x_data))
+            } else if (curve_model == "spline" || curve_model == "smooth.spline") {
+                model <- smooth.spline(x = x_data, y = latest$yield_to_maturity, spar = 0.6)
+                predict(model, x_data)$y
+            } else {
+                model <- lm(yield_to_maturity ~ poly(x_var, 2),
+                            data = data.frame(x_var = x_data, yield_to_maturity = latest$yield_to_maturity))
+                predict(model, newdata = data.frame(x_var = x_data))
+            }
+        }, error = function(e) {
+            model <- lm(yield_to_maturity ~ poly(modified_duration, 2), data = latest)
+            predict(model, newdata = latest)
+        })
+
+        if(is.null(fitted_vals)) {
+            return(data.frame(
+                Bond = character(),
+                `YTM (%)` = numeric(),
+                `Duration` = numeric(),
+                `vs Curve (bps)` = numeric(),
+                `RV Score` = numeric(),
+                Recommendation = character()
+            ))
+        }
+
+        latest$residual_bps <- (latest$yield_to_maturity - fitted_vals) * 100
     }
 
     rv_table <- latest %>%
         mutate(
-            fitted = predict(fit, newdata = .),
-            residual_bps = (yield_to_maturity - fitted) * 100,
             # Simple carry proxy: yield / duration (higher = better carry per unit risk)
             carry_score = yield_to_maturity / modified_duration,
             # Composite score: combine residual (value) with carry

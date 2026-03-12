@@ -4890,7 +4890,10 @@ server <- function(input, output, session) {
 
     output$rv_scanner_plot <- renderPlot({
         req(filtered_data())
-        p <- generate_relative_value_scanner(filtered_data(), list())
+        p <- generate_relative_value_scanner(filtered_data(), list(
+            curve_model = input$curve_model,
+            xaxis_choice = input$xaxis_choice
+        ))
         if(!is.null(p)) {
             print(p)
         } else {
@@ -4901,7 +4904,10 @@ server <- function(input, output, session) {
 
     output$rv_summary_mini <- renderTable({
         req(filtered_data())
-        rv_table <- generate_rv_summary_table(filtered_data(), list())
+        rv_table <- generate_rv_summary_table(filtered_data(), list(
+            curve_model = input$curve_model,
+            xaxis_choice = input$xaxis_choice
+        ))
         if(nrow(rv_table) > 0) {
             # Return top 5 opportunities
             head(rv_table, 5)
@@ -11319,7 +11325,10 @@ server <- function(input, output, session) {
         },
         content = function(file) {
             req(filtered_data())
-            p <- generate_relative_value_scanner(filtered_data(), list())
+            p <- generate_relative_value_scanner(filtered_data(), list(
+                curve_model = input$curve_model,
+                xaxis_choice = input$xaxis_choice
+            ))
             if(!is.null(p)) {
                 ggsave(file, plot = p, width = 12, height = 10, dpi = 300, bg = "white")
             }
