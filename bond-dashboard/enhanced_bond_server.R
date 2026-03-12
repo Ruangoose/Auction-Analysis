@@ -13022,7 +13022,7 @@ $$Net Return = Carry + Roll - Funding Cost$$
 
                 for (i in seq_len(n_pages)) {
                     png_path <- file.path(temp_dir, sprintf("eml_page_%02d_%d.png", i, Sys.getpid()))
-                    bitmap <- pdftools::pdf_render_page(temp_pdf, page = i, dpi = 150)
+                    bitmap <- pdftools::pdf_render_page(temp_pdf, page = i, dpi = 200)
                     png::writePNG(bitmap, png_path)
                     png_paths[i] <- png_path
                     png_base64_list[[i]] <- base64enc::base64encode(png_path)
@@ -13119,7 +13119,7 @@ $$Net Return = Carry + Roll - Funding Cost$$
 
                 for (i in seq_len(n_pages)) {
                     png_path <- file.path(temp_dir, sprintf("eml_treasury_%02d_%d.png", i, Sys.getpid()))
-                    bitmap <- pdftools::pdf_render_page(temp_pdf, page = i, dpi = 150)
+                    bitmap <- pdftools::pdf_render_page(temp_pdf, page = i, dpi = 200)
                     png::writePNG(bitmap, png_path)
                     png_paths[i] <- png_path
                     png_base64_list[[i]] <- base64enc::base64encode(png_path)
@@ -13217,7 +13217,7 @@ $$Net Return = Carry + Roll - Funding Cost$$
                 png_base64_list <- vector("list", n_pages)
                 for (i in seq_len(n_pages)) {
                     png_path <- file.path(temp_dir, sprintf("eml_tech_%02d_%d.png", i, Sys.getpid()))
-                    bitmap <- pdftools::pdf_render_page(temp_pdf, page = i, dpi = 150)
+                    bitmap <- pdftools::pdf_render_page(temp_pdf, page = i, dpi = 200)
                     png::writePNG(bitmap, png_path)
                     png_paths[i] <- png_path
                     png_base64_list[[i]] <- base64enc::base64encode(png_path)
@@ -13333,7 +13333,7 @@ $$Net Return = Carry + Roll - Funding Cost$$
                 png_base64_list <- vector("list", n_pages)
                 for (i in seq_len(n_pages)) {
                     png_path <- file.path(temp_dir, sprintf("eml_bf_%02d_%d.png", i, Sys.getpid()))
-                    bitmap <- pdftools::pdf_render_page(temp_pdf, page = i, dpi = 150)
+                    bitmap <- pdftools::pdf_render_page(temp_pdf, page = i, dpi = 200)
                     png::writePNG(bitmap, png_path)
                     png_paths[i] <- png_path
                     png_base64_list[[i]] <- base64enc::base64encode(png_path)
@@ -13443,7 +13443,7 @@ $$Net Return = Carry + Roll - Funding Cost$$
                 png_base64_list <- vector("list", n_pages)
                 for (i in seq_len(n_pages)) {
                     png_path <- file.path(temp_dir, sprintf("eml_rv_%02d_%d.png", i, Sys.getpid()))
-                    bitmap <- pdftools::pdf_render_page(temp_pdf, page = i, dpi = 150)
+                    bitmap <- pdftools::pdf_render_page(temp_pdf, page = i, dpi = 200)
                     png::writePNG(bitmap, png_path)
                     png_paths[i] <- png_path
                     png_base64_list[[i]] <- base64enc::base64encode(png_path)
@@ -13569,7 +13569,7 @@ $$Net Return = Carry + Roll - Funding Cost$$
 
                 for (i in seq_len(n_pages)) {
                     png_path <- file.path(temp_dir, sprintf("eml_custom_%02d_%d.png", i, Sys.getpid()))
-                    bitmap <- pdftools::pdf_render_page(temp_pdf, page = i, dpi = 150)
+                    bitmap <- pdftools::pdf_render_page(temp_pdf, page = i, dpi = 200)
                     png::writePNG(bitmap, png_path)
                     png_paths[i] <- png_path
                     png_base64_list[[i]] <- base64enc::base64encode(png_path)

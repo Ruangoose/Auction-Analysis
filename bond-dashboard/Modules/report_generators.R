@@ -3118,7 +3118,7 @@ build_eml_email_html <- function(page_labels, n_pages, auction_bonds, auction_da
         label <- page_labels[i]
         chart_sections <- paste0(chart_sections, sprintf(
             '<tr><td style="padding: 15px 30px 5px 30px; font-family: Arial, Helvetica, sans-serif; font-size: 16px; font-weight: bold; color: %s;">%s</td></tr>
-<tr><td style="padding: 5px 30px 15px 30px; text-align: center;"><img src="cid:%s" width="840" style="display: block; margin: 0 auto; max-width: 840px;" /></td></tr>
+<tr><td style="padding: 5px 30px 15px 30px; text-align: center;"><img src="cid:%s" width="1040" style="display: block; margin: 0 auto; max-width: 1040px;" /></td></tr>
 ',
             primary_color, label, cid_ref
         ))
@@ -3131,7 +3131,7 @@ build_eml_email_html <- function(page_labels, n_pages, auction_bonds, auction_da
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
 </head>
 <body style="margin: 0; padding: 0; background-color: #f4f4f4; font-family: Arial, Helvetica, sans-serif;">
-<table width="900" align="center" cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto; background-color: #ffffff;">
+<table width="1100" align="center" cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto; background-color: #ffffff;">
 <!-- Header Bar -->
 <tr>
 <td style="background-color: %s; padding: 20px 30px;">
@@ -3725,7 +3725,7 @@ build_treasury_email_html <- function(page_labels, n_pages, data_date_range = NU
         label <- page_labels[i]
         chart_sections <- paste0(chart_sections, sprintf(
             '<tr><td style="padding: 15px 30px 5px 30px; font-family: Arial, Helvetica, sans-serif; font-size: 16px; font-weight: bold; color: %s;">%s</td></tr>
-<tr><td style="padding: 5px 30px 15px 30px; text-align: center;"><img src="cid:%s" width="840" style="display: block; margin: 0 auto; max-width: 840px;" /></td></tr>
+<tr><td style="padding: 5px 30px 15px 30px; text-align: center;"><img src="cid:%s" width="1040" style="display: block; margin: 0 auto; max-width: 1040px;" /></td></tr>
 ',
             primary_color, label, cid_ref
         ))
@@ -3738,7 +3738,7 @@ build_treasury_email_html <- function(page_labels, n_pages, data_date_range = NU
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
 </head>
 <body style="margin: 0; padding: 0; background-color: #f4f4f4; font-family: Arial, Helvetica, sans-serif;">
-<table width="900" align="center" cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto; background-color: #ffffff;">
+<table width="1100" align="center" cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto; background-color: #ffffff;">
 <!-- Header Bar -->
 <tr>
 <td style="background-color: %s; padding: 20px 30px;">
@@ -3856,7 +3856,7 @@ build_custom_email_html <- function(page_labels, n_pages, report_title, report_t
         label <- page_labels[i]
         chart_sections <- paste0(chart_sections, sprintf(
             '<tr><td style="padding: 15px 30px 5px 30px; font-family: Arial, Helvetica, sans-serif; font-size: 16px; font-weight: bold; color: %s;">%s</td></tr>
-<tr><td style="padding: 5px 30px 15px 30px; text-align: center;"><img src="cid:%s" width="840" style="display: block; margin: 0 auto; max-width: 840px;" /></td></tr>
+<tr><td style="padding: 5px 30px 15px 30px; text-align: center;"><img src="cid:%s" width="1040" style="display: block; margin: 0 auto; max-width: 1040px;" /></td></tr>
 ',
             primary_color, label, cid_ref
         ))
@@ -3869,7 +3869,7 @@ build_custom_email_html <- function(page_labels, n_pages, report_title, report_t
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
 </head>
 <body style="margin: 0; padding: 0; background-color: #f4f4f4; font-family: Arial, Helvetica, sans-serif;">
-<table width="900" align="center" cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto; background-color: #ffffff;">
+<table width="1100" align="center" cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto; background-color: #ffffff;">
 <!-- Header Bar -->
 <tr>
 <td style="background-color: %s; padding: 20px 30px;">
