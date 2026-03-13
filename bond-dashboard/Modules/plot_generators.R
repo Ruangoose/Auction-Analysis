@@ -2146,7 +2146,7 @@ generate_yield_percentile_heatmap <- function(data, params) {
     }
 
     # Debug output with more detail
-    log_debug("=== YIELD PERCENTILE DEBUG ===)
+    log_debug("=== YIELD PERCENTILE DEBUG ===")
     log_debug(sprintf("Using FULL historical data: %s to %s (%.1f years)",
                     format(min_date, "%Y-%m-%d"),
                     format(max_date, "%Y-%m-%d"),
@@ -2343,7 +2343,7 @@ generate_rate_of_change_monitor <- function(data, params) {
         filter(!is.na(tenor))
 
     # Debug: Print tenor distribution
-    log_debug("=== RATE MOMENTUM DEBUG ===)
+    log_debug("=== RATE MOMENTUM DEBUG ===")
     log_debug(sprintf("Bonds with duration >= 10: %d",
                     sum(roc_data$modified_duration >= 10, na.rm = TRUE)))
     log_debug("Tenor counts:")
@@ -2524,7 +2524,7 @@ generate_curve_comparison_plot <- function(data, params) {
     if (nrow(current_curve) < 3) return(NULL)
 
     # Debug output: Log what bonds are in each curve
-    log_debug("=== CURVE COMPARISON DEBUG ===)
+    log_debug("=== CURVE COMPARISON DEBUG ===")
     log_debug(sprintf("Current curve (%s): %d bonds - %s",
                     max_date, nrow(current_curve),
                     paste(sort(current_curve$bond), collapse = ", ")))

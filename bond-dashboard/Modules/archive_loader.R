@@ -302,7 +302,7 @@ load_bond_data_hybrid <- function(excel_path,
                                   data_dir = dirname(excel_path),
                                   reference_date = Sys.Date()) {
 
-  log_debug("=== HYBRID BOND DATA LOADING ===)
+  log_debug("=== HYBRID BOND DATA LOADING ===")
   log_debug("Excel: ", excel_path)
   log_debug("Data dir: ", data_dir)
   log_debug("Reference date: ", reference_date)
@@ -645,7 +645,7 @@ load_bond_data_hybrid <- function(excel_path,
   }
 
   # ---- Quality report ----
-  log_debug("=== HYBRID LOAD QUALITY REPORT ===)
+  log_debug("=== HYBRID LOAD QUALITY REPORT ===")
   log_debug("Date Range: ", min(full_df$date), " to ", max(full_df$date))
   log_debug("Total Observations: ", format(nrow(full_df), big.mark = ","))
   log_debug("Unique Active Bonds: ", dplyr::n_distinct(full_df$bond))
