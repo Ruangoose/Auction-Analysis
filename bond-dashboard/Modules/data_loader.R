@@ -1715,7 +1715,7 @@ load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
 #'
 #' @export
 load_bond_data <- function(
-    excel_path = "data/Insele Bonds Data File.xlsm",
+    excel_path = "data/Siyanda Bonds.xlsx",
     cache_path = "data/processed_bond_data.rds",
     force_refresh = FALSE,
     verify_quality = TRUE

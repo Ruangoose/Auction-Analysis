@@ -684,7 +684,20 @@ treasury_holdings_server <- function(id) {
                 bond_values = "bond_holdings_rds/all_bonds_values_long.rds"
             )
 
-            # No alternative path fallback — all data lives in bond-dashboard/bond_holdings_rds/
+            # Check alternative paths (project root vs bond-dashboard working directory)
+            if (!file.exists(rds_paths$holdings_ts)) {
+                alt_paths <- c(
+                    "bond-dashboard/bond_holdings_rds/holdings_historical_long.rds"
+                )
+                for (path in alt_paths) {
+                    if (file.exists(path)) {
+                        rds_paths$holdings_ts <- path
+                        rds_paths$bond_pct <- gsub("holdings_historical_long", "all_bonds_pct_long", path)
+                        rds_paths$bond_values <- gsub("holdings_historical_long", "all_bonds_values_long", path)
+                        break
+                    }
+                }
+            }
 
             # Load holdings time series
             tryCatch({
@@ -974,6 +987,9 @@ treasury_holdings_server <- function(id) {
             tryCatch({
                 # Check for source files
                 download_script <- "Modules/download/download_sa_bond_holdings.R"
+                if (!file.exists(download_script)) {
+                    download_script <- "bond-dashboard/Modules/download/download_sa_bond_holdings.R"
+                }
 
                 if (file.exists(download_script)) {
                     source(download_script)
@@ -1043,10 +1059,12 @@ treasury_holdings_server <- function(id) {
                     "Modules/download/process_bond_holdings_tidy.R"
                 )
 
-                # Source files
+                # Source files (try bond-dashboard/ prefix if not found)
                 for (script in process_scripts) {
                     if (file.exists(script)) {
                         source(script)
+                    } else if (file.exists(file.path("bond-dashboard", script))) {
+                        source(file.path("bond-dashboard", script))
                     }
                 }
 

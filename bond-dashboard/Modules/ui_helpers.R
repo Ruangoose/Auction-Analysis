@@ -575,9 +575,13 @@ load_logo_for_pdf <- function(logo_path = "www/logo.png") {
             # Try alternative paths (relative to various possible working directories)
             alt_paths <- c(
                 "www/logo.png",
+                "bond-dashboard/www/logo.png",
                 "www/Insele_logo_2.webp",
+                "bond-dashboard/www/Insele_logo_2.webp",
                 "www/Insele_logo_2.png",
-                "www/insele_logo.webp"
+                "bond-dashboard/www/Insele_logo_2.png",
+                "www/insele_logo.webp",
+                "bond-dashboard/www/insele_logo.webp"
             )
 
             for(path in alt_paths) {
@@ -631,7 +635,9 @@ load_logo_for_pdf <- function(logo_path = "www/logo.png") {
 embed_logo <- function() {
     logo_paths <- c(
         "www/Insele_logo_2.webp",
-        "www/insele_logo.webp"
+        "bond-dashboard/www/Insele_logo_2.webp",
+        "www/insele_logo.webp",
+        "bond-dashboard/www/insele_logo.webp"
     )
 
     for(path in logo_paths) {
