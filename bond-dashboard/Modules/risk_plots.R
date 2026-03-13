@@ -1252,7 +1252,10 @@ generate_var_distribution_plot <- function(data, params = list()) {
 
                 # Force ggplot to build the plot (triggers stat_density_ridges
                 # computation). Without this, warnings only surface at render time.
-                suppressWarnings(ggplot2::ggplot_build(p_ridge))
+                # NOTE: Do NOT wrap in suppressWarnings() here — the outer
+                # withCallingHandlers needs to see warnings so it can set
+                # ridgeline_failed and trigger the histogram fallback.
+                ggplot2::ggplot_build(p_ridge)
 
                 p_ridge  # return the successful plot
             }, error = function(e) {
@@ -1261,7 +1264,7 @@ generate_var_distribution_plot <- function(data, params = list()) {
                 NULL
             }),
             warning = function(w) {
-                if (grepl("findInterval.*NAs|bandwidth.*zero|singular", conditionMessage(w))) {
+                if (grepl("findInterval|Computation failed|bandwidth.*zero|singular|sorted non-decreasingly", conditionMessage(w))) {
                     ridgeline_failed <<- TRUE
                     invokeRestart("muffleWarning")
                 }
