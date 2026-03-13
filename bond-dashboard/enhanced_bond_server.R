@@ -239,16 +239,21 @@ server <- function(input, output, session) {
 
             # Try multiple possible Excel file locations
             excel_paths <- c(
-                "data/Insele_Bonds_Data_File.xlsm",                 # New .xlsm file
-                "data/Insele Bonds Data File.xlsx",                  # Standard location
-                "data/Siyanda Bonds.xlsx",                           # Legacy name
-                "Insele_Bonds_Data_File.xlsm",                      # Same directory
-                "Insele Bonds Data File.xlsx",                       # Same directory
-                "../data/Insele_Bonds_Data_File.xlsm",              # Parent data directory
-                "../data/Insele Bonds Data File.xlsx",               # Parent data directory
-                "bond-dashboard/data/Insele_Bonds_Data_File.xlsm",  # Old structure
-                "bond-dashboard/data/Insele Bonds Data File.xlsx",   # Old structure
-                "bond-dashboard/data/Siyanda Bonds.xlsx"             # Legacy name in old structure
+                "data/Insele Bonds Data File.xlsm",                  # Spaces + .xlsm (actual filename)
+                "data/Insele_Bonds_Data_File.xlsm",                  # Underscores + .xlsm
+                "data/Insele Bonds Data File.xlsx",                   # Spaces + .xlsx
+                "data/Insele_Bonds_Data_File.xlsx",                   # Underscores + .xlsx
+                "data/Siyanda Bonds.xlsx",                            # Legacy name
+                "Insele Bonds Data File.xlsm",                        # Same directory (spaces + .xlsm)
+                "Insele_Bonds_Data_File.xlsm",                        # Same directory (underscores + .xlsm)
+                "Insele Bonds Data File.xlsx",                         # Same directory (spaces + .xlsx)
+                "../data/Insele Bonds Data File.xlsm",                # Parent (spaces + .xlsm)
+                "../data/Insele_Bonds_Data_File.xlsm",                # Parent (underscores + .xlsm)
+                "../data/Insele Bonds Data File.xlsx",                 # Parent (spaces + .xlsx)
+                "bond-dashboard/data/Insele Bonds Data File.xlsm",    # Old structure (spaces + .xlsm)
+                "bond-dashboard/data/Insele_Bonds_Data_File.xlsm",    # Old structure (underscores + .xlsm)
+                "bond-dashboard/data/Insele Bonds Data File.xlsx",     # Old structure (spaces + .xlsx)
+                "bond-dashboard/data/Siyanda Bonds.xlsx"               # Legacy name in old structure
             )
 
             # Try multiple possible cache file locations
