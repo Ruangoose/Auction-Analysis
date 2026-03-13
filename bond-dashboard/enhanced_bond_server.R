@@ -124,6 +124,8 @@ eager_modules <- c(
     "ui_helpers.R",
     "data_processors.R",
     "plot_generators.R",
+    "treasury_plots.R",              # Treasury holdings plot generators (needed by UI)
+    "mod_treasury_holdings.R",       # Treasury holdings Shiny module (UI function needed by enhanced_bond_ui.R)
     "enhanced_bond_ui.R"
 )
 
@@ -140,9 +142,7 @@ deferred_modules <- c(
     "mod_auction_cumulative_issuance.R",
     "regime_plots.R",
     "insights_generators.R",
-    "report_generators.R",
-    "treasury_plots.R",              # Treasury holdings plot generators
-    "mod_treasury_holdings.R"        # Treasury holdings Shiny module
+    "report_generators.R"
 )
 
 # Lazy-load deferred modules on first use
