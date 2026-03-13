@@ -684,21 +684,7 @@ treasury_holdings_server <- function(id) {
                 bond_values = "bond_holdings_rds/all_bonds_values_long.rds"
             )
 
-            # Check alternative paths
-            if (!file.exists(rds_paths$holdings_ts)) {
-                alt_paths <- c(
-                    "../bond_holdings_rds/holdings_historical_long.rds",
-                    "data/bond_holdings_rds/holdings_historical_long.rds"
-                )
-                for (path in alt_paths) {
-                    if (file.exists(path)) {
-                        rds_paths$holdings_ts <- path
-                        rds_paths$bond_pct <- gsub("holdings_historical_long", "all_bonds_pct_long", path)
-                        rds_paths$bond_values <- gsub("holdings_historical_long", "all_bonds_values_long", path)
-                        break
-                    }
-                }
-            }
+            # No alternative path fallback — all data lives in bond-dashboard/bond_holdings_rds/
 
             # Load holdings time series
             tryCatch({
@@ -988,12 +974,6 @@ treasury_holdings_server <- function(id) {
             tryCatch({
                 # Check for source files
                 download_script <- "Modules/download/download_sa_bond_holdings.R"
-                if (!file.exists(download_script)) {
-                    download_script <- "bond-dashboard/Modules/download/download_sa_bond_holdings.R"
-                }
-                if (!file.exists(download_script)) {
-                    download_script <- "../Modules/download/download_sa_bond_holdings.R"
-                }
 
                 if (file.exists(download_script)) {
                     source(download_script)
@@ -1062,22 +1042,6 @@ treasury_holdings_server <- function(id) {
                     "Modules/download/process_holdings_timeseries.R",
                     "Modules/download/process_bond_holdings_tidy.R"
                 )
-
-                # Try alternative paths
-                for (i in seq_along(process_scripts)) {
-                    if (!file.exists(process_scripts[i])) {
-                        alt <- c(
-                            paste0("bond-dashboard/", process_scripts[i]),
-                            paste0("../", process_scripts[i])
-                        )
-                        for (a in alt) {
-                            if (file.exists(a)) {
-                                process_scripts[i] <- a
-                                break
-                            }
-                        }
-                    }
-                }
 
                 # Source files
                 for (script in process_scripts) {

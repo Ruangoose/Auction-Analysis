@@ -239,29 +239,16 @@ server <- function(input, output, session) {
 
             # Try multiple possible Excel file locations
             excel_paths <- c(
-                "data/Insele Bonds Data File.xlsm",                  # Spaces + .xlsm (actual filename)
-                "data/Insele_Bonds_Data_File.xlsm",                  # Underscores + .xlsm
-                "data/Insele Bonds Data File.xlsx",                   # Spaces + .xlsx
-                "data/Insele_Bonds_Data_File.xlsx",                   # Underscores + .xlsx
-                "data/Siyanda Bonds.xlsx",                            # Legacy name
-                "Insele Bonds Data File.xlsm",                        # Same directory (spaces + .xlsm)
-                "Insele_Bonds_Data_File.xlsm",                        # Same directory (underscores + .xlsm)
-                "Insele Bonds Data File.xlsx",                         # Same directory (spaces + .xlsx)
-                "../data/Insele Bonds Data File.xlsm",                # Parent (spaces + .xlsm)
-                "../data/Insele_Bonds_Data_File.xlsm",                # Parent (underscores + .xlsm)
-                "../data/Insele Bonds Data File.xlsx",                 # Parent (spaces + .xlsx)
-                "bond-dashboard/data/Insele Bonds Data File.xlsm",    # Old structure (spaces + .xlsm)
-                "bond-dashboard/data/Insele_Bonds_Data_File.xlsm",    # Old structure (underscores + .xlsm)
-                "bond-dashboard/data/Insele Bonds Data File.xlsx",     # Old structure (spaces + .xlsx)
-                "bond-dashboard/data/Siyanda Bonds.xlsx"               # Legacy name in old structure
+                "data/Insele Bonds Data File.xlsm",     # Primary: spaces + .xlsm (actual filename)
+                "data/Insele_Bonds_Data_File.xlsm",     # Underscores + .xlsm variant
+                "data/Insele Bonds Data File.xlsx",      # Spaces + .xlsx variant
+                "data/Insele_Bonds_Data_File.xlsx",      # Underscores + .xlsx variant
+                "data/Siyanda Bonds.xlsx"                # Legacy name
             )
 
             # Try multiple possible cache file locations
             cache_paths <- c(
-                "data/processed_bond_data.rds",            # Standard data directory
-                "processed_bond_data.rds",                 # Same directory
-                "../data/processed_bond_data.rds",         # Parent data directory
-                "bond-dashboard/data/processed_bond_data.rds"  # Old structure
+                "data/processed_bond_data.rds"
             )
 
             # Find the first existing Excel file
@@ -317,7 +304,7 @@ server <- function(input, output, session) {
         }, error = function(e) {
             warning(sprintf("Error loading bond data: %s", e$message))
             # Fallback to cache if Excel fails
-            for (path in c("data/processed_bond_data.rds", "../data/processed_bond_data.rds")) {
+            for (path in c("data/processed_bond_data.rds")) {
                 if (file.exists(path)) {
                     log_debug(sprintf("Falling back to cache: %s", path))
                     return(readRDS(path))
