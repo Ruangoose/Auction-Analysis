@@ -954,7 +954,7 @@ server <- function(input, output, session) {
 
         # Only add smooth line if enough data points
         p <- ggplot(auction_trend, aes(x = date, y = avg_btc)) +
-            geom_line(color = insele_colors$teal, size = 2)
+            geom_line(color = insele_colors$teal, linewidth = 2)
 
         if(nrow(auction_trend) > 5) {  # Only smooth if enough points
             p <- p + geom_smooth(method = "loess", se = TRUE, alpha = 0.2,

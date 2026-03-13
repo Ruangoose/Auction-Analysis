@@ -31,13 +31,13 @@ MIN_OBSERVATIONS <- 1  # Require only 1 observation minimum to include all bonds
 #' @param df Data frame in WIDE format (date column + bond columns)
 #' @param date_col Name of the date column (default: "date")
 #' @param zero_threshold Values below this are treated as zero (default: 1e-10)
-#' @param verbose Print diagnostic messages (default: TRUE)
+#' @param verbose Print diagnostic messages (default: getOption("insele.verbose", FALSE))
 #' @return Data frame with non-trading days removed
 #' @export
 filter_non_trading_days <- function(df,
                                     date_col = "date",
                                     zero_threshold = 1e-10,
-                                    verbose = TRUE) {
+                                    verbose = getOption("insele.verbose", FALSE)) {
 
   if (is.null(df) || nrow(df) == 0) {
     return(df)
@@ -71,7 +71,7 @@ filter_non_trading_days <- function(df,
   rows_removed <- rows_before - rows_after
 
   if (verbose && rows_removed > 0) {
-    message(sprintf("    [Non-trading filter] Removed %d non-trading days (weekends/holidays)",
+    log_debug(sprintf("    [Non-trading filter] Removed %d non-trading days (weekends/holidays)",
                     rows_removed))
   }
 
@@ -148,7 +148,7 @@ is_cache_corrupted <- function(cache_data) {
 #' @return TRUE if data is valid, throws error if corrupted
 #' @export
 validate_data_before_cache <- function(df) {
-  message("\n  Validating data before caching...")
+  log_debug("\n  Validating data before caching...")
 
   if (is.null(df) || nrow(df) == 0) {
     stop("DATA VALIDATION FAILED - Empty dataframe")
@@ -220,7 +220,7 @@ validate_data_before_cache <- function(df) {
     ))
   }
 
-  message("  All validation checks PASSED")
+  log_debug("  All validation checks PASSED")
   return(TRUE)
 }
 
@@ -234,7 +234,7 @@ validate_data_before_cache <- function(df) {
 #' @return Invisible NULL (for side effects only)
 debug_bond_values <- function(df, stage_name) {
   if (is.null(df) || nrow(df) == 0) {
-    message(sprintf("  [%s] Empty dataframe!", stage_name))
+    log_debug(sprintf("  [%s] Empty dataframe!", stage_name))
     return(invisible(NULL))
   }
 
@@ -258,11 +258,11 @@ debug_bond_values <- function(df, stage_name) {
 
   if (length(suspect_bonds) > 0) {
     maturity_note <- if ("mature_date" %in% names(df)) " (active bonds only)" else ""
-    message(sprintf("  [%s] SUSPICIOUS VALUES DETECTED%s in bonds: %s",
+    log_debug(sprintf("  [%s] SUSPICIOUS VALUES DETECTED%s in bonds: %s",
                     stage_name, maturity_note,
                     paste(suspect_bonds, collapse = ", ")))
   } else {
-    message(sprintf("  [%s] All bonds have valid values", stage_name))
+    log_debug(sprintf("  [%s] All bonds have valid values", stage_name))
   }
 
   return(invisible(NULL))
@@ -285,13 +285,13 @@ debug_bond_values <- function(df, stage_name) {
 #' @export
 debug_bond_count <- function(data, step_name, expected_bonds = NULL) {
     if (is.null(data) || nrow(data) == 0) {
-        message(sprintf("[DEBUG %s] No data (NULL or 0 rows)", step_name))
+        log_debug(sprintf("[DEBUG %s] No data (NULL or 0 rows)", step_name))
         return(invisible(NULL))
     }
 
     n_bonds <- dplyr::n_distinct(data$bond)
     bonds <- sort(unique(data$bond))
-    message(sprintf("[DEBUG %s] Bonds: %d -> %s", step_name, n_bonds, paste(bonds, collapse = ", ")))
+    log_debug(sprintf("[DEBUG %s] Bonds: %d -> %s", step_name, n_bonds, paste(bonds, collapse = ", ")))
 
     # Check for specific missing bonds (commonly dropped in past issues)
     if (is.null(expected_bonds)) {
@@ -302,7 +302,7 @@ debug_bond_count <- function(data, step_name, expected_bonds = NULL) {
 
     missing <- setdiff(expected_bonds, bonds)
     if (length(missing) > 0) {
-        message(sprintf("[DEBUG %s] ⚠ MISSING: %s", step_name, paste(missing, collapse = ", ")))
+        log_debug(sprintf("[DEBUG %s] ⚠ MISSING: %s", step_name, paste(missing, collapse = ", ")))
     }
 
     return(invisible(n_bonds))
@@ -329,8 +329,8 @@ load_maturity_dates <- function(excel_path) {
     available_sheets <- readxl::excel_sheets(excel_path)
 
     if (!"maturity_date" %in% available_sheets) {
-      message("  INFO: maturity_date sheet not found in Excel file")
-      message("        Available sheets: ", paste(available_sheets, collapse = ", "))
+      log_debug("  INFO: maturity_date sheet not found in Excel file")
+      log_debug("        Available sheets: ", paste(available_sheets, collapse = ", "))
       return(NULL)
     }
 
@@ -339,17 +339,17 @@ load_maturity_dates <- function(excel_path) {
                                   guess_max = 10000)
 
     if (is.null(mat_df) || nrow(mat_df) == 0) {
-      message("  WARNING: maturity_date sheet is empty")
+      log_debug("  WARNING: maturity_date sheet is empty")
       return(NULL)
     }
 
     # Debug output
-    message("  maturity_date sheet columns: ", paste(names(mat_df), collapse = ", "))
-    message("  maturity_date sheet rows: ", nrow(mat_df))
+    log_debug("  maturity_date sheet columns: ", paste(names(mat_df), collapse = ", "))
+    log_debug("  maturity_date sheet rows: ", nrow(mat_df))
 
     # CASE 1: Long format with mat_date column (bond, mat_date) - use directly
     if ("bond" %in% names(mat_df) && "mat_date" %in% names(mat_df)) {
-      message("  ✓ maturity_date sheet is in LONG format (bond, mat_date) - using directly")
+      log_debug("  ✓ maturity_date sheet is in LONG format (bond, mat_date) - using directly")
 
       maturity_lookup <- mat_df %>%
         dplyr::select(bond, mat_date) %>%
@@ -358,13 +358,13 @@ load_maturity_dates <- function(excel_path) {
         dplyr::filter(!is.na(maturity_date) & !is.na(bond)) %>%
         dplyr::distinct(bond, .keep_all = TRUE)
 
-      message("  ✓ Loaded ", nrow(maturity_lookup), " bonds from maturity_date sheet")
+      log_debug("  ✓ Loaded ", nrow(maturity_lookup), " bonds from maturity_date sheet")
       return(maturity_lookup)
     }
 
     # CASE 2: Long format with maturity_date column (bond, maturity_date) - use directly
     if ("bond" %in% names(mat_df) && "maturity_date" %in% names(mat_df)) {
-      message("  ✓ maturity_date sheet is in LONG format (bond, maturity_date) - using directly")
+      log_debug("  ✓ maturity_date sheet is in LONG format (bond, maturity_date) - using directly")
 
       maturity_lookup <- mat_df %>%
         dplyr::select(bond, maturity_date) %>%
@@ -372,13 +372,13 @@ load_maturity_dates <- function(excel_path) {
         dplyr::filter(!is.na(maturity_date) & !is.na(bond)) %>%
         dplyr::distinct(bond, .keep_all = TRUE)
 
-      message("  ✓ Loaded ", nrow(maturity_lookup), " bonds from maturity_date sheet")
+      log_debug("  ✓ Loaded ", nrow(maturity_lookup), " bonds from maturity_date sheet")
       return(maturity_lookup)
     }
 
     # CASE 3: Wide format (date column + bond columns) - pivot to long
     if ("date" %in% names(mat_df)) {
-      message("  maturity_date sheet is in WIDE format - pivoting")
+      log_debug("  maturity_date sheet is in WIDE format - pivoting")
 
       bond_cols <- setdiff(names(mat_df), "date")
 
@@ -396,7 +396,7 @@ load_maturity_dates <- function(excel_path) {
           .groups = "drop"
         )
 
-      message("  ✓ Loaded ", nrow(maturity_lookup), " bonds from maturity_date sheet")
+      log_debug("  ✓ Loaded ", nrow(maturity_lookup), " bonds from maturity_date sheet")
       return(maturity_lookup)
     }
 
@@ -427,9 +427,9 @@ load_maturity_dates <- function(excel_path) {
 #' @export
 load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
 
-  message("=== LOADING BOND DATA (ROBUST) ===")
-  message("File: ", file_path)
-  message("Reference date: ", reference_date)
+  log_debug("=== LOADING BOND DATA (ROBUST) ===")
+  log_debug("File: ", file_path)
+  log_debug("Reference date: ", reference_date)
 
   # --------------------------------------------------------------------------
   # CHECK FOR HYBRID LOADING PATH
@@ -444,7 +444,7 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
   has_archive     <- file.exists(archive_path)
 
   if (has_staged_csvs || has_archive) {
-    message("[Robust] Archive data detected — delegating to hybrid loader")
+    log_debug("[Robust] Archive data detected — delegating to hybrid loader")
     return(load_bond_data_hybrid(
       excel_path     = file_path,
       data_dir       = data_dir,
@@ -452,12 +452,12 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
     ))
   }
 
-  message("[Robust] No archive data — using Excel-only loading path")
+  log_debug("[Robust] No archive data — using Excel-only loading path")
 
   # --------------------------------------------------------------------------
   # STEP 1: Build Maturity Lookup (PRIMARY: maturity_date sheet, FALLBACK: auctions)
   # --------------------------------------------------------------------------
-  message("\n[1/6] Building maturity lookup...")
+  log_debug("\n[1/6] Building maturity lookup...")
 
   # Load auction data (needed for other metrics even if not used for maturity)
   auction_raw <- tryCatch({
@@ -477,11 +477,11 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
   # PRIMARY SOURCE: Load maturity dates from dedicated maturity_date sheet
   # This is the authoritative source - auction data inference is FALLBACK only
   # ═══════════════════════════════════════════════════════════════════════════
-  message("  Checking for maturity_date sheet (PRIMARY SOURCE)...")
+  log_debug("  Checking for maturity_date sheet (PRIMARY SOURCE)...")
   maturity_from_sheet <- load_maturity_dates(file_path)
 
   if (!is.null(maturity_from_sheet) && nrow(maturity_from_sheet) > 0) {
-    message("  Using maturity dates from maturity_date sheet (PRIMARY SOURCE)")
+    log_debug("  Using maturity dates from maturity_date sheet (PRIMARY SOURCE)")
 
     maturity_lookup <- maturity_from_sheet %>%
       dplyr::mutate(
@@ -508,7 +508,7 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
     # ═══════════════════════════════════════════════════════════════════════════
     # FALLBACK: Infer maturity from auction data (less reliable)
     # ═══════════════════════════════════════════════════════════════════════════
-    message("  maturity_date sheet not available - falling back to auction data inference")
+    log_debug("  maturity_date sheet not available - falling back to auction data inference")
     warning("Using auction data for maturity inference - consider adding a maturity_date sheet for accuracy")
 
     if (!is.null(auction_raw)) {
@@ -529,7 +529,7 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
         )
     } else {
       # No maturity info available at all - create empty lookup
-      message("  WARNING: No maturity data available - all bonds will be treated as active")
+      log_debug("  WARNING: No maturity data available - all bonds will be treated as active")
       maturity_lookup <- tibble::tibble(
         bond = character(),
         maturity_date = as.Date(character()),
@@ -543,16 +543,16 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
   matured_bonds <- maturity_lookup %>% dplyr::filter(is_matured) %>% dplyr::pull(bond)
   active_bonds <- maturity_lookup %>% dplyr::filter(!is_matured) %>% dplyr::pull(bond)
 
-  message("  - Total bonds with maturity info: ", nrow(maturity_lookup))
-  message("  - Matured bonds (will be filtered out): ", paste(sort(matured_bonds), collapse = ", "))
-  message("  - Active bonds: ", paste(sort(active_bonds), collapse = ", "))
+  log_debug("  - Total bonds with maturity info: ", nrow(maturity_lookup))
+  log_debug("  - Matured bonds (will be filtered out): ", paste(sort(matured_bonds), collapse = ", "))
+  log_debug("  - Active bonds: ", paste(sort(active_bonds), collapse = ", "))
 
   # --------------------------------------------------------------------------
   # STEP 2: Helper Function to Load Time Series Sheets (with #N/A handling)
   # --------------------------------------------------------------------------
 
   load_ts_sheet_robust <- function(sheet_name, value_col) {
-    message("\n  Loading sheet: ", sheet_name)
+    log_debug("\n  Loading sheet: ", sheet_name)
 
     tryCatch({
       # CRITICAL: na parameter handles Excel error values
@@ -563,7 +563,7 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
 
       # === Filter out non-trading days (weekends/holidays) ===
       # Must happen BEFORE pivot_longer while data is still in wide format
-      df <- filter_non_trading_days(df, date_col = "date", verbose = TRUE)
+      df <- filter_non_trading_days(df, date_col = "date")
 
       # Ensure date column exists and is proper format
       if (!"date" %in% names(df)) {
@@ -572,7 +572,7 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
 
       # Get all bond columns (everything except date)
       bond_cols <- setdiff(names(df), "date")
-      message("    - Found ", length(bond_cols), " bond columns")
+      log_debug("    - Found ", length(bond_cols), " bond columns")
 
       # Pivot to long format
       df_long <- df %>%
@@ -589,7 +589,7 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
         # Remove rows where the value is NA (bond didn't exist yet or #N/A)
         dplyr::filter(!is.na(!!rlang::sym(value_col)))
 
-      message("    - Rows after removing NA: ", nrow(df_long))
+      log_debug("    - Rows after removing NA: ", nrow(df_long))
 
       return(df_long)
 
@@ -602,7 +602,7 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
   # --------------------------------------------------------------------------
   # STEP 3: Load Core Time Series Data
   # --------------------------------------------------------------------------
-  message("\n[2/6] Loading core time series...")
+  log_debug("\n[2/6] Loading core time series...")
 
   ytm_df <- load_ts_sheet_robust("ytm", "yield_to_maturity")
   mod_dur_df <- load_ts_sheet_robust("mod_dur", "modified_duration")
@@ -621,7 +621,7 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
   # --------------------------------------------------------------------------
   # STEP 4: Load Optional Sheets
   # --------------------------------------------------------------------------
-  message("\n[3/6] Loading optional time series...")
+  log_debug("\n[3/6] Loading optional time series...")
 
   clean_price_df <- load_ts_sheet_robust("clean_price", "clean_price")
   full_price_df <- load_ts_sheet_robust("full_price", "full_price")
@@ -631,7 +631,7 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
   # --------------------------------------------------------------------------
   # STEP 5: Load Coupon Data (Special - Single Row)
   # --------------------------------------------------------------------------
-  message("\n[4/6] Loading coupon data...")
+  log_debug("\n[4/6] Loading coupon data...")
 
   cpn_df <- tryCatch({
     df <- readxl::read_excel(file_path, sheet = "cpn",
@@ -658,7 +658,7 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
   # --------------------------------------------------------------------------
   # STEP 6: Combine All Data (FIXED: Use inner_join for critical fields)
   # --------------------------------------------------------------------------
-  message("\n[5/6] Combining datasets...")
+  log_debug("\n[5/6] Combining datasets...")
 
   # FIX: Use INNER JOIN for critical fields (YTM and ModDur)
   # This ensures we only keep rows where BOTH values exist
@@ -673,7 +673,7 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
     full_df <- full_df %>%
       dplyr::inner_join(mod_dur_df, by = c("date", "bond"))
     rows_after <- nrow(full_df)
-    message(sprintf("    - Inner join with mod_dur: %d -> %d rows", rows_before, rows_after))
+    log_debug(sprintf("    - Inner join with mod_dur: %d -> %d rows", rows_before, rows_after))
     debug_bond_count(full_df, "robust: after INNER join")
   }
 
@@ -694,16 +694,16 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
   bonds_after_filter <- unique(full_df$bond)
 
   if (rows_before_filter != rows_after_filter) {
-    message(sprintf("    - Filtered out %d rows with invalid YTM/ModDur values",
+    log_debug(sprintf("    - Filtered out %d rows with invalid YTM/ModDur values",
                     rows_before_filter - rows_after_filter))
   }
 
   # DEBUG: Show which bonds were lost during value filtering
   lost_bonds <- setdiff(bonds_before_filter, bonds_after_filter)
   if (length(lost_bonds) > 0) {
-    message(sprintf("    ⚠ Bonds lost during value filter (all data was placeholders): %s",
+    log_debug(sprintf("    ⚠ Bonds lost during value filter (all data was placeholders): %s",
                     paste(sort(lost_bonds), collapse = ", ")))
-    message("      These bonds have NO valid YTM data (all values <= 1.5%% or NA)")
+    log_debug("      These bonds have NO valid YTM data (all values <= 1.5%% or NA)")
   }
   debug_bond_count(full_df, "robust: after quality filter")
 
@@ -764,13 +764,13 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
   full_df <- full_df %>%
     dplyr::left_join(auction_metrics, by = c("date", "bond"))
 
-  message("  - Combined rows: ", nrow(full_df))
-  message("  - Unique bonds before filtering: ", dplyr::n_distinct(full_df$bond))
+  log_debug("  - Combined rows: ", nrow(full_df))
+  log_debug("  - Unique bonds before filtering: ", dplyr::n_distinct(full_df$bond))
 
   # --------------------------------------------------------------------------
   # STEP 7: Add Calculated Fields and Filter
   # --------------------------------------------------------------------------
-  message("\n[6/6] Adding calculated fields and filtering matured bonds...")
+  log_debug("\n[6/6] Adding calculated fields and filtering matured bonds...")
 
   full_df <- full_df %>%
     dplyr::mutate(
@@ -812,8 +812,8 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
     # Arrange by date and bond
     dplyr::arrange(date, bond)
 
-  message("  - Final rows after maturity filter: ", nrow(full_df))
-  message("  - Final unique bonds: ", dplyr::n_distinct(full_df$bond))
+  log_debug("  - Final rows after maturity filter: ", nrow(full_df))
+  log_debug("  - Final unique bonds: ", dplyr::n_distinct(full_df$bond))
   debug_bond_count(full_df, "robust: FINAL OUTPUT")
 
   # --------------------------------------------------------------------------
@@ -856,28 +856,28 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
   # --------------------------------------------------------------------------
   # Quality Report
   # --------------------------------------------------------------------------
-  message("\n=== DATA QUALITY REPORT ===")
-  message("Date Range: ", min(full_df$date), " to ", max(full_df$date))
-  message("Total Observations: ", format(nrow(full_df), big.mark = ","))
-  message("Unique Active Bonds: ", dplyr::n_distinct(full_df$bond))
-  message("Active Bonds: ", paste(sort(unique(full_df$bond)), collapse = ", "))
+  log_debug("\n=== DATA QUALITY REPORT ===")
+  log_debug("Date Range: ", min(full_df$date), " to ", max(full_df$date))
+  log_debug("Total Observations: ", format(nrow(full_df), big.mark = ","))
+  log_debug("Unique Active Bonds: ", dplyr::n_distinct(full_df$bond))
+  log_debug("Active Bonds: ", paste(sort(unique(full_df$bond)), collapse = ", "))
 
   # Validation checks
-  message("\n=== VALIDATION CHECKS ===")
+  log_debug("\n=== VALIDATION CHECKS ===")
 
   # Check for impossible values
   impossible_ytm <- full_df %>% dplyr::filter(yield_to_maturity < 0 | yield_to_maturity > 30)
   if (nrow(impossible_ytm) > 0) {
     warning("Found ", nrow(impossible_ytm), " rows with impossible YTM values")
   } else {
-    message("  All YTM values in valid range (0-30%)")
+    log_debug("  All YTM values in valid range (0-30%)")
   }
 
   impossible_dur <- full_df %>% dplyr::filter(modified_duration < 0 | modified_duration > 40)
   if (nrow(impossible_dur) > 0) {
     warning("Found ", nrow(impossible_dur), " rows with impossible duration values")
   } else {
-    message("  All modified duration values in valid range (0-40)")
+    log_debug("  All modified duration values in valid range (0-40)")
   }
 
   # Check for placeholder values (should be none - filtered at source)
@@ -888,10 +888,10 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
     unique_bonds <- unique(placeholder_values$bond)
     warning("Affected bonds: ", paste(unique_bonds, collapse = ", "))
   } else {
-    message("  ✓ No placeholder values detected (filtering working correctly)")
+    log_debug("  ✓ No placeholder values detected (filtering working correctly)")
   }
 
-  message("\n=== DATA LOADING COMPLETE ===\n")
+  log_debug("\n=== DATA LOADING COMPLETE ===\n")
 
   # Return as list
   return(list(
@@ -912,13 +912,13 @@ load_bond_data_robust <- function(file_path, reference_date = Sys.Date()) {
 is_cache_stale <- function(excel_path, cache_path) {
     # Cache is stale if it doesn't exist
     if (!file.exists(cache_path)) {
-        message("  Cache does not exist - will create from Excel")
+        log_debug("  Cache does not exist - will create from Excel")
         return(TRUE)
     }
 
     # If Excel doesn't exist, use cache as fallback
     if (!file.exists(excel_path)) {
-        message("  Excel file not found - using existing cache as fallback")
+        log_debug("  Excel file not found - using existing cache as fallback")
         return(FALSE)
     }
 
@@ -929,11 +929,11 @@ is_cache_stale <- function(excel_path, cache_path) {
     is_stale <- excel_mtime > cache_mtime
 
     if (is_stale) {
-        message(sprintf("  Cache is stale (Excel: %s > Cache: %s)",
+        log_debug(sprintf("  Cache is stale (Excel: %s > Cache: %s)",
                        format(excel_mtime, "%Y-%m-%d %H:%M:%S"),
                        format(cache_mtime, "%Y-%m-%d %H:%M:%S")))
     } else {
-        message(sprintf("  Cache is fresh (Excel: %s <= Cache: %s)",
+        log_debug(sprintf("  Cache is fresh (Excel: %s <= Cache: %s)",
                        format(excel_mtime, "%Y-%m-%d %H:%M:%S"),
                        format(cache_mtime, "%Y-%m-%d %H:%M:%S")))
     }
@@ -948,7 +948,7 @@ is_cache_stale <- function(excel_path, cache_path) {
 #' @return Character vector of bond names (excluding 'date')
 detect_available_bonds <- function(df) {
     bond_cols <- names(df)[tolower(names(df)) != "date"]
-    message(sprintf("  Detected %d bonds: %s", length(bond_cols), paste(bond_cols, collapse = ", ")))
+    log_debug(sprintf("  Detected %d bonds: %s", length(bond_cols), paste(bond_cols, collapse = ", ")))
     return(bond_cols)
 }
 
@@ -961,7 +961,7 @@ detect_available_bonds <- function(df) {
 #' @param available_bonds Vector of available bond names to filter
 #' @return Tibble in long format with date, bond, and value columns
 load_time_series_sheet <- function(excel_path, sheet_name, value_name, available_bonds) {
-    message(sprintf("  Loading sheet: %s -> %s", sheet_name, value_name))
+    log_debug(sprintf("  Loading sheet: %s -> %s", sheet_name, value_name))
 
     tryCatch({
         # CRITICAL: guess_max scans all rows to correctly type columns with late-starting data
@@ -974,7 +974,7 @@ load_time_series_sheet <- function(excel_path, sheet_name, value_name, available
 
         # === Filter out non-trading days (weekends/holidays) ===
         # Must happen BEFORE pivot_longer while data is still in wide format
-        df <- filter_non_trading_days(df, date_col = "date", verbose = TRUE)
+        df <- filter_non_trading_days(df, date_col = "date")
 
         # Get columns that exist in this sheet and are in available_bonds (or date)
         valid_cols <- intersect(names(df), c("date", available_bonds))
@@ -1006,7 +1006,7 @@ load_time_series_sheet <- function(excel_path, sheet_name, value_name, available
                 dplyr::filter(yield_to_maturity > 1.5)
             rows_after <- nrow(result)
             if (rows_before != rows_after) {
-                message(sprintf("    Filtered out %d placeholder YTM values (<=1.5%%)",
+                log_debug(sprintf("    Filtered out %d placeholder YTM values (<=1.5%%)",
                                 rows_before - rows_after))
             }
         }
@@ -1019,7 +1019,7 @@ load_time_series_sheet <- function(excel_path, sheet_name, value_name, available
                 dplyr::filter(modified_duration > 0.1)
             rows_after <- nrow(result)
             if (rows_before != rows_after) {
-                message(sprintf("    Filtered out %d placeholder ModDur values (<=0.1)",
+                log_debug(sprintf("    Filtered out %d placeholder ModDur values (<=0.1)",
                                 rows_before - rows_after))
             }
         }
@@ -1046,18 +1046,18 @@ load_time_series_sheet <- function(excel_path, sheet_name, value_name, available
             has_some_data <- excluded_info %>%
                 dplyr::filter(n_obs > 0)
             if (nrow(has_some_data) > 0) {
-                message(sprintf("    ⚠ Bonds excluded from %s (< %d obs): %s",
+                log_debug(sprintf("    ⚠ Bonds excluded from %s (< %d obs): %s",
                                 value_name, MIN_OBSERVATIONS,
                                 paste(has_some_data$bond, collapse = ", ")))
-                message(sprintf("      Observation counts: %s",
+                log_debug(sprintf("      Observation counts: %s",
                                 paste(sprintf("%s=%d", has_some_data$bond, has_some_data$n_obs),
                                       collapse = ", ")))
-                message("      Consider lowering MIN_OBSERVATIONS if these are valid new issuances")
+                log_debug("      Consider lowering MIN_OBSERVATIONS if these are valid new issuances")
             }
             # Also note bonds with ZERO observations (all placeholder values filtered out)
             has_no_data <- setdiff(excluded_bonds, has_some_data$bond)
             if (length(has_no_data) > 0) {
-                message(sprintf("    ⚠ Bonds with NO valid %s data (all placeholders): %s",
+                log_debug(sprintf("    ⚠ Bonds with NO valid %s data (all placeholders): %s",
                                 value_name, paste(has_no_data, collapse = ", ")))
             }
         }
@@ -1066,7 +1066,7 @@ load_time_series_sheet <- function(excel_path, sheet_name, value_name, available
         result <- result %>%
             dplyr::filter(bond %in% bonds_with_data)
 
-        message(sprintf("    Loaded %d rows for %s (%d bonds)",
+        log_debug(sprintf("    Loaded %d rows for %s (%d bonds)",
                         nrow(result), value_name, length(bonds_with_data)))
         return(result)
 
@@ -1083,7 +1083,7 @@ load_time_series_sheet <- function(excel_path, sheet_name, value_name, available
 #' @param available_bonds Vector of available bond names
 #' @return Tibble with bond and coupon columns
 load_coupon_data <- function(excel_path, available_bonds) {
-    message("  Loading coupon data (static)")
+    log_debug("  Loading coupon data (static)")
 
     tryCatch({
         df <- readxl::read_excel(excel_path, sheet = "cpn",
@@ -1107,7 +1107,7 @@ load_coupon_data <- function(excel_path, available_bonds) {
             dplyr::filter(!is.na(coupon)) %>%
             dplyr::distinct(bond, coupon)
 
-        message(sprintf("    Loaded coupon for %d bonds", nrow(result)))
+        log_debug(sprintf("    Loaded coupon for %d bonds", nrow(result)))
         return(result)
 
     }, error = function(e) {
@@ -1122,13 +1122,13 @@ load_coupon_data <- function(excel_path, available_bonds) {
 #' @param excel_path Path to the Excel file
 #' @return Tibble with auction data in long format
 load_auction_data <- function(excel_path) {
-    message("  Loading auction data")
+    log_debug("  Loading auction data")
 
     tryCatch({
         df <- readxl::read_excel(excel_path, sheet = "auctions",
                                  guess_max = 10000)
 
-        message(sprintf("    Raw auction columns: %s", paste(names(df), collapse = ", ")))
+        log_debug(sprintf("    Raw auction columns: %s", paste(names(df), collapse = ", ")))
 
         result <- df %>%
             dplyr::mutate(
@@ -1186,7 +1186,7 @@ load_auction_data <- function(excel_path) {
                 n_looks_decimal <- sum(cy_values < 0.5, na.rm = TRUE)
                 n_looks_percent <- sum(cy_values >= 1 & cy_values <= 20, na.rm = TRUE)
 
-                message(sprintf("    Clearing yield analysis: %d values < 0.5 (decimals), %d values 1-20 (percentages)",
+                log_debug(sprintf("    Clearing yield analysis: %d values < 0.5 (decimals), %d values 1-20 (percentages)",
                                 n_looks_decimal, n_looks_percent))
 
                 # Store original for debugging
@@ -1215,11 +1215,11 @@ load_auction_data <- function(excel_path) {
                     n_in_range <- sum(cy_fixed >= 5 & cy_fixed <= 15, na.rm = TRUE)
                     pct_in_range <- n_in_range / length(cy_fixed) * 100
 
-                    message(sprintf("    After normalization: %.1f%% of clearing yields in expected 5-15%% range",
+                    log_debug(sprintf("    After normalization: %.1f%% of clearing yields in expected 5-15%% range",
                                     pct_in_range))
 
                     if (pct_in_range < 70) {
-                        message("    ⚠️ WARNING: Many clearing yields still outside expected range - check Excel source data!")
+                        log_debug("    ⚠️ WARNING: Many clearing yields still outside expected range - check Excel source data!")
                     }
                 }
             }
@@ -1240,7 +1240,7 @@ load_auction_data <- function(excel_path) {
             }
         }
 
-        message(sprintf("    Loaded %d auction records with %d columns",
+        log_debug(sprintf("    Loaded %d auction records with %d columns",
                        nrow(result), ncol(result)))
 
         return(result)
@@ -1272,9 +1272,9 @@ load_auction_data <- function(excel_path) {
 #' @return Tibble with one row per bond containing: bond, mature_date, maturity_source
 #' @export
 create_bond_maturity_lookup <- function(auction_df = NULL, excel_path = NULL) {
-    message("\n╔════════════════════════════════════════════════════════╗")
-    message("║        CREATING BOND MATURITY LOOKUP                   ║")
-    message("╚════════════════════════════════════════════════════════╝")
+    log_debug("\n╔════════════════════════════════════════════════════════╗")
+    log_debug("║        CREATING BOND MATURITY LOOKUP                   ║")
+    log_debug("╚════════════════════════════════════════════════════════╝")
 
     # ═══════════════════════════════════════════════════════════════════════
     # PRIMARY SOURCE: Dedicated maturity_date sheet
@@ -1283,11 +1283,11 @@ create_bond_maturity_lookup <- function(auction_df = NULL, excel_path = NULL) {
     maturity_from_sheet <- NULL
 
     if (!is.null(excel_path)) {
-        message("  [1] Checking for maturity_date sheet (PRIMARY SOURCE)...")
+        log_debug("  [1] Checking for maturity_date sheet (PRIMARY SOURCE)...")
         maturity_from_sheet <- load_maturity_dates(excel_path)
 
         if (!is.null(maturity_from_sheet) && nrow(maturity_from_sheet) > 0) {
-            message("  Using maturity dates from maturity_date sheet (PRIMARY SOURCE)")
+            log_debug("  Using maturity dates from maturity_date sheet (PRIMARY SOURCE)")
 
             # Convert to standard format
             combined <- maturity_from_sheet %>%
@@ -1295,11 +1295,11 @@ create_bond_maturity_lookup <- function(auction_df = NULL, excel_path = NULL) {
                 dplyr::mutate(maturity_source = "maturity_date_sheet")
 
             # Summary
-            message(sprintf("\n  Bond maturity lookup created: %d bonds total", nrow(combined)))
-            message(sprintf("    - From maturity_date sheet: %d", nrow(combined)))
-            message(sprintf("    Bonds: %s", paste(sort(combined$bond), collapse = ", ")))
+            log_debug(sprintf("\n  Bond maturity lookup created: %d bonds total", nrow(combined)))
+            log_debug(sprintf("    - From maturity_date sheet: %d", nrow(combined)))
+            log_debug(sprintf("    Bonds: %s", paste(sort(combined$bond), collapse = ", ")))
 
-            message("╚════════════════════════════════════════════════════════╝\n")
+            log_debug("╚════════════════════════════════════════════════════════╝\n")
             return(combined)
         }
     }
@@ -1308,7 +1308,7 @@ create_bond_maturity_lookup <- function(auction_df = NULL, excel_path = NULL) {
     # FALLBACK: Extract maturity dates from auction data
     # Only used if maturity_date sheet is unavailable
     # ═══════════════════════════════════════════════════════════════════════
-    message("  [2] maturity_date sheet not available - falling back to auction data...")
+    log_debug("  [2] maturity_date sheet not available - falling back to auction data...")
     warning("maturity_date sheet not available - using auction data for maturity inference (less reliable)")
 
     auction_maturities <- tibble::tibble(bond = character(), mature_date = as.Date(character()), maturity_source = character())
@@ -1322,9 +1322,9 @@ create_bond_maturity_lookup <- function(auction_df = NULL, excel_path = NULL) {
                 maturity_source = "auction_data_fallback",
                 .groups = "drop"
             )
-        message(sprintf("  Maturity dates from auction data: %d bonds", nrow(auction_maturities)))
+        log_debug(sprintf("  Maturity dates from auction data: %d bonds", nrow(auction_maturities)))
     } else {
-        message("  WARNING: No mature_date column found in auction data!")
+        log_debug("  WARNING: No mature_date column found in auction data!")
     }
 
     # Note: Manual/hardcoded maturity entries have been REMOVED
@@ -1334,16 +1334,16 @@ create_bond_maturity_lookup <- function(auction_df = NULL, excel_path = NULL) {
     combined <- auction_maturities
 
     # Summary
-    message(sprintf("\n  Bond maturity lookup created: %d bonds total", nrow(combined)))
-    message(sprintf("    - From auction data (fallback): %d", nrow(combined)))
+    log_debug(sprintf("\n  Bond maturity lookup created: %d bonds total", nrow(combined)))
+    log_debug(sprintf("    - From auction data (fallback): %d", nrow(combined)))
 
     if (nrow(combined) > 0) {
-        message(sprintf("    Bonds: %s", paste(sort(combined$bond), collapse = ", ")))
+        log_debug(sprintf("    Bonds: %s", paste(sort(combined$bond), collapse = ", ")))
     } else {
-        message("    WARNING: No maturity dates available - bonds with unknown maturity will be assumed ACTIVE")
+        log_debug("    WARNING: No maturity dates available - bonds with unknown maturity will be assumed ACTIVE")
     }
 
-    message("╚════════════════════════════════════════════════════════╝\n")
+    log_debug("╚════════════════════════════════════════════════════════╝\n")
 
     return(combined)
 }
@@ -1355,30 +1355,30 @@ create_bond_maturity_lookup <- function(auction_df = NULL, excel_path = NULL) {
 #' @param run_diagnostics Run diagnostic checks during loading (default TRUE)
 #' @return Tibble with all bond data merged
 load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
-    message("╔════════════════════════════════════════════════════════╗")
-    message("║        LOADING BOND DATA FROM EXCEL                    ║")
-    message("╚════════════════════════════════════════════════════════╝")
-    message(sprintf("  Source: %s", excel_path))
+    log_debug("╔════════════════════════════════════════════════════════╗")
+    log_debug("║        LOADING BOND DATA FROM EXCEL                    ║")
+    log_debug("╚════════════════════════════════════════════════════════╝")
+    log_debug(sprintf("  Source: %s", excel_path))
 
     # Step 1: Detect available bonds from BOTH required sheets
     # This ensures we only load bonds that exist in both ytm and mod_dur
-    message("\n[1/5] Detecting available bonds...")
+    log_debug("\n[1/5] Detecting available bonds...")
 
     # IMPROVED: Detect common bonds across required sheets to prevent data loss
     available_bonds <- detect_common_bonds(excel_path)
 
     if (length(available_bonds) == 0) {
         # Fallback to original method if common detection fails
-        message("  WARNING: Common bond detection failed, falling back to mod_dur only")
+        log_debug("  WARNING: Common bond detection failed, falling back to mod_dur only")
         mod_dur_raw <- readxl::read_excel(excel_path, sheet = "mod_dur",
                                            guess_max = 10000)
         available_bonds <- detect_available_bonds(mod_dur_raw)
     }
 
-    message(sprintf("  Bonds to load: %s", paste(sort(available_bonds), collapse = ", ")))
+    log_debug(sprintf("  Bonds to load: %s", paste(sort(available_bonds), collapse = ", ")))
 
     # Step 2: Load all time series sheets
-    message("\n[2/5] Loading time series data...")
+    log_debug("\n[2/5] Loading time series data...")
 
     # Define sheet mappings: sheet_name -> value_column_name
     time_series_sheets <- list(
@@ -1429,11 +1429,11 @@ load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
         new_bonds <- ytm_summary %>%
             dplyr::filter(first_date > as.Date("2024-01-01"))
         if (nrow(new_bonds) > 0) {
-            message(sprintf("\n  📊 %d new bond(s) (data starts after 2024-01-01)", nrow(new_bonds)))
+            log_debug(sprintf("\n  📊 %d new bond(s) (data starts after 2024-01-01)", nrow(new_bonds)))
             if (getOption("insele.verbose", FALSE)) {
                 for (i in 1:nrow(new_bonds)) {
                     row <- new_bonds[i, ]
-                    message(sprintf("    %s: %s to %s (%d obs, YTM %.1f%%-%.1f%%)",
+                    log_debug(sprintf("    %s: %s to %s (%d obs, YTM %.1f%%-%.1f%%)",
                                     row$bond, row$first_date, row$last_date, row$n_obs,
                                     row$min_ytm, row$max_ytm))
                 }
@@ -1445,27 +1445,27 @@ load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
             dplyr::filter(date == max(date)) %>%
             dplyr::filter(yield_to_maturity < 5 | yield_to_maturity > 15)
         if (nrow(ytm_check) > 0) {
-            message(sprintf("\n  ⚠ WARNING: %d bond(s) with unusual YTM values on latest date", nrow(ytm_check)))
+            log_debug(sprintf("\n  ⚠ WARNING: %d bond(s) with unusual YTM values on latest date", nrow(ytm_check)))
             if (getOption("insele.verbose", FALSE)) {
                 for (i in 1:min(nrow(ytm_check), 5)) {
-                    message(sprintf("    %s: %.2f%%", ytm_check$bond[i], ytm_check$yield_to_maturity[i]))
+                    log_debug(sprintf("    %s: %.2f%%", ytm_check$bond[i], ytm_check$yield_to_maturity[i]))
                 }
             }
         } else {
-            message("    ✓ All YTM values on latest date are within normal range (5-15%)")
+            log_debug("    ✓ All YTM values on latest date are within normal range (5-15%)")
         }
     }
 
     # Step 3: Load coupon data (static)
-    message("\n[3/5] Loading coupon data...")
+    log_debug("\n[3/5] Loading coupon data...")
     cpn_df <- load_coupon_data(excel_path, available_bonds)
 
     # Step 4: Load auction data
-    message("\n[4/5] Loading auction data...")
+    log_debug("\n[4/5] Loading auction data...")
     auction_df <- load_auction_data(excel_path)
 
     # Step 5: Merge all data
-    message("\n[5/5] Merging all data...")
+    log_debug("\n[5/5] Merging all data...")
 
     # =========================================================================
     # CRITICAL FIX: Use INNER JOIN for critical fields to prevent NA corruption
@@ -1480,14 +1480,14 @@ load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
 
     # Track rows before and after joins for diagnostics
     rows_before <- nrow(full_df)
-    message(sprintf("    Base (mod_dur): %d rows", rows_before))
+    log_debug(sprintf("    Base (mod_dur): %d rows", rows_before))
 
     # CRITICAL FIX: INNER JOIN for YTM (must have both mod_dur and ytm)
     ytm_data <- ts_data_list[["ytm"]]
     if (!is.null(ytm_data)) {
         full_df <- full_df %>%
             dplyr::inner_join(ytm_data, by = c("date", "bond"))
-        message(sprintf("    After INNER join with ytm: %d rows (was %d)", nrow(full_df), rows_before))
+        log_debug(sprintf("    After INNER join with ytm: %d rows (was %d)", nrow(full_df), rows_before))
         debug_bond_count(full_df, "after INNER join")
     } else {
         stop("Failed to load YTM data - cannot proceed")
@@ -1509,16 +1509,16 @@ load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
     bonds_after_filter <- unique(full_df$bond)
 
     if (rows_before_filter != rows_after_filter) {
-        message(sprintf("    Filtered out %d rows with invalid YTM/ModDur values",
+        log_debug(sprintf("    Filtered out %d rows with invalid YTM/ModDur values",
                         rows_before_filter - rows_after_filter))
     }
 
     # DEBUG: Show which bonds were lost during value filtering
     lost_bonds <- setdiff(bonds_before_filter, bonds_after_filter)
     if (length(lost_bonds) > 0) {
-        message(sprintf("    ⚠ Bonds lost during value filter (all data was placeholders): %s",
+        log_debug(sprintf("    ⚠ Bonds lost during value filter (all data was placeholders): %s",
                         paste(sort(lost_bonds), collapse = ", ")))
-        message("      These bonds have NO valid data after joining (all YTM <= 1.5%% or NA)")
+        log_debug("      These bonds have NO valid data after joining (all YTM <= 1.5%% or NA)")
     }
     debug_bond_count(full_df, "after quality filter")
 
@@ -1541,10 +1541,10 @@ load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
         na_ytm <- sum(is.na(full_df$yield_to_maturity))
         na_dur <- sum(is.na(full_df$modified_duration))
         if (na_ytm > 0 || na_dur > 0) {
-            message(sprintf("\n  ⚠ WARNING: NA values in critical fields - YTM: %d, Duration: %d",
+            log_debug(sprintf("\n  ⚠ WARNING: NA values in critical fields - YTM: %d, Duration: %d",
                             na_ytm, na_dur))
         } else {
-            message("    ✓ No NA values in critical fields (YTM, ModDur)")
+            log_debug("    ✓ No NA values in critical fields (YTM, ModDur)")
         }
         debug_bond_values(full_df, "After all joins")
     }
@@ -1565,7 +1565,7 @@ load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
     # ═══════════════════════════════════════════════════════════════════════════
 
     if (!is.null(auction_df)) {
-        message("\n  Applying maturity date fix (join by bond only)...")
+        log_debug("\n  Applying maturity date fix (join by bond only)...")
 
         # Step 1: Create maturity lookup table (uses maturity_date sheet as PRIMARY source)
         bond_maturity_lookup <- create_bond_maturity_lookup(auction_df, excel_path)
@@ -1581,7 +1581,7 @@ load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
         n_with_maturity <- sum(!is.na(full_df$mature_date))
         n_total <- nrow(full_df)
         pct_coverage <- round(100 * n_with_maturity / n_total, 1)
-        message(sprintf("  ✓ Maturity date coverage: %d/%d rows (%.1f%%)",
+        log_debug(sprintf("  ✓ Maturity date coverage: %d/%d rows (%.1f%%)",
                        n_with_maturity, n_total, pct_coverage))
 
         # Step 3: Join AUCTION METRICS by date+bond (for date-specific data)
@@ -1603,10 +1603,10 @@ load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
         full_df <- full_df %>%
             dplyr::left_join(auction_metrics, by = c("date", "bond"))
 
-        message("  ✓ Auction metrics joined by (date, bond)")
+        log_debug("  ✓ Auction metrics joined by (date, bond)")
 
     } else {
-        message("  ⚠ No auction data - maturity dates will be NA")
+        log_debug("  ⚠ No auction data - maturity dates will be NA")
     }
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -1635,10 +1635,10 @@ load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
             dplyr::filter(date == max(date, na.rm = TRUE)) %>%
             dplyr::count(maturity_bucket) %>%
             dplyr::arrange(dplyr::desc(n))
-        message(sprintf("\n  Maturity bucket distribution: %d buckets", nrow(bucket_dist)))
+        log_debug(sprintf("\n  Maturity bucket distribution: %d buckets", nrow(bucket_dist)))
         if (getOption("insele.verbose", FALSE)) {
             for (i in 1:nrow(bucket_dist)) {
-                message(sprintf("    %s: %d bonds", bucket_dist$maturity_bucket[i], bucket_dist$n[i]))
+                log_debug(sprintf("    %s: %d bonds", bucket_dist$maturity_bucket[i], bucket_dist$n[i]))
             }
         }
     }
@@ -1662,7 +1662,7 @@ load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
 
     # DIAGNOSTIC CHECKPOINT 3: Final data quality check
     if (run_diagnostics) {
-        message("\n  Performing final data quality check...")
+        log_debug("\n  Performing final data quality check...")
         latest <- full_df %>%
             dplyr::filter(date == max(date, na.rm = TRUE)) %>%
             dplyr::select(bond, yield_to_maturity, modified_duration)
@@ -1674,17 +1674,17 @@ load_from_excel <- function(excel_path, run_diagnostics = TRUE) {
             )
 
         if (nrow(bad_data) > 0) {
-            message("  ⚠ QUALITY ISSUE DETECTED - Bonds with problematic values:")
+            log_debug("  ⚠ QUALITY ISSUE DETECTED - Bonds with problematic values:")
             for (i in 1:nrow(bad_data)) {
                 row <- bad_data[i,]
-                message(sprintf("    %s: YTM=%.2f%%, ModDur=%.2f",
+                log_debug(sprintf("    %s: YTM=%.2f%%, ModDur=%.2f",
                                 row$bond,
                                 ifelse(is.na(row$yield_to_maturity), 0, row$yield_to_maturity),
                                 ifelse(is.na(row$modified_duration), 0, row$modified_duration)))
             }
-            message("  RECOMMENDATION: Check Excel source data or run diagnose_bond_data_loading()")
+            log_debug("  RECOMMENDATION: Check Excel source data or run diagnose_bond_data_loading()")
         } else {
-            message(sprintf("  ✓ All %d bonds have valid YTM and duration values", nrow(latest)))
+            log_debug(sprintf("  ✓ All %d bonds have valid YTM and duration values", nrow(latest)))
         }
     }
 
@@ -1720,13 +1720,13 @@ load_bond_data <- function(
     force_refresh = FALSE,
     verify_quality = TRUE
 ) {
-    message("╔════════════════════════════════════════════════════════╗")
-    message("║          BOND DATA LOADER                              ║")
-    message("╚════════════════════════════════════════════════════════╝")
-    message(sprintf("  Excel source:  %s", excel_path))
-    message(sprintf("  Cache file:    %s", cache_path))
-    message(sprintf("  Force refresh: %s", force_refresh))
-    message(sprintf("  Verify quality: %s", verify_quality))
+    log_debug("╔════════════════════════════════════════════════════════╗")
+    log_debug("║          BOND DATA LOADER                              ║")
+    log_debug("╚════════════════════════════════════════════════════════╝")
+    log_debug(sprintf("  Excel source:  %s", excel_path))
+    log_debug(sprintf("  Cache file:    %s", cache_path))
+    log_debug(sprintf("  Force refresh: %s", force_refresh))
+    log_debug(sprintf("  Verify quality: %s", verify_quality))
 
     # =========================================================================
     # CHECK FOR HYBRID LOADING PATH (archive staging CSVs or bond_archive.rds)
@@ -1743,21 +1743,21 @@ load_bond_data <- function(
     has_archive     <- file.exists(archive_rds)
 
     if (has_staged_csvs || has_archive) {
-        message("\n[load_bond_data] Archive data detected \u2014 switching to hybrid loader")
+        log_debug("\n[load_bond_data] Archive data detected \u2014 switching to hybrid loader")
         if (has_staged_csvs) {
-            message(sprintf("[load_bond_data]   Staged CSVs: %d file(s) in %s",
+            log_debug(sprintf("[load_bond_data]   Staged CSVs: %d file(s) in %s",
                             length(list.files(staging_dir, pattern = "\\.csv$")),
                             staging_dir))
         }
         if (has_archive) {
-            message(sprintf("[load_bond_data]   Existing archive: %s (%s bytes)",
+            log_debug(sprintf("[load_bond_data]   Existing archive: %s (%s bytes)",
                             archive_rds,
                             format(file.size(archive_rds), big.mark = ",")))
         }
 
         # Remove stale Excel-only cache (hybrid data supersedes it)
         if (file.exists(cache_path)) {
-            message("[load_bond_data]   Removing stale Excel-only cache: ", cache_path)
+            log_debug("[load_bond_data]   Removing stale Excel-only cache: ", cache_path)
             file.remove(cache_path)
         }
 
@@ -1798,9 +1798,9 @@ load_bond_data <- function(
             return(tibble::as_tibble(full_df))
         }
 
-        message("[load_bond_data] Hybrid loader failed \u2014 continuing with Excel-only path")
+        log_debug("[load_bond_data] Hybrid loader failed \u2014 continuing with Excel-only path")
     } else {
-        message("\n[load_bond_data] No archive data found \u2014 using Excel-only path")
+        log_debug("\n[load_bond_data] No archive data found \u2014 using Excel-only path")
     }
 
     # =========================================================================
@@ -1809,7 +1809,7 @@ load_bond_data <- function(
     cache_is_corrupted <- FALSE
 
     if (file.exists(cache_path) && !force_refresh) {
-        message("\n  Checking cache for corruption...")
+        log_debug("\n  Checking cache for corruption...")
         tryCatch({
             cache_data <- readRDS(cache_path)
             cache_is_corrupted <- is_cache_corrupted(cache_data)
@@ -1832,7 +1832,7 @@ load_bond_data <- function(
     needs_refresh <- force_refresh || cache_is_corrupted || is_cache_stale(excel_path, cache_path)
 
     if (needs_refresh) {
-        message("\n→ Loading fresh data from Excel...")
+        log_debug("\n→ Loading fresh data from Excel...")
 
         # Load from Excel with diagnostics
         full_df <- load_from_excel(excel_path, run_diagnostics = verify_quality)
@@ -1850,7 +1850,7 @@ load_bond_data <- function(
             }
 
             saveRDS(full_df, cache_path)
-            message(sprintf("\n✓ Cache saved to: %s", cache_path))
+            log_debug(sprintf("\n✓ Cache saved to: %s", cache_path))
         }, error = function(e) {
             warning(sprintf("Cache validation/save failed: %s", e$message))
             message("  Data was NOT cached due to validation failure")
@@ -1858,7 +1858,7 @@ load_bond_data <- function(
         })
 
     } else {
-        message("\n→ Loading data from cache (faster)...")
+        log_debug("\n→ Loading data from cache (faster)...")
 
         full_df <- tryCatch({
             readRDS(cache_path)
@@ -1867,7 +1867,7 @@ load_bond_data <- function(
             load_from_excel(excel_path, run_diagnostics = verify_quality)
         })
 
-        message(sprintf("✓ Loaded %s rows from cache", format(nrow(full_df), big.mark = ",")))
+        log_debug(sprintf("✓ Loaded %s rows from cache", format(nrow(full_df), big.mark = ",")))
     }
 
     # Data quality verification (runs regardless of source)
@@ -1926,9 +1926,9 @@ validate_bond_data_columns <- function(df) {
 #' @return List with alignment check results
 #' @export
 check_column_alignment <- function(excel_path) {
-    message("\n╔════════════════════════════════════════════════════════╗")
-    message("║          COLUMN ALIGNMENT CHECK                        ║")
-    message("╚════════════════════════════════════════════════════════╝")
+    log_debug("\n╔════════════════════════════════════════════════════════╗")
+    log_debug("║          COLUMN ALIGNMENT CHECK                        ║")
+    log_debug("╚════════════════════════════════════════════════════════╝")
 
     sheets <- c("ytm", "mod_dur", "dur", "conv", "clean_price", "bpv", "accrued", "full_price")
     required_sheets <- c("ytm", "mod_dur")
@@ -1940,16 +1940,16 @@ check_column_alignment <- function(excel_path) {
                                      guess_max = 10000)
             cols <- names(df)[tolower(names(df)) != "date"]
             all_cols[[sheet]] <- cols
-            message(sprintf("  %s: %d bond columns", sheet, length(cols)))
+            log_debug(sprintf("  %s: %d bond columns", sheet, length(cols)))
         }, error = function(e) {
-            message(sprintf("  %s: ERROR - %s", sheet, e$message))
+            log_debug(sprintf("  %s: ERROR - %s", sheet, e$message))
         })
     }
 
     # Find common bonds across all sheets
     common_bonds <- Reduce(intersect, all_cols)
-    message(sprintf("\n  Common bonds across all sheets: %d", length(common_bonds)))
-    message(sprintf("  %s", paste(sort(common_bonds), collapse = ", ")))
+    log_debug(sprintf("\n  Common bonds across all sheets: %d", length(common_bonds)))
+    log_debug(sprintf("  %s", paste(sort(common_bonds), collapse = ", ")))
 
     # Find bonds missing from some sheets
     all_bonds <- unique(unlist(all_cols))
@@ -1957,16 +1957,16 @@ check_column_alignment <- function(excel_path) {
     for (bond in sort(all_bonds)) {
         missing_from <- sheets[!sapply(all_cols, function(x) bond %in% x)]
         if (length(missing_from) > 0) {
-            message(sprintf("  ⚠ %s missing from: %s", bond, paste(missing_from, collapse = ", ")))
+            log_debug(sprintf("  ⚠ %s missing from: %s", bond, paste(missing_from, collapse = ", ")))
             missing_issues[[bond]] <- missing_from
         }
     }
 
     # Check required sheets specifically
     required_common <- Reduce(intersect, all_cols[required_sheets])
-    message(sprintf("\n  Common bonds in required sheets (ytm, mod_dur): %d", length(required_common)))
+    log_debug(sprintf("\n  Common bonds in required sheets (ytm, mod_dur): %d", length(required_common)))
 
-    message("╚════════════════════════════════════════════════════════╝\n")
+    log_debug("╚════════════════════════════════════════════════════════╝\n")
 
     return(list(
         common_all_sheets = common_bonds,
@@ -1999,7 +1999,7 @@ detect_common_bonds <- function(excel_path) {
     })
 
     common_bonds <- Reduce(intersect, bond_lists)
-    message(sprintf("  Common bonds in required sheets: %d", length(common_bonds)))
+    log_debug(sprintf("  Common bonds in required sheets: %d", length(common_bonds)))
 
     return(common_bonds)
 }
@@ -2017,20 +2017,20 @@ detect_common_bonds <- function(excel_path) {
 #' @return Tibble with quality check results for each bond
 #' @export
 verify_bond_data_quality <- function(data, ytm_min = 5, ytm_max = 15, dur_min = 0.5) {
-    message("\n╔════════════════════════════════════════════════════════╗")
-    message("║        DATA QUALITY VERIFICATION                       ║")
-    message("╚════════════════════════════════════════════════════════╝")
+    log_debug("\n╔════════════════════════════════════════════════════════╗")
+    log_debug("║        DATA QUALITY VERIFICATION                       ║")
+    log_debug("╚════════════════════════════════════════════════════════╝")
 
     if (is.null(data) || nrow(data) == 0) {
-        message("  ERROR: No data to verify!")
+        log_debug("  ERROR: No data to verify!")
         return(NULL)
     }
 
     latest_date <- max(data$date, na.rm = TRUE)
     latest <- data %>% dplyr::filter(date == latest_date)
 
-    message(sprintf("  Latest date: %s", latest_date))
-    message(sprintf("  Bonds on latest date: %d", dplyr::n_distinct(latest$bond)))
+    log_debug(sprintf("  Latest date: %s", latest_date))
+    log_debug(sprintf("  Bonds on latest date: %d", dplyr::n_distinct(latest$bond)))
 
     # Check each bond
     quality_check <- latest %>%
@@ -2056,31 +2056,31 @@ verify_bond_data_quality <- function(data, ytm_min = 5, ytm_max = 15, dur_min = 
     n_good <- sum(quality_check$ytm_ok & quality_check$dur_ok)
     n_bad <- nrow(quality_check) - n_good
 
-    message(sprintf("\n  Bond Data Quality: %d good, %d problematic", n_good, n_bad))
+    log_debug(sprintf("\n  Bond Data Quality: %d good, %d problematic", n_good, n_bad))
 
     if (getOption("insele.verbose", FALSE)) {
         for (i in 1:nrow(quality_check)) {
             row <- quality_check[i,]
             status_icon <- if(row$ytm_ok && row$dur_ok) "✓" else "✗"
-            message(sprintf("    %s %-6s: YTM=%6.2f%%, ModDur=%5.2f  %s",
+            log_debug(sprintf("    %s %-6s: YTM=%6.2f%%, ModDur=%5.2f  %s",
                             status_icon, row$bond, row$ytm, row$mod_dur, row$status))
         }
     }
 
     if (n_bad > 0) {
-        message("\n  ⚠ PROBLEMATIC BONDS DETECTED!")
+        log_debug("\n  ⚠ PROBLEMATIC BONDS DETECTED!")
         bad_bonds <- quality_check %>% dplyr::filter(!(ytm_ok & dur_ok))
         if (getOption("insele.verbose", FALSE)) {
             for (i in 1:nrow(bad_bonds)) {
                 row <- bad_bonds[i,]
-                message(sprintf("    %s: ytm=%.2f, mod_dur=%.2f - %s",
+                log_debug(sprintf("    %s: ytm=%.2f, mod_dur=%.2f - %s",
                                 row$bond, row$ytm, row$mod_dur, row$status))
             }
         }
-        message("\n  RECOMMENDED ACTION: Force cache refresh with force_refresh=TRUE")
+        log_debug("\n  RECOMMENDED ACTION: Force cache refresh with force_refresh=TRUE")
     }
 
-    message("╚════════════════════════════════════════════════════════╝\n")
+    log_debug("╚════════════════════════════════════════════════════════╝\n")
 
     return(quality_check)
 }
@@ -2095,49 +2095,49 @@ verify_bond_data_quality <- function(data, ytm_min = 5, ytm_max = 15, dur_min = 
 #' @return List with diagnostic results at each checkpoint
 #' @export
 diagnose_bond_data_loading <- function(excel_path) {
-    message("\n╔════════════════════════════════════════════════════════╗")
-    message("║        BOND DATA LOADING DIAGNOSTICS                   ║")
-    message("╚════════════════════════════════════════════════════════╝")
+    log_debug("\n╔════════════════════════════════════════════════════════╗")
+    log_debug("║        BOND DATA LOADING DIAGNOSTICS                   ║")
+    log_debug("╚════════════════════════════════════════════════════════╝")
 
     results <- list()
 
     # CHECKPOINT 1: Raw YTM values
-    message("\n[CHECKPOINT 1] Raw YTM Sheet")
+    log_debug("\n[CHECKPOINT 1] Raw YTM Sheet")
     ytm_raw <- readxl::read_excel(excel_path, sheet = "ytm",
                                    guess_max = 10000)
     latest_row <- ytm_raw %>% dplyr::slice_tail(n = 1)
 
-    message(sprintf("  Columns: %s", paste(names(ytm_raw), collapse = ", ")))
-    message(sprintf("  Latest date: %s", latest_row$date))
-    message("  Latest YTM values:")
+    log_debug(sprintf("  Columns: %s", paste(names(ytm_raw), collapse = ", ")))
+    log_debug(sprintf("  Latest date: %s", latest_row$date))
+    log_debug("  Latest YTM values:")
     for (col in names(latest_row)[-1]) {
         val <- latest_row[[col]]
         if (!is.na(val)) {
             status <- if(val > 5 && val < 15) "✓" else "⚠ PROBLEM"
-            message(sprintf("    %s: %.2f%% %s", col, val, status))
+            log_debug(sprintf("    %s: %.2f%% %s", col, val, status))
         }
     }
     results$ytm_raw <- latest_row
 
     # CHECKPOINT 2: Raw mod_dur values
-    message("\n[CHECKPOINT 2] Raw mod_dur Sheet")
+    log_debug("\n[CHECKPOINT 2] Raw mod_dur Sheet")
     dur_raw <- readxl::read_excel(excel_path, sheet = "mod_dur",
                                    guess_max = 10000)
     latest_dur <- dur_raw %>% dplyr::slice_tail(n = 1)
 
-    message(sprintf("  Latest date: %s", latest_dur$date))
-    message("  Latest duration values:")
+    log_debug(sprintf("  Latest date: %s", latest_dur$date))
+    log_debug("  Latest duration values:")
     for (col in names(latest_dur)[-1]) {
         val <- latest_dur[[col]]
         if (!is.na(val)) {
             status <- if(val > 0.5) "✓" else "⚠ PROBLEM"
-            message(sprintf("    %s: %.2f years %s", col, val, status))
+            log_debug(sprintf("    %s: %.2f years %s", col, val, status))
         }
     }
     results$dur_raw <- latest_dur
 
     # CHECKPOINT 3: After pivot_longer on YTM
-    message("\n[CHECKPOINT 3] After YTM pivot_longer")
+    log_debug("\n[CHECKPOINT 3] After YTM pivot_longer")
     available_bonds <- detect_available_bonds(dur_raw)
     ytm_pivoted <- ytm_raw %>%
         dplyr::select(dplyr::all_of(intersect(names(ytm_raw), c("date", available_bonds)))) %>%
@@ -2152,14 +2152,14 @@ diagnose_bond_data_loading <- function(excel_path) {
     bad_ytm <- latest_ytm_check %>%
         dplyr::filter(yield_to_maturity < 5 | is.na(yield_to_maturity))
     if (nrow(bad_ytm) > 0) {
-        message("  ⚠ WARNING: Bonds with bad YTM values after pivot:")
-        print(bad_ytm)
+        log_debug("  ⚠ WARNING: Bonds with bad YTM values after pivot:")
+        log_debug(paste0(utils::capture.output(print(bad_ytm)), collapse = "\n"))
     } else {
-        message(sprintf("  ✓ All %d bonds have valid YTM values", nrow(latest_ytm_check)))
+        log_debug(sprintf("  ✓ All %d bonds have valid YTM values", nrow(latest_ytm_check)))
     }
     results$ytm_pivoted <- latest_ytm_check
 
-    message("\n╚════════════════════════════════════════════════════════╝\n")
+    log_debug("\n╚════════════════════════════════════════════════════════╝\n")
     return(results)
 }
 
@@ -2199,9 +2199,9 @@ diagnose_bond_data_loading <- function(excel_path) {
 #' @param excel_path Optional path to Excel file to read maturity_date sheet
 #' @return Tibble with bond metadata including maturity dates and status
 create_bond_metadata <- function(full_df, auction_df = NULL, excel_path = NULL) {
-    message("\n╔════════════════════════════════════════════════════════╗")
-    message("║        CREATING BOND METADATA TABLE                    ║")
-    message("╚════════════════════════════════════════════════════════╝")
+    log_debug("\n╔════════════════════════════════════════════════════════╗")
+    log_debug("║        CREATING BOND METADATA TABLE                    ║")
+    log_debug("╚════════════════════════════════════════════════════════╝")
 
     # Get all unique bonds from the data
     all_bonds <- sort(unique(full_df$bond))
@@ -2213,13 +2213,13 @@ create_bond_metadata <- function(full_df, auction_df = NULL, excel_path = NULL) 
     maturity_source_name <- "unknown"
 
     if (!is.null(excel_path)) {
-        message("  Checking for maturity_date sheet (PRIMARY SOURCE)...")
+        log_debug("  Checking for maturity_date sheet (PRIMARY SOURCE)...")
         maturity_from_sheet <- load_maturity_dates(excel_path)
 
         if (!is.null(maturity_from_sheet) && nrow(maturity_from_sheet) > 0) {
             maturity_from_data <- maturity_from_sheet
             maturity_source_name <- "maturity_date_sheet"
-            message(sprintf("  Using maturity_date sheet: %d bonds", nrow(maturity_from_data)))
+            log_debug(sprintf("  Using maturity_date sheet: %d bonds", nrow(maturity_from_data)))
         }
     }
 
@@ -2236,10 +2236,10 @@ create_bond_metadata <- function(full_df, auction_df = NULL, excel_path = NULL) 
                     .groups = "drop"
                 )
             maturity_source_name <- "auction_data_fallback"
-            message(sprintf("  Maturity dates from auction data (fallback): %d bonds", nrow(maturity_from_data)))
+            log_debug(sprintf("  Maturity dates from auction data (fallback): %d bonds", nrow(maturity_from_data)))
         } else {
             maturity_from_data <- tibble::tibble(bond = character(), maturity_date = as.Date(character()))
-            message("  WARNING: No maturity data available!")
+            log_debug("  WARNING: No maturity data available!")
         }
     }
 
@@ -2296,10 +2296,10 @@ create_bond_metadata <- function(full_df, auction_df = NULL, excel_path = NULL) 
     n_active <- sum(!bond_metadata$is_matured, na.rm = TRUE)
     n_unknown <- sum(is.na(bond_metadata$final_maturity_date))
 
-    message(sprintf("  Total bonds:      %d", nrow(bond_metadata)))
-    message(sprintf("  Active bonds:     %d", n_active))
-    message(sprintf("  Matured bonds:    %d", n_matured))
-    message(sprintf("  Unknown maturity: %d (assumed ACTIVE)", n_unknown))
+    log_debug(sprintf("  Total bonds:      %d", nrow(bond_metadata)))
+    log_debug(sprintf("  Active bonds:     %d", n_active))
+    log_debug(sprintf("  Matured bonds:    %d", n_matured))
+    log_debug(sprintf("  Unknown maturity: %d (assumed ACTIVE)", n_unknown))
 
     # List matured bonds for transparency
     matured_bonds <- bond_metadata %>%
@@ -2307,14 +2307,14 @@ create_bond_metadata <- function(full_df, auction_df = NULL, excel_path = NULL) 
         dplyr::arrange(final_maturity_date)
 
     if (nrow(matured_bonds) > 0) {
-        message(sprintf("\n  Matured bonds (confirmed from %s):", maturity_source_name))
+        log_debug(sprintf("\n  Matured bonds (confirmed from %s):", maturity_source_name))
         for (i in seq_len(min(15, nrow(matured_bonds)))) {
-            message(sprintf("    - %s: matured %s",
+            log_debug(sprintf("    - %s: matured %s",
                            matured_bonds$bond[i],
                            format(matured_bonds$final_maturity_date[i], "%Y-%m-%d")))
         }
         if (nrow(matured_bonds) > 15) {
-            message(sprintf("    ... and %d more", nrow(matured_bonds) - 15))
+            log_debug(sprintf("    ... and %d more", nrow(matured_bonds) - 15))
         }
     }
 
@@ -2323,9 +2323,9 @@ create_bond_metadata <- function(full_df, auction_df = NULL, excel_path = NULL) 
         dplyr::filter(is.na(final_maturity_date))
 
     if (nrow(unknown_bonds) > 0) {
-        message("\n  Bonds with unknown maturity (assumed ACTIVE):")
-        message(sprintf("    %s", paste(unknown_bonds$bond, collapse = ", ")))
-        message("    (These bonds may be older issues without auction data)")
+        log_debug("\n  Bonds with unknown maturity (assumed ACTIVE):")
+        log_debug(sprintf("    %s", paste(unknown_bonds$bond, collapse = ", ")))
+        log_debug("    (These bonds may be older issues without auction data)")
     }
 
     return(bond_metadata)
@@ -2366,7 +2366,7 @@ get_active_bonds <- function(bond_metadata, start_date, end_date, include_unknow
         ) %>%
         dplyr::pull(bond)
 
-    message(sprintf("  Bonds for analysis period %s to %s: %d of %d (excluding already-matured)",
+    log_debug(sprintf("  Bonds for analysis period %s to %s: %d of %d (excluding already-matured)",
                     start_date, end_date, length(active_bonds), nrow(bond_metadata)))
 
     return(active_bonds)
@@ -2416,13 +2416,13 @@ create_bond_labels <- function(bond_metadata) {
 #' @param full_df Data frame with bond data including mature_date
 #' @return Tibble with maturity verification results (also prints diagnostics)
 verify_maturity_dates <- function(full_df) {
-    message("\n╔════════════════════════════════════════════════════════╗")
-    message("║        MATURITY DATE VERIFICATION                      ║")
-    message("╚════════════════════════════════════════════════════════╝")
+    log_debug("\n╔════════════════════════════════════════════════════════╗")
+    log_debug("║        MATURITY DATE VERIFICATION                      ║")
+    log_debug("╚════════════════════════════════════════════════════════╝")
 
     if (!"mature_date" %in% names(full_df)) {
-        message("  WARNING: mature_date column not found in data!")
-        message("  Maturity filtering will assume all bonds are ACTIVE.")
+        log_debug("  WARNING: mature_date column not found in data!")
+        log_debug("  Maturity filtering will assume all bonds are ACTIVE.")
         return(NULL)
     }
 
@@ -2444,22 +2444,22 @@ verify_maturity_dates <- function(full_df) {
     n_active <- sum(maturity_check$status == "ACTIVE")
     n_total <- nrow(maturity_check)
 
-    message(sprintf("\n  Bonds with known maturity dates: %d", n_total))
-    message(sprintf("  - MATURED: %d", n_matured))
-    message(sprintf("  - ACTIVE:  %d", n_active))
+    log_debug(sprintf("\n  Bonds with known maturity dates: %d", n_total))
+    log_debug(sprintf("  - MATURED: %d", n_matured))
+    log_debug(sprintf("  - ACTIVE:  %d", n_active))
 
     # Show matured bonds
     if (n_matured > 0) {
-        message("\n  Matured bonds:")
+        log_debug("\n  Matured bonds:")
         matured <- maturity_check %>% dplyr::filter(status == "MATURED")
         for (i in seq_len(min(10, nrow(matured)))) {
-            message(sprintf("    - %s: matured %s (%d days ago)",
+            log_debug(sprintf("    - %s: matured %s (%d days ago)",
                            matured$bond[i],
                            format(matured$maturity[i], "%Y-%m-%d"),
                            abs(matured$days_remaining[i])))
         }
         if (nrow(matured) > 10) {
-            message(sprintf("    ... and %d more", nrow(matured) - 10))
+            log_debug(sprintf("    ... and %d more", nrow(matured) - 10))
         }
     }
 
@@ -2469,9 +2469,9 @@ verify_maturity_dates <- function(full_df) {
         dplyr::arrange(maturity)
 
     if (nrow(upcoming) > 0) {
-        message("\n  Bonds maturing within 1 year:")
+        log_debug("\n  Bonds maturing within 1 year:")
         for (i in seq_len(min(5, nrow(upcoming)))) {
-            message(sprintf("    - %s: matures %s (%d days remaining)",
+            log_debug(sprintf("    - %s: matures %s (%d days remaining)",
                            upcoming$bond[i],
                            format(upcoming$maturity[i], "%Y-%m-%d"),
                            upcoming$days_remaining[i]))
@@ -2484,12 +2484,12 @@ verify_maturity_dates <- function(full_df) {
     bonds_without_maturity <- setdiff(all_bonds, bonds_with_maturity)
 
     if (length(bonds_without_maturity) > 0) {
-        message("\n  Bonds WITHOUT maturity data (assumed ACTIVE):")
-        message(sprintf("    %s", paste(sort(bonds_without_maturity), collapse = ", ")))
-        message("    (No auction data found for these - they will be included in analysis)")
+        log_debug("\n  Bonds WITHOUT maturity data (assumed ACTIVE):")
+        log_debug(sprintf("    %s", paste(sort(bonds_without_maturity), collapse = ", ")))
+        log_debug("    (No auction data found for these - they will be included in analysis)")
     }
 
-    message("╚════════════════════════════════════════════════════════╝\n")
+    log_debug("╚════════════════════════════════════════════════════════╝\n")
 
     return(maturity_check)
 }

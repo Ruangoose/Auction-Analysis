@@ -527,7 +527,7 @@ create_zscore_evolution <- function(df, lookback_periods = c(20, 60, 252)) {
                    alpha = c(0.7, 0.5, 1, 0.5, 0.7)) +
 
         # Lines for each period
-        geom_line(size = 1.5, alpha = 0.8) +
+        geom_line(linewidth = 1.5, alpha = 0.8) +
         geom_point(size = 3, alpha = 0.9) +
 
         # Highlight divergences
@@ -721,7 +721,7 @@ create_liquidity_radar <- function(df) {
     # Create faceted radar-style plot
     p <- ggplot(radar_data, aes(x = metric, y = score, group = bond)) +
         geom_polygon(aes(fill = bond), alpha = 0.3) +
-        geom_line(aes(color = bond), size = 1) +
+        geom_line(aes(color = bond), linewidth = 1) +
         geom_point(aes(color = bond), size = 2) +
         coord_polar() +
         facet_wrap(~bond, ncol = 4) +

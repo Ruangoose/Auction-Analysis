@@ -41,7 +41,7 @@ process_archive_staging <- function(data_dir = "data") {
   # Ensure the staging directory exists (VBA expects it)
   if (!dir.exists(staging_dir)) {
     dir.create(staging_dir, recursive = TRUE)
-    message("[Archive] Created archive_staging/ directory")
+    log_debug("[Archive] Created archive_staging/ directory")
   }
 
   # List CSV files in the staging directory
@@ -49,11 +49,11 @@ process_archive_staging <- function(data_dir = "data") {
   csv_files <- list.files(staging_dir, pattern = "\\.csv$", full.names = TRUE)
 
   if (length(csv_files) == 0) {
-    message("[Archive] No staged CSVs found — nothing to process")
+    log_debug("[Archive] No staged CSVs found — nothing to process")
     return(invisible(FALSE))
   }
 
-  message(sprintf("[Archive] Found %d staged CSV(s) to process", length(csv_files)))
+  log_debug(sprintf("[Archive] Found %d staged CSV(s) to process", length(csv_files)))
 
   # Load existing archive (or create empty structure)
   archive <- load_or_create_archive(archive_path)
@@ -63,7 +63,7 @@ process_archive_staging <- function(data_dir = "data") {
 
   for (csv_path in csv_files) {
     fname <- basename(csv_path)
-    message(sprintf("[Archive]   Processing: %s", fname))
+    log_debug(sprintf("[Archive]   Processing: %s", fname))
 
     # Parse the CSV prefix to identify the series
     # Expected format: {prefix}_archive_{YYYYMMDD}.csv
@@ -120,7 +120,7 @@ process_archive_staging <- function(data_dir = "data") {
   if (length(processed_log) > 0) {
     tryCatch({
       saveRDS(archive, archive_path)
-      message(sprintf("[Archive] Saved updated bond_archive.rds (%s)",
+      log_debug(sprintf("[Archive] Saved updated bond_archive.rds (%s)",
                       format(file.size(archive_path), big.mark = ",")))
     }, error = function(e) {
       warning(sprintf("[Archive] FAILED to save bond_archive.rds: %s", e$message))
@@ -138,7 +138,7 @@ process_archive_staging <- function(data_dir = "data") {
         if (file.exists(csv_path)) {
           warning(sprintf("[Archive]   Could not delete %s — file still exists", fname))
         } else {
-          message(sprintf("[Archive]   Deleted: %s", fname))
+          log_debug(sprintf("[Archive]   Deleted: %s", fname))
         }
       }, error = function(e) {
         warning(sprintf("[Archive]   Could not delete %s: %s", fname, e$message))
@@ -146,18 +146,18 @@ process_archive_staging <- function(data_dir = "data") {
     }
 
     # Print summary
-    message("[Archive] === Processing Summary ===")
+    log_debug("[Archive] === Processing Summary ===")
     total_rows <- 0
     for (fname in names(processed_log)) {
       info <- processed_log[[fname]]
-      message(sprintf("[Archive]   %s -> %s: %s rows, %d bonds, dates %s to %s",
+      log_debug(sprintf("[Archive]   %s -> %s: %s rows, %d bonds, dates %s to %s",
                       fname, info$series,
                       format(info$rows, big.mark = ","),
                       info$n_bonds,
                       info$date_min, info$date_max))
       total_rows <- total_rows + info$rows
     }
-    message(sprintf("[Archive] Total: %d files processed, %s rows ingested",
+    log_debug(sprintf("[Archive] Total: %d files processed, %s rows ingested",
                     length(processed_log), format(total_rows, big.mark = ",")))
   }
 
@@ -218,7 +218,7 @@ read_archive_csv <- function(csv_path, value_col) {
     dplyr::select(-.has_data)
 
   if (nrow(raw) < rows_before) {
-    message(sprintf("[Archive]     Filtered %d non-trading days", rows_before - nrow(raw)))
+    log_debug(sprintf("[Archive]     Filtered %d non-trading days", rows_before - nrow(raw)))
   }
 
   # Pivot to long format
@@ -244,7 +244,7 @@ load_or_create_archive <- function(archive_path) {
   if (file.exists(archive_path)) {
     tryCatch({
       archive <- readRDS(archive_path)
-      message(sprintf("[Archive] Loaded existing bond_archive.rds (%s)",
+      log_debug(sprintf("[Archive] Loaded existing bond_archive.rds (%s)",
                       format(file.size(archive_path), big.mark = ",")))
       # Ensure all expected series keys exist
       for (info in ARCHIVE_SERIES_MAP) {
@@ -272,7 +272,7 @@ load_or_create_archive <- function(archive_path) {
     df[[info$col]] <- numeric()
     archive[[info$col]] <- df
   }
-  message("[Archive] Created new empty archive structure")
+  log_debug("[Archive] Created new empty archive structure")
   return(archive)
 }
 
@@ -302,10 +302,10 @@ load_bond_data_hybrid <- function(excel_path,
                                   data_dir = dirname(excel_path),
                                   reference_date = Sys.Date()) {
 
-  message("=== HYBRID BOND DATA LOADING ===")
-  message("Excel: ", excel_path)
-  message("Data dir: ", data_dir)
-  message("Reference date: ", reference_date)
+  log_debug("=== HYBRID BOND DATA LOADING ===)
+  log_debug("Excel: ", excel_path)
+  log_debug("Data dir: ", data_dir)
+  log_debug("Reference date: ", reference_date)
 
   # ---- Step 0: Process any staged archive CSVs ----
   process_archive_staging(data_dir)
@@ -318,11 +318,11 @@ load_bond_data_hybrid <- function(excel_path,
   archive_has_data <- any(sapply(archive, function(df) !is.null(df) && nrow(df) > 0))
   if (archive_has_data) {
     archive_rows <- sum(sapply(archive, nrow))
-    message(sprintf("[Hybrid] Archive loaded: %s total rows across %d series",
+    log_debug(sprintf("[Hybrid] Archive loaded: %s total rows across %d series",
                     format(archive_rows, big.mark = ","),
                     sum(sapply(archive, function(df) nrow(df) > 0))))
   } else {
-    message("[Hybrid] No archive data — loading everything from Excel")
+    log_debug("[Hybrid] No archive data — loading everything from Excel")
   }
 
   # ---- Step 2: Verify Excel file exists ----
@@ -342,7 +342,7 @@ load_bond_data_hybrid <- function(excel_path,
   excel_ts <- list()
 
   if (excel_available) {
-    message("\n[Hybrid] Loading time series from Excel...")
+    log_debug("[Hybrid] Loading time series from Excel...")
 
     for (prefix in names(ARCHIVE_SERIES_MAP)) {
       info <- ARCHIVE_SERIES_MAP[[prefix]]
@@ -359,7 +359,7 @@ load_bond_data_hybrid <- function(excel_path,
   }
 
   # ---- Step 4: Combine archive + Excel for each series ----
-  message("\n[Hybrid] Combining archive + Excel data...")
+  log_debug("[Hybrid] Combining archive + Excel data...")
 
   combined_ts <- list()
   for (prefix in names(ARCHIVE_SERIES_MAP)) {
@@ -376,7 +376,7 @@ load_bond_data_hybrid <- function(excel_path,
   for (value_col in names(combined_ts)) {
     df <- combined_ts[[value_col]]
     if (!is.null(df) && nrow(df) > 0) {
-      message(sprintf("[Hybrid]   %s: %s rows, %d bonds, %s to %s",
+      log_debug(sprintf("[Hybrid]   %s: %s rows, %d bonds, %s to %s",
                       value_col,
                       format(nrow(df), big.mark = ","),
                       dplyr::n_distinct(df$bond),
@@ -385,7 +385,7 @@ load_bond_data_hybrid <- function(excel_path,
   }
 
   # ---- Step 5: Load non-archived sheets from Excel ----
-  message("\n[Hybrid] Loading non-archived sheets from Excel...")
+  log_debug("[Hybrid] Loading non-archived sheets from Excel...")
 
   # Maturity lookup (STEP 1 from load_bond_data_robust)
   maturity_lookup <- NULL
@@ -410,7 +410,7 @@ load_bond_data_hybrid <- function(excel_path,
     # Maturity dates (primary: maturity_date sheet, fallback: auctions)
     maturity_from_sheet <- load_maturity_dates(excel_path)
     if (!is.null(maturity_from_sheet) && nrow(maturity_from_sheet) > 0) {
-      message("[Hybrid] Using maturity dates from maturity_date sheet")
+      log_debug("[Hybrid] Using maturity dates from maturity_date sheet")
       maturity_lookup <- maturity_from_sheet %>%
         dplyr::mutate(
           is_matured      = maturity_date < reference_date,
@@ -429,7 +429,7 @@ load_bond_data_hybrid <- function(excel_path,
           dplyr::left_join(auction_info, by = "bond")
       }
     } else if (!is.null(auction_raw)) {
-      message("[Hybrid] Falling back to auction data for maturity inference")
+      log_debug("[Hybrid] Falling back to auction data for maturity inference")
       maturity_lookup <- auction_raw %>%
         dplyr::filter(!is.na(mat_date)) %>%
         dplyr::group_by(bond) %>%
@@ -478,7 +478,7 @@ load_bond_data_hybrid <- function(excel_path,
   }
 
   # ---- Step 6: Join all series into master full_df ----
-  message("\n[Hybrid] Joining all series into master dataframe...")
+  log_debug("[Hybrid] Joining all series into master dataframe...")
 
   ytm_df     <- combined_ts[["yield_to_maturity"]]
   mod_dur_df <- combined_ts[["modified_duration"]]
@@ -490,7 +490,7 @@ load_bond_data_hybrid <- function(excel_path,
   full_df <- ytm_df %>%
     dplyr::inner_join(mod_dur_df, by = c("date", "bond"))
 
-  message(sprintf("[Hybrid]   After YTM+ModDur inner join: %s rows",
+  log_debug(sprintf("[Hybrid]   After YTM+ModDur inner join: %s rows",
                   format(nrow(full_df), big.mark = ",")))
 
   # Filter invalid values
@@ -505,7 +505,7 @@ load_bond_data_hybrid <- function(excel_path,
     )
   rows_filtered <- rows_before - nrow(full_df)
   if (rows_filtered > 0) {
-    message(sprintf("[Hybrid]   Filtered %d rows with invalid YTM/ModDur values", rows_filtered))
+    log_debug(sprintf("[Hybrid]   Filtered %d rows with invalid YTM/ModDur values", rows_filtered))
   }
 
   debug_bond_count(full_df, "hybrid: after quality filter")
@@ -569,7 +569,7 @@ load_bond_data_hybrid <- function(excel_path,
   }
 
   # ---- Step 7: Add calculated fields & filter matured bonds ----
-  message("\n[Hybrid] Adding calculated fields...")
+  log_debug("[Hybrid] Adding calculated fields...")
 
   full_df <- full_df %>%
     dplyr::mutate(
@@ -604,9 +604,9 @@ load_bond_data_hybrid <- function(excel_path,
     dplyr::filter(!is.na(yield_to_maturity) & !is.na(modified_duration)) %>%
     dplyr::arrange(date, bond)
 
-  message(sprintf("[Hybrid]   Final rows: %s", format(nrow(full_df), big.mark = ",")))
-  message(sprintf("[Hybrid]   Unique active bonds: %d", dplyr::n_distinct(full_df$bond)))
-  message(sprintf("[Hybrid]   Date range: %s to %s", min(full_df$date), max(full_df$date)))
+  log_debug(sprintf("[Hybrid]   Final rows: %s", format(nrow(full_df), big.mark = ",")))
+  log_debug(sprintf("[Hybrid]   Unique active bonds: %d", dplyr::n_distinct(full_df$bond)))
+  log_debug(sprintf("[Hybrid]   Date range: %s to %s", min(full_df$date), max(full_df$date)))
 
   # ---- Step 8: Build summary tables ----
   bond_metadata <- full_df %>%
@@ -645,17 +645,17 @@ load_bond_data_hybrid <- function(excel_path,
   }
 
   # ---- Quality report ----
-  message("\n=== HYBRID LOAD QUALITY REPORT ===")
-  message("Date Range: ", min(full_df$date), " to ", max(full_df$date))
-  message("Total Observations: ", format(nrow(full_df), big.mark = ","))
-  message("Unique Active Bonds: ", dplyr::n_distinct(full_df$bond))
-  message("Active Bonds: ", paste(sort(unique(full_df$bond)), collapse = ", "))
+  log_debug("=== HYBRID LOAD QUALITY REPORT ===)
+  log_debug("Date Range: ", min(full_df$date), " to ", max(full_df$date))
+  log_debug("Total Observations: ", format(nrow(full_df), big.mark = ","))
+  log_debug("Unique Active Bonds: ", dplyr::n_distinct(full_df$bond))
+  log_debug("Active Bonds: ", paste(sort(unique(full_df$bond)), collapse = ", "))
   if (archive_has_data) {
-    message("Data source: Archive (.rds) + Excel (hybrid)")
+    log_debug("Data source: Archive (.rds) + Excel (hybrid)")
   } else {
-    message("Data source: Excel only (no archive yet)")
+    log_debug("Data source: Excel only (no archive yet)")
   }
-  message("=== HYBRID DATA LOADING COMPLETE ===\n")
+  log_debug("=== HYBRID DATA LOADING COMPLETE ===")
 
   return(list(
     full_df         = tibble::as_tibble(full_df),
@@ -682,7 +682,7 @@ load_bond_data_hybrid <- function(excel_path,
 #' @param value_col  Name for the value column
 #' @return Tibble with columns: date, bond, <value_col>
 load_ts_sheet_for_hybrid <- function(excel_path, sheet_name, value_col) {
-  message(sprintf("[Hybrid]   Loading Excel sheet: %s -> %s", sheet_name, value_col))
+  log_debug(sprintf("[Hybrid]   Loading Excel sheet: %s -> %s", sheet_name, value_col))
 
   df <- readxl::read_excel(
     excel_path, sheet = sheet_name,
@@ -702,7 +702,7 @@ load_ts_sheet_for_hybrid <- function(excel_path, sheet_name, value_col) {
       dplyr::ungroup() %>%
       dplyr::filter(.has_data) %>%
       dplyr::select(-.has_data)
-    message(sprintf("[Hybrid]     Filtered non-trading days"))
+    log_debug(sprintf("[Hybrid]     Filtered non-trading days"))
   } else {
     df <- filter_non_trading_days(df, date_col = "date", verbose = TRUE)
   }
@@ -726,7 +726,7 @@ load_ts_sheet_for_hybrid <- function(excel_path, sheet_name, value_col) {
     dplyr::mutate(!!value_col := as.numeric(!!rlang::sym(value_col))) %>%
     dplyr::filter(!is.na(!!rlang::sym(value_col)))
 
-  message(sprintf("[Hybrid]     %s rows, %d bonds", format(nrow(df_long), big.mark = ","), length(bond_cols)))
+  log_debug(sprintf("[Hybrid]     %s rows, %d bonds", format(nrow(df_long), big.mark = ","), length(bond_cols)))
   return(tibble::as_tibble(df_long))
 }
 

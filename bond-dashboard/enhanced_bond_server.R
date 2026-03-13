@@ -83,7 +83,7 @@ if (requireNamespace("extrafont", quietly = TRUE)) {
         } else {  # Linux
             loadfonts(device = "pdf", quiet = TRUE)
         }
-        message("✓ Custom fonts loaded successfully")
+        log_debug("✓ Custom fonts loaded successfully")
     }, error = function(e) {
         warning("Could not load custom fonts - using defaults: ", e$message)
     })
@@ -233,7 +233,7 @@ server <- function(input, output, session) {
         data <- tryCatch({
             # First check for in-memory data (for testing/development)
             if (exists("full_df")) {
-                message("✓ Loading bond data from full_df (in-memory)")
+                log_debug("✓ Loading bond data from full_df (in-memory)")
                 return(full_df)
             }
 
@@ -284,8 +284,8 @@ server <- function(input, output, session) {
 
             # Load via the dynamic loader
             if (!is.null(excel_path)) {
-                message(sprintf("✓ Using Excel source: %s", excel_path))
-                message(sprintf("✓ Using cache file: %s", cache_path))
+                log_debug(sprintf("✓ Using Excel source: %s", excel_path))
+                log_debug(sprintf("✓ Using cache file: %s", cache_path))
 
                 # Store excel path for later use in metadata creation
                 values$excel_path <- excel_path
@@ -301,7 +301,7 @@ server <- function(input, output, session) {
                 cache_fallback <- NULL
                 for (path in cache_paths) {
                     if (file.exists(path)) {
-                        message(sprintf("✓ Falling back to cache: %s", path))
+                        log_debug(sprintf("✓ Falling back to cache: %s", path))
                         cache_fallback <- readRDS(path)
                         break
                     }
@@ -314,7 +314,7 @@ server <- function(input, output, session) {
             # Fallback to cache if Excel fails
             for (path in c("data/processed_bond_data.rds", "../data/processed_bond_data.rds")) {
                 if (file.exists(path)) {
-                    message(sprintf("Falling back to cache: %s", path))
+                    log_debug(sprintf("Falling back to cache: %s", path))
                     return(readRDS(path))
                 }
             }
@@ -356,9 +356,9 @@ server <- function(input, output, session) {
                 if(col_name %in% names(data)) {
                     if(!inherits(data[[col_name]], "Date")) {
                         data[[col_name]] <- as.Date(data[[col_name]])
-                        message(sprintf("  ✓ Converted %s to Date class", col_name))
+                        log_debug(sprintf("  ✓ Converted %s to Date class", col_name))
                     } else {
-                        message(sprintf("  ✓ %s is already Date class", col_name))
+                        log_debug(sprintf("  ✓ %s is already Date class", col_name))
                     }
                 }
             }
@@ -523,7 +523,7 @@ server <- function(input, output, session) {
         # Get bonds that are active (not matured) for the selected period
         active <- get_active_bonds(bond_metadata(), start_date, end_date)
 
-        message(sprintf("  Active bonds for period %s to %s: %d",
+        log_debug(sprintf("  Active bonds for period %s to %s: %d",
                        format(start_date, "%Y-%m-%d"),
                        format(end_date, "%Y-%m-%d"),
                        length(active)))
@@ -574,7 +574,7 @@ server <- function(input, output, session) {
             active_bonds()
         }, error = function(e) {
             # Fallback: if active_bonds() fails, use all bonds
-            message("Warning: Could not get active bonds, using all bonds")
+            log_debug("Warning: Could not get active bonds, using all bonds")
             unique(bond_data()$bond)
         })
 
@@ -631,7 +631,7 @@ server <- function(input, output, session) {
                 dplyr::select(bond, final_maturity_date) %>%
                 dplyr::distinct()
         }, error = function(e) {
-            message("Warning: Could not get bond metadata for maturity tracking")
+            log_debug("Warning: Could not get bond metadata for maturity tracking")
             NULL
         })
 
@@ -656,21 +656,21 @@ server <- function(input, output, session) {
                 dplyr::filter(!is.na(final_maturity_date)) %>%
                 dplyr::select(bond, final_maturity_date, days_to_maturity, matures_in_period) %>%
                 dplyr::distinct()
-            message(sprintf("=== MATURITY FILTER DEBUG ==="))
-            message(sprintf("Analysis period: %s to %s", start_date, end_date))
-            message(sprintf("Bonds with maturity data: %d", nrow(maturing_bonds_debug)))
+            log_debug(sprintf("=== MATURITY FILTER DEBUG ==="))
+            log_debug(sprintf("Analysis period: %s to %s", start_date, end_date))
+            log_debug(sprintf("Bonds with maturity data: %d", nrow(maturing_bonds_debug)))
             bonds_flagged <- maturing_bonds_debug %>% dplyr::filter(matures_in_period)
             if (nrow(bonds_flagged) > 0) {
-                message(sprintf("Bonds flagged as matures_in_period: %s",
+                log_debug(sprintf("Bonds flagged as matures_in_period: %s",
                                paste(sprintf("%s (matures %s, %d days)",
                                            bonds_flagged$bond,
                                            format(bonds_flagged$final_maturity_date, "%Y-%m-%d"),
                                            bonds_flagged$days_to_maturity),
                                      collapse = ", ")))
             } else {
-                message("No bonds flagged as matures_in_period")
+                log_debug("No bonds flagged as matures_in_period")
             }
-            message("=============================")
+            log_debug("=============================")
 
             # ════════════════════════════════════════════════════════════════════
             # APPLY MATURING BOND FILTER (if checkbox is checked)
@@ -786,19 +786,19 @@ server <- function(input, output, session) {
         max_date <- max(data$date, na.rm = TRUE)
         min_date <- min(data$date, na.rm = TRUE)
 
-        message("=== MARKET INTELLIGENCE DATA CHECK ===")
-        message(sprintf("Full date range: %s to %s",
+        log_debug("=== MARKET INTELLIGENCE DATA CHECK ===")
+        log_debug(sprintf("Full date range: %s to %s",
                         format(min_date, "%Y-%m-%d"),
                         format(max_date, "%Y-%m-%d")))
-        message(sprintf("Total observations: %d", nrow(data)))
-        message(sprintf("Unique bonds: %d", n_distinct(data$bond)))
+        log_debug(sprintf("Total observations: %d", nrow(data)))
+        log_debug(sprintf("Unique bonds: %d", n_distinct(data$bond)))
 
         # Bonds active on most recent date
         current_bonds <- data %>%
             filter(date == max_date) %>%
             pull(bond) %>%
             unique()
-        message(sprintf("Currently active bonds (%d): %s",
+        log_debug(sprintf("Currently active bonds (%d): %s",
                         length(current_bonds),
                         paste(sort(current_bonds), collapse = ", ")))
 
@@ -806,7 +806,7 @@ server <- function(input, output, session) {
         all_bonds <- unique(data$bond)
         historical_only <- setdiff(all_bonds, current_bonds)
         if(length(historical_only) > 0) {
-            message(sprintf("Historical only (matured?): %s",
+            log_debug(sprintf("Historical only (matured?): %s",
                             paste(sort(historical_only), collapse = ", ")))
         }
     })
@@ -882,7 +882,7 @@ server <- function(input, output, session) {
             }
 
             # Log success
-            message(sprintf(
+            log_debug(sprintf(
                 "✓ filtered_data_with_technicals SUCCESS: %d rows × %d cols | %d bonds",
                 nrow(data_with_tech),
                 ncol(data_with_tech),
@@ -940,7 +940,7 @@ server <- function(input, output, session) {
         known_matured_bonds <- c("R157", "R186", "R197", "R203", "R204", "R207", "R208", "R212", "R2023")
         found_matured <- intersect(unique(data$bond), known_matured_bonds)
         if (length(found_matured) > 0) {
-            message(sprintf("[Technical Analysis] Excluding matured bonds: %s",
+            log_debug(sprintf("[Technical Analysis] Excluding matured bonds: %s",
                            paste(found_matured, collapse = ", ")))
             data <- data %>% filter(!bond %in% known_matured_bonds)
         }
@@ -1083,7 +1083,7 @@ server <- function(input, output, session) {
             )
 
         # Log the master reactive creation
-        message(sprintf(
+        log_debug(sprintf(
             "✓ technical_signals_master: %d bonds | Score range: [%d, %d]",
             nrow(result),
             min(result$total_score, na.rm = TRUE),
@@ -1106,7 +1106,7 @@ server <- function(input, output, session) {
                     theme_mgr <- get(".theme_manager", envir = .GlobalEnv)
                     if (!is.null(theme_mgr) && "clear_cache" %in% names(theme_mgr)) {
                         theme_mgr$clear_cache()
-                        message("✓ Theme cache cleared")
+                        log_debug("✓ Theme cache cleared")
                     }
                 }, error = function(e) {
                     # Silently fail - cache cleanup is not critical
@@ -1183,7 +1183,7 @@ server <- function(input, output, session) {
                 return(NULL)
             }
 
-            message(sprintf(
+            log_debug(sprintf(
                 "✓ processed_data SUCCESS: %d bonds with latest metrics",
                 nrow(latest_data)
             ))
@@ -1243,7 +1243,7 @@ server <- function(input, output, session) {
         confidence_level <- input$confidence_level %||% 95
 
         # Log for debugging
-        message(sprintf("[fitted_curve_data] Recalculating with x_var=%s, model=%s", x_var, model_type))
+        log_debug(sprintf("[fitted_curve_data] Recalculating with x_var=%s, model=%s", x_var, model_type))
 
         bond_data <- processed_data()
 
@@ -1268,13 +1268,13 @@ server <- function(input, output, session) {
             # Log which bonds were filtered out (for debugging)
             excluded_bonds <- setdiff(bonds_before_filter, bonds_after_filter)
             if (length(excluded_bonds) > 0) {
-                message(sprintf("[fitted_curve_data] Excluded %d bond(s) without data on %s: %s",
+                log_debug(sprintf("[fitted_curve_data] Excluded %d bond(s) without data on %s: %s",
                                length(excluded_bonds),
                                format(global_latest_date, "%Y-%m-%d"),
                                paste(excluded_bonds, collapse = ", ")))
             }
 
-            message(sprintf("[fitted_curve_data] Using %d bonds with data from %s",
+            log_debug(sprintf("[fitted_curve_data] Using %d bonds with data from %s",
                            nrow(bond_data), format(global_latest_date, "%Y-%m-%d")))
         }
 
@@ -1525,7 +1525,7 @@ server <- function(input, output, session) {
         # -------------------------------------------------------------------------
         # Return comprehensive list
         # -------------------------------------------------------------------------
-        message(sprintf("[fitted_curve_data] SUCCESS: %d bonds, R²=%.3f, avg_spread=%.1f bps",
+        log_debug(sprintf("[fitted_curve_data] SUCCESS: %d bonds, R²=%.3f, avg_spread=%.1f bps",
                         nrow(fit_data), r_squared, metrics$avg_spread))
 
         list(
@@ -1576,7 +1576,7 @@ server <- function(input, output, session) {
             data <- data %>% filter(!bond %in% known_matured_bonds)
         }
 
-        message(sprintf("[VaR Calculation] Processing %d active bonds",
+        log_debug(sprintf("[VaR Calculation] Processing %d active bonds",
                        n_distinct(data$bond)))
 
         calculate_var(data,
@@ -1656,11 +1656,11 @@ server <- function(input, output, session) {
         })
         found_matured <- intersect(active, matured_bonds_list)
         if (length(found_matured) > 0) {
-            message(sprintf("[Bond Selection] Excluding matured bonds from dropdown: %s",
+            log_debug(sprintf("[Bond Selection] Excluding matured bonds from dropdown: %s",
                            paste(found_matured, collapse = ", ")))
             active <- setdiff(active, matured_bonds_list)
         }
-        message(sprintf("[Bond Selection] Active bonds for dropdown: %d (%s)",
+        log_debug(sprintf("[Bond Selection] Active bonds for dropdown: %d (%s)",
                        length(active), paste(sort(active), collapse = ", ")))
 
         # Get currently selected bonds
@@ -1735,10 +1735,10 @@ server <- function(input, output, session) {
         tryCatch({
             if(exists("calculate_advanced_carry_roll") && is.function(calculate_advanced_carry_roll)) {
                 memoise::forget(calculate_advanced_carry_roll)
-                message("✓ Cleared carry & roll calculation cache")
+                log_debug("✓ Cleared carry & roll calculation cache")
             }
         }, error = function(e) {
-            message("Note: Could not clear cache - ", e$message)
+            log_debug("Note: Could not clear cache - ", e$message)
         })
 
         # Force recalculation
@@ -2290,7 +2290,7 @@ server <- function(input, output, session) {
         # Get active bonds from fitted_curve_data (which filters to global latest date)
         # This automatically excludes matured bonds like R186 that don't have recent data
         active_bonds <- unique(fitted_curve_data()$bonds$bond)
-        message(sprintf("[Relative Value] Active bonds for both charts: %d (%s)",
+        log_debug(sprintf("[Relative Value] Active bonds for both charts: %d (%s)",
                        length(active_bonds),
                        paste(sort(active_bonds), collapse = ", ")))
         return(active_bonds)
@@ -2350,7 +2350,7 @@ server <- function(input, output, session) {
             if (length(only_in_heatmap) > 0) warning("  Only in Heatmap: ", paste(only_in_heatmap, collapse = ", "))
             if (length(only_in_zscore) > 0) warning("  Only in Z-Score: ", paste(only_in_zscore, collapse = ", "))
         } else {
-            message(sprintf("[Relative Value] Both charts show same %d bonds", length(heatmap_bonds)))
+            log_debug(sprintf("[Relative Value] Both charts show same %d bonds", length(heatmap_bonds)))
         }
     })
 
@@ -2378,7 +2378,7 @@ server <- function(input, output, session) {
             active_bonds <- setdiff(active_bonds, known_matured_bonds)
         }
 
-        message(sprintf("[Risk Analytics] Active bonds: %d (%s)",
+        log_debug(sprintf("[Risk Analytics] Active bonds: %d (%s)",
                        length(active_bonds),
                        paste(sort(active_bonds), collapse = ", ")))
         return(active_bonds)
@@ -2437,14 +2437,14 @@ server <- function(input, output, session) {
         excluded_bonds <- setdiff(original_bonds, valid_bonds)
 
         if (length(excluded_bonds) > 0) {
-            message(sprintf("[Valid VaR Data] Excluded %d bonds from %s method (%d-day lookback, %d-day horizon):",
+            log_debug(sprintf("[Valid VaR Data] Excluded %d bonds from %s method (%d-day lookback, %d-day horizon):",
                            length(excluded_bonds), method, lookback_days, horizon_days))
             for (b in excluded_bonds) {
-                message(sprintf("  - %s", b))
+                log_debug(sprintf("  - %s", b))
             }
         }
 
-        message(sprintf("[Valid VaR Data] %d valid bonds for both charts", nrow(valid_data)))
+        log_debug(sprintf("[Valid VaR Data] %d valid bonds for both charts", nrow(valid_data)))
 
         return(valid_data)
     })
@@ -2511,7 +2511,7 @@ server <- function(input, output, session) {
         data_quality <- assess_var_data_quality() %>%
             filter(bond %in% valid_var_bonds)  # Only include quality for valid bonds
 
-        message(sprintf("[VaR Distribution] Using %d valid bonds (filtered from %d active)",
+        log_debug(sprintf("[VaR Distribution] Using %d valid bonds (filtered from %d active)",
                        length(valid_var_bonds), length(active_bonds_for_risk_analytics())))
 
         # Generate the plot with parameters
@@ -2570,9 +2570,9 @@ server <- function(input, output, session) {
             bonds_to_exclude <- setdiff(original_bonds, valid_bonds_from_dist)
 
             if (length(bonds_to_exclude) > 0) {
-                message(sprintf("[Risk Ladder] FILTERING to match distribution: %d -> %d bonds",
+                log_debug(sprintf("[Risk Ladder] FILTERING to match distribution: %d -> %d bonds",
                                length(original_bonds), length(valid_bonds_from_dist)))
-                message(sprintf("[Risk Ladder] Excluding %d bonds not in distribution: %s",
+                log_debug(sprintf("[Risk Ladder] Excluding %d bonds not in distribution: %s",
                                length(bonds_to_exclude), paste(bonds_to_exclude, collapse = ", ")))
             }
 
@@ -2603,9 +2603,9 @@ server <- function(input, output, session) {
         }
 
         # Log final bond count for verification
-        message(sprintf("[Risk Ladder] Plotting %d bonds (matching distribution)",
+        log_debug(sprintf("[Risk Ladder] Plotting %d bonds (matching distribution)",
                        nrow(valid_var_data)))
-        message(sprintf("[Risk Ladder] Bond list: %s",
+        log_debug(sprintf("[Risk Ladder] Bond list: %s",
                        paste(valid_var_data$bond, collapse = ", ")))
 
         # Pass the bond order and data quality from distribution plot for consistency
@@ -2690,7 +2690,7 @@ server <- function(input, output, session) {
                 if (length(only_in_risk) > 0) warning("  Only in Risk: ", paste(only_in_risk, collapse = ", "))
                 if (length(only_in_rv) > 0) warning("  Only in RelVal: ", paste(only_in_rv, collapse = ", "))
             } else {
-                message(sprintf("[Risk Analytics] \u2713 %d active bonds (matches Relative Value section)",
+                log_debug(sprintf("[Risk Analytics] \u2713 %d active bonds (matches Relative Value section)",
                                length(risk_bonds)))
             }
         }
@@ -2709,7 +2709,7 @@ server <- function(input, output, session) {
                 warning("  In VaR data: ", paste(found_matured_in_var, collapse = ", "))
             }
         } else {
-            message("[Risk Analytics] \u2713 No known matured bonds present")
+            log_debug("[Risk Analytics] \u2713 No known matured bonds present")
         }
     })
 
@@ -2807,12 +2807,12 @@ server <- function(input, output, session) {
             )
 
         # Log sorted order for verification
-        message("[VaR Stats Table] Sorted by 95% VaR (desc):")
-        message(sprintf("  Top 5: %s",
+        log_debug("[VaR Stats Table] Sorted by 95% VaR (desc):")
+        log_debug(sprintf("  Top 5: %s",
                        paste(head(table_data$Bond, 5), " (",
                              round(head(table_data$`95% VaR Loss (%)`, 5), 2), "%)",
                              collapse = ", ", sep = "")))
-        message(sprintf("  Bottom 5: %s",
+        log_debug(sprintf("  Bottom 5: %s",
                        paste(tail(table_data$Bond, 5), " (",
                              round(tail(table_data$`95% VaR Loss (%)`, 5), 2), "%)",
                              collapse = ", ", sep = "")))
@@ -2870,10 +2870,10 @@ server <- function(input, output, session) {
         # Log what we're using
         excluded_bonds <- setdiff(unique(processed_data()$bond), active_bonds)
         if (length(excluded_bonds) > 0) {
-            message(sprintf("[DV01 Ladder] Excluded %d matured/inactive bonds: %s",
+            log_debug(sprintf("[DV01 Ladder] Excluded %d matured/inactive bonds: %s",
                            length(excluded_bonds), paste(excluded_bonds, collapse = ", ")))
         }
-        message(sprintf("[DV01 Ladder] Using %d active bonds", length(unique(plot_data$bond))))
+        log_debug(sprintf("[DV01 Ladder] Using %d active bonds", length(unique(plot_data$bond))))
 
         # Get notional from input (default R10 million)
         notional <- as.numeric(input$dv01_notional) %||% 10000000
@@ -2900,10 +2900,10 @@ server <- function(input, output, session) {
         # Log what we're using
         excluded_bonds <- setdiff(unique(processed_data()$bond), active_bonds)
         if (length(excluded_bonds) > 0) {
-            message(sprintf("[Convexity Profile] Excluded %d matured/inactive bonds: %s",
+            log_debug(sprintf("[Convexity Profile] Excluded %d matured/inactive bonds: %s",
                            length(excluded_bonds), paste(excluded_bonds, collapse = ", ")))
         }
-        message(sprintf("[Convexity Profile] Using %d active bonds", length(unique(plot_data$bond))))
+        log_debug(sprintf("[Convexity Profile] Using %d active bonds", length(unique(plot_data$bond))))
 
         # Get notional from input (same as DV01 ladder for consistency)
         notional <- as.numeric(input$dv01_notional) %||% 10000000
@@ -3574,11 +3574,11 @@ server <- function(input, output, session) {
             historical_data <- filtered_data()
 
             if (VERBOSE) {
-                message(sprintf("=== BUTTERFLY DEBUG ==="))
-                message(sprintf("Using filtered_data: %d rows, %d bonds",
+                log_debug(sprintf("=== BUTTERFLY DEBUG ==="))
+                log_debug(sprintf("Using filtered_data: %d rows, %d bonds",
                                nrow(historical_data),
                                dplyr::n_distinct(historical_data$bond)))
-                message(sprintf("Date range: %s to %s",
+                log_debug(sprintf("Date range: %s to %s",
                                min(historical_data$date, na.rm = TRUE),
                                max(historical_data$date, na.rm = TRUE)))
             }
@@ -3620,24 +3620,24 @@ server <- function(input, output, session) {
             })
 
             # DEBUG: Log stationarity distribution BEFORE filtering
-            message("=== SERVER STATIONARITY CHECK ===")
-            message(sprintf("Total butterflies in summary: %d", nrow(summary_df)))
+            log_debug("=== SERVER STATIONARITY CHECK ===")
+            log_debug(sprintf("Total butterflies in summary: %d", nrow(summary_df)))
             if ("Is_Stationary" %in% names(summary_df)) {
-                message(sprintf("Is_Stationary distribution: TRUE=%d, FALSE=%d, NA=%d",
+                log_debug(sprintf("Is_Stationary distribution: TRUE=%d, FALSE=%d, NA=%d",
                                 sum(summary_df$Is_Stationary == TRUE, na.rm = TRUE),
                                 sum(summary_df$Is_Stationary == FALSE, na.rm = TRUE),
                                 sum(is.na(summary_df$Is_Stationary))))
                 if (all(summary_df$Is_Stationary == TRUE, na.rm = TRUE)) {
-                    message("WARNING: ALL butterflies marked as stationary!")
+                    log_debug("WARNING: ALL butterflies marked as stationary!")
                 }
-                message(sprintf("ADF p-value range: %.4f to %.4f",
+                log_debug(sprintf("ADF p-value range: %.4f to %.4f",
                                 min(summary_df$ADF_p, na.rm = TRUE),
                                 max(summary_df$ADF_p, na.rm = TRUE)))
-                message(sprintf("ADF stat range: %.4f to %.4f",
+                log_debug(sprintf("ADF stat range: %.4f to %.4f",
                                 min(summary_df$ADF_stat, na.rm = TRUE),
                                 max(summary_df$ADF_stat, na.rm = TRUE)))
             }
-            message("==================================")
+            log_debug("==================================")
 
             # NOTE: Filter is now applied in butterfly_filtered() reactive, NOT here
             # This allows the filter dropdown to work without regenerating butterflies
@@ -3667,8 +3667,8 @@ server <- function(input, output, session) {
             !butterfly_calculated() &&
             !is.null(tryCatch(filtered_data(), error = function(e) NULL))) {
 
-            message("=== BUTTERFLY CALCULATION TRIGGERED BY USER NAVIGATION ===")
-            message("User clicked on Carry & Roll Analytics tab - initiating butterfly calculations")
+            log_debug("=== BUTTERFLY CALCULATION TRIGGERED BY USER NAVIGATION ===")
+            log_debug("User clicked on Carry & Roll Analytics tab - initiating butterfly calculations")
 
             # Small delay to allow tab UI to render first, then trigger calculation
             shinyjs::delay(500, {
@@ -3697,7 +3697,7 @@ server <- function(input, output, session) {
         filter_choice <- input$stationarity_filter
         if (is.null(filter_choice)) filter_choice <- "all"
 
-        message(sprintf("[FILTER] Raw butterflies: %d, Filter: %s", nrow(raw_df), filter_choice))
+        log_debug(sprintf("[FILTER] Raw butterflies: %d, Filter: %s", nrow(raw_df), filter_choice))
 
         filtered_df <- if (filter_choice == "stationary") {
             raw_df %>% filter(Is_Stationary == TRUE)
@@ -3705,11 +3705,11 @@ server <- function(input, output, session) {
             raw_df
         }
 
-        message(sprintf("[FILTER] After filter: %d butterflies", nrow(filtered_df)))
+        log_debug(sprintf("[FILTER] After filter: %d butterflies", nrow(filtered_df)))
 
         # Warn if filter had no effect
         if (filter_choice == "stationary" && nrow(filtered_df) == nrow(raw_df)) {
-            message("[FILTER] WARNING: Stationarity filter had NO effect - all marked stationary!")
+            log_debug("[FILTER] WARNING: Stationarity filter had NO effect - all marked stationary!")
         }
 
         filtered_df
@@ -5095,7 +5095,7 @@ server <- function(input, output, session) {
             arrange(desc(abs(VaR_95_bps)))
 
         # Verify bond count
-        message(sprintf("Risk Metrics Table: %d bonds", nrow(risk_summary)))
+        log_debug(sprintf("Risk Metrics Table: %d bonds", nrow(risk_summary)))
 
         # Format for display with explicit units in column headers
         display_table <- risk_summary %>%
@@ -5911,7 +5911,7 @@ server <- function(input, output, session) {
         # ═══════════════════════════════════════════════════════════════════════
         known_matured_bonds <- c("R157", "R186", "R197", "R203", "R204", "R207", "R208", "R212", "R2023")
         if (input$tech_bond_select %in% known_matured_bonds) {
-            message(sprintf("[Technical Summary] Selected bond %s is matured - skipping render",
+            log_debug(sprintf("[Technical Summary] Selected bond %s is matured - skipping render",
                            input$tech_bond_select))
             return(tags$div(
                 style = "padding: 20px; text-align: center; color: #999;",
@@ -6922,8 +6922,8 @@ server <- function(input, output, session) {
             rule = 2
         )
 
-        message("=== FORWARD RATE DEBUG ===")
-        message(sprintf("Curve has %d points, duration range: %.2f to %.2f",
+        log_debug("=== FORWARD RATE DEBUG ===")
+        log_debug(sprintf("Curve has %d points, duration range: %.2f to %.2f",
                        nrow(curve_data),
                        min(curve_data$modified_duration),
                        max(curve_data$modified_duration)))
@@ -6932,11 +6932,11 @@ server <- function(input, output, session) {
         test_tenors <- c(1, 2, 3, 5, 7, 10)
         for (t in test_tenors) {
             spot <- yield_curve_func(t)
-            message(sprintf("Tenor %d years: Spot = %.2f%%", t, spot))
+            log_debug(sprintf("Tenor %d years: Spot = %.2f%%", t, spot))
         }
 
         # Test forward rate calculations
-        message("--- Forward Rate Calculations ---")
+        log_debug("--- Forward Rate Calculations ---")
         test_forwards <- list(
             list(name = "1y1y", start = 1, tenor = 1),
             list(name = "3y2y", start = 3, tenor = 2),
@@ -6956,12 +6956,12 @@ server <- function(input, output, session) {
             forward_rate_pct <- forward_rate * 100
             spread_bps <- (forward_rate_pct - r_tenor) * 100
 
-            message(sprintf("[%s] t1=%d, t2=%d, tenor=%d | r_t1=%.2f%%, r_t2=%.2f%%, r_tenor=%.2f%% | FWD=%.2f%%, Spread=%.0f bps",
+            log_debug(sprintf("[%s] t1=%d, t2=%d, tenor=%d | r_t1=%.2f%%, r_t2=%.2f%%, r_tenor=%.2f%% | FWD=%.2f%%, Spread=%.0f bps",
                            fp$name, t1, t2, tenor,
                            r_t1*100, r_t2*100, r_tenor,
                            forward_rate_pct, spread_bps))
         }
-        message("==========================")
+        log_debug("==========================")
     })
 
     # Add this output to the server function
@@ -7395,7 +7395,7 @@ server <- function(input, output, session) {
         enhanced <- tryCatch(
             calculate_enhanced_auction_metrics(auction_data, filtered_data()),
             error = function(e) {
-                message(sprintf("[AUCTION QUALITY] Error calculating metrics: %s", e$message))
+                log_debug(sprintf("[AUCTION QUALITY] Error calculating metrics: %s", e$message))
                 auction_data  # Return original data on error
             }
         )
@@ -7413,7 +7413,7 @@ server <- function(input, output, session) {
         # Only log when there's actual data
         if (is.null(auction_data) || nrow(auction_data) == 0) return()
 
-        message("\n=== AUCTION QUALITY METRICS VALIDATION ===")
+        log_debug("\n=== AUCTION QUALITY METRICS VALIDATION ===")
 
         # Sample raw values
         sample_cols <- c("bond", "offer_date", "clearing_yield", "bid_to_cover",
@@ -7425,7 +7425,7 @@ server <- function(input, output, session) {
                 dplyr::select(dplyr::all_of(available_cols)) %>%
                 utils::head(5)
 
-            message("Sample auction data (first 5 rows):")
+            log_debug("Sample auction data (first 5 rows):")
             print(sample)
         }
 
@@ -7434,24 +7434,24 @@ server <- function(input, output, session) {
             concession_data <- auction_data$auction_concession_bps[!is.na(auction_data$auction_concession_bps)]
 
             if (length(concession_data) > 0) {
-                message("\nConcession calculation check:")
-                message(sprintf("  Count: %d auctions with concession data", length(concession_data)))
-                message(sprintf("  Range: %.1f to %.1f bps",
+                log_debug("\nConcession calculation check:")
+                log_debug(sprintf("  Count: %d auctions with concession data", length(concession_data)))
+                log_debug(sprintf("  Range: %.1f to %.1f bps",
                                 min(concession_data), max(concession_data)))
-                message(sprintf("  Median: %.1f bps", median(concession_data)))
-                message(sprintf("  Mean: %.1f bps", mean(concession_data)))
+                log_debug(sprintf("  Median: %.1f bps", median(concession_data)))
+                log_debug(sprintf("  Mean: %.1f bps", mean(concession_data)))
 
                 # Flag if concession seems wrong (outside normal range)
                 pct_in_range <- mean(abs(concession_data) <= 50) * 100
                 if (pct_in_range < 80) {
-                    message(sprintf("  ⚠️ WARNING: Only %.0f%% of concessions are within ±50 bps normal range!",
+                    log_debug(sprintf("  ⚠️ WARNING: Only %.0f%% of concessions are within ±50 bps normal range!",
                                     pct_in_range))
                 } else {
-                    message(sprintf("  ✓ %.0f%% of concessions within ±50 bps (normal)", pct_in_range))
+                    log_debug(sprintf("  ✓ %.0f%% of concessions within ±50 bps (normal)", pct_in_range))
                 }
 
                 # Per-bond concession breakdown for diagnosis
-                message("\n  Per-bond concession breakdown (most recent auction per bond):")
+                log_debug("\n  Per-bond concession breakdown (most recent auction per bond):")
                 per_bond_sample <- auction_data %>%
                     dplyr::filter(!is.na(auction_concession_bps)) %>%
                     dplyr::group_by(bond) %>%
@@ -7466,7 +7466,7 @@ server <- function(input, output, session) {
                         s <- per_bond_sample[i, ]
                         raw_val <- if ("auction_concession_bps_raw" %in% names(s)) s$auction_concession_bps_raw else s$auction_concession_bps
                         outlier_flag <- if ("concession_is_outlier" %in% names(s) && !is.na(s$concession_is_outlier) && s$concession_is_outlier) " [OUTLIER-CAPPED]" else ""
-                        message(sprintf("    %s (%s): clearing=%.3f%%, pre_auction=%.3f%% → concession=%+.1f bps%s",
+                        log_debug(sprintf("    %s (%s): clearing=%.3f%%, pre_auction=%.3f%% → concession=%+.1f bps%s",
                                         s$bond, format(s$offer_date, "%Y-%m-%d"),
                                         ifelse(is.na(s$clearing_yield), NA, s$clearing_yield),
                                         ifelse(is.na(s$pre_auction_ytm), NA, s$pre_auction_ytm),
@@ -7478,19 +7478,19 @@ server <- function(input, output, session) {
                 # Check yield units
                 if ("clearing_yield" %in% names(auction_data)) {
                     avg_clearing <- mean(auction_data$clearing_yield, na.rm = TRUE)
-                    message(sprintf("\n  Yield units check: avg clearing yield = %.3f", avg_clearing))
+                    log_debug(sprintf("\n  Yield units check: avg clearing yield = %.3f", avg_clearing))
                     if (avg_clearing < 0.2) {
-                        message("    ⚠️ WARNING: Yields appear to be in decimal form (e.g., 0.08 = 8%%)!")
-                        message("    Expected: percent form (e.g., 8.0 = 8%%)")
+                        log_debug("    ⚠️ WARNING: Yields appear to be in decimal form (e.g., 0.08 = 8%%)!")
+                        log_debug("    Expected: percent form (e.g., 8.0 = 8%%)")
                     } else if (avg_clearing > 5 && avg_clearing < 20) {
-                        message("    ✓ Yields appear to be in percent form (normal)")
+                        log_debug("    ✓ Yields appear to be in percent form (normal)")
                     } else {
-                        message("    ⚠️ WARNING: Unusual yield range - please verify data")
+                        log_debug("    ⚠️ WARNING: Unusual yield range - please verify data")
                     }
                 }
             }
         } else {
-            message("\n⚠️ auction_concession_bps column not found - check data pipeline")
+            log_debug("\n⚠️ auction_concession_bps column not found - check data pipeline")
         }
 
         # Check non_comp_ratio interpretation
@@ -7498,16 +7498,16 @@ server <- function(input, output, session) {
             non_comp_data <- auction_data$non_comp_ratio[!is.na(auction_data$non_comp_ratio)]
 
             if (length(non_comp_data) > 0) {
-                message("\nNon-competitive ratio check:")
-                message(sprintf("  Range: %.1f%% to %.1f%%",
+                log_debug("\nNon-competitive ratio check:")
+                log_debug(sprintf("  Range: %.1f%% to %.1f%%",
                                 min(non_comp_data), max(non_comp_data)))
-                message(sprintf("  Mean: %.1f%%", mean(non_comp_data)))
+                log_debug(sprintf("  Mean: %.1f%%", mean(non_comp_data)))
 
                 # Flag if values seem wrong (should be 0-100%)
                 if (min(non_comp_data) < 0 || max(non_comp_data) > 100) {
-                    message("  ⚠️ WARNING: Non-comp ratio outside 0-100% range!")
+                    log_debug("  ⚠️ WARNING: Non-comp ratio outside 0-100% range!")
                 } else {
-                    message("  ✓ Non-comp ratio within expected range")
+                    log_debug("  ✓ Non-comp ratio within expected range")
                 }
             }
         }
@@ -7517,9 +7517,9 @@ server <- function(input, output, session) {
             quality_data <- auction_data$auction_quality_score[!is.na(auction_data$auction_quality_score)]
 
             if (length(quality_data) > 0) {
-                message("\nQuality score check:")
-                message(sprintf("  Range: %.0f to %.0f", min(quality_data), max(quality_data)))
-                message(sprintf("  Mean: %.1f", mean(quality_data)))
+                log_debug("\nQuality score check:")
+                log_debug(sprintf("  Range: %.0f to %.0f", min(quality_data), max(quality_data)))
+                log_debug(sprintf("  Mean: %.1f", mean(quality_data)))
 
                 # Distribution by grade
                 grades <- dplyr::case_when(
@@ -7530,12 +7530,12 @@ server <- function(input, output, session) {
                     TRUE ~ "F"
                 )
                 grade_counts <- table(grades)
-                message(sprintf("  Grade distribution: %s",
+                log_debug(sprintf("  Grade distribution: %s",
                                 paste(names(grade_counts), grade_counts, sep = "=", collapse = ", ")))
             }
         }
 
-        message("==========================================\n")
+        log_debug("==========================================\n")
     }) %>% bindEvent(enhanced_auction_data(), ignoreInit = TRUE)
 
     # KPI: Average Quality Score
@@ -7810,7 +7810,7 @@ server <- function(input, output, session) {
             bonds_to_highlight <- intersect(selected_bonds, display_data$Bond)
 
             if (length(bonds_to_highlight) > 0) {
-                message(sprintf("[AUCTION QUALITY TABLE] Highlighting bonds: %s",
+                log_debug(sprintf("[AUCTION QUALITY TABLE] Highlighting bonds: %s",
                                 paste(bonds_to_highlight, collapse = ", ")))
 
                 dt <- dt %>%
@@ -7885,7 +7885,7 @@ server <- function(input, output, session) {
                 character(0)
             }
 
-            message(sprintf("[DOWNLOAD REPORT] Generating with selected bonds: %s",
+            log_debug(sprintf("[DOWNLOAD REPORT] Generating with selected bonds: %s",
                             if(length(selected_bonds) > 0) paste(selected_bonds, collapse = ", ") else "none"))
 
             # Create combined plot with selected bonds highlighting (matches app)
@@ -8444,17 +8444,17 @@ server <- function(input, output, session) {
             base_data <- filtered_data()
 
             # DEBUG: Log what we have
-            message(sprintf("[SENTIMENT DEBUG] Base data: %d rows",
+            log_debug(sprintf("[SENTIMENT DEBUG] Base data: %d rows",
                             if(!is.null(base_data)) nrow(base_data) else 0))
 
             if (!is.null(base_data) && nrow(base_data) > 0) {
-                message(sprintf("[SENTIMENT DEBUG] Has bid_to_cover: %s",
+                log_debug(sprintf("[SENTIMENT DEBUG] Has bid_to_cover: %s",
                                 "bid_to_cover" %in% names(base_data)))
 
                 if ("bid_to_cover" %in% names(base_data)) {
                     btc_values <- base_data$bid_to_cover
                     non_na_count <- sum(!is.na(btc_values) & btc_values > 0)
-                    message(sprintf("[SENTIMENT DEBUG] bid_to_cover: %d non-NA positive values",
+                    log_debug(sprintf("[SENTIMENT DEBUG] bid_to_cover: %d non-NA positive values",
                                     non_na_count))
                 }
             }
@@ -8475,7 +8475,7 @@ server <- function(input, output, session) {
 
             n_auctions <- nrow(auction_data)
 
-            message(sprintf("[SENTIMENT] Found %d auction events in last 6 months", n_auctions))
+            log_debug(sprintf("[SENTIMENT] Found %d auction events in last 6 months", n_auctions))
 
             # Helper function for insufficient data display
             sentiment_insufficient_data_ui <- function(n_found) {
@@ -8619,7 +8619,7 @@ server <- function(input, output, session) {
         )
 
         }, error = function(e) {
-            message(sprintf("[SENTIMENT ERROR] %s", e$message))
+            log_debug(sprintf("[SENTIMENT ERROR] %s", e$message))
             tags$div(
                 class = "well",
                 style = "padding: 12px; text-align: center; background: #FFEBEE; border-radius: 8px;",
@@ -8884,7 +8884,7 @@ server <- function(input, output, session) {
 
             if (length(available_bonds) == 0) {
                 available_bonds <- active  # Fallback
-                message("[AUCTION PREDICTIONS] Warning: No bonds with auction history found")
+                log_debug("[AUCTION PREDICTIONS] Warning: No bonds with auction history found")
             }
 
             # Sort by most recent auction
@@ -8897,7 +8897,7 @@ server <- function(input, output, session) {
 
             available_bonds <- bond_order
 
-            message(sprintf("[AUCTION PREDICTIONS] Available bonds (sorted by recent auction): %s",
+            log_debug(sprintf("[AUCTION PREDICTIONS] Available bonds (sorted by recent auction): %s",
                             paste(available_bonds, collapse = ", ")))
         } else {
             available_bonds <- active
@@ -9187,7 +9187,7 @@ server <- function(input, output, session) {
                     )
 
                 }, error = function(e) {
-                    message(sprintf("[FORECAST] Error for %s: %s", bond_name, e$message))
+                    log_debug(sprintf("[FORECAST] Error for %s: %s", bond_name, e$message))
 
                     tibble::tibble(
                         bond = bond_name,
@@ -9532,7 +9532,7 @@ server <- function(input, output, session) {
 
             # Validate auction_data
             if (is.null(auction_data) || nrow(auction_data) == 0) {
-                message("[Historical Performance] No auction data available")
+                log_debug("[Historical Performance] No auction data available")
                 return(ggplot2::ggplot() +
                     ggplot2::annotate("text", x = 0.5, y = 0.5,
                         label = "No auction data available",
@@ -9544,7 +9544,7 @@ server <- function(input, output, session) {
             # Validate required columns
             if (!all(c("bond", "bid_to_cover", "offer_date") %in% names(auction_data))) {
                 missing <- setdiff(c("bond", "bid_to_cover", "offer_date"), names(auction_data))
-                message("[Historical Performance] Missing columns: ", paste(missing, collapse = ", "))
+                log_debug("[Historical Performance] Missing columns: ", paste(missing, collapse = ", "))
                 return(ggplot2::ggplot() +
                     ggplot2::annotate("text", x = 0.5, y = 0.5,
                         label = paste("Missing required columns:", paste(missing, collapse = ", ")),
@@ -9575,14 +9575,15 @@ server <- function(input, output, session) {
             forecasts <- tryCatch({
                 result <- auction_forecasts_v2()
                 if (is.null(result) || nrow(result) == 0) {
-                    message("[Historical Performance] No forecast data available yet")
+                    log_debug("[Historical Performance] No forecast data available yet")
                     NULL
                 } else {
                     result
                 }
             }, error = function(e) {
-                err_msg <- if (!is.null(e$message) && nchar(e$message) > 0) e$message else "Unknown error"
-                message("[Historical Performance] Forecast retrieval skipped: ", err_msg)
+                err_msg <- conditionMessage(e)
+                if (nchar(err_msg) == 0) err_msg <- deparse(conditionCall(e))
+                log_debug("[Historical Performance] Forecast retrieval skipped: ", err_msg)
                 NULL
             })
 
@@ -9646,7 +9647,7 @@ server <- function(input, output, session) {
 
         }, error = function(e) {
             err_msg <- if (!is.null(e$message) && nchar(e$message) > 0) e$message else "Unknown rendering error"
-            message("[Historical Performance] Render error: ", err_msg)
+            log_debug("[Historical Performance] Render error: ", err_msg)
             ggplot2::ggplot() +
                 ggplot2::annotate("text", x = 0.5, y = 0.5,
                     label = paste("Chart error:\n", substr(err_msg, 1, 50)),
@@ -10042,10 +10043,10 @@ server <- function(input, output, session) {
         filter_choice <- input$rv_table_filter %||% "all"
 
         # Debug: Confirm we're using fitted_curve_data
-        cat("\n=== Relative Value Debug (CONNECTED TO CURVE) ===\n")
-        cat(sprintf("X-Axis: %s, Model: %s, Filter: %s\n", x_var, curve_data$model_type, filter_choice))
-        cat("Total bonds:", nrow(bonds), "\n")
-        cat("Spread range:", sprintf("%.1f to %.1f bps\n",
+        log_debug("=== Relative Value Debug (CONNECTED TO CURVE) ===")
+        log_debug(sprintf("X-Axis: %s, Model: %s, Filter: %s", x_var, curve_data$model_type, filter_choice))
+        log_debug("Total bonds: ", nrow(bonds))
+        log_debug("Spread range: ", sprintf("%.1f to %.1f bps",
                                      min(bonds$spread_bps, na.rm = TRUE),
                                      max(bonds$spread_bps, na.rm = TRUE)))
 
@@ -10197,7 +10198,7 @@ server <- function(input, output, session) {
         opportunities <- opportunities %>%
             arrange(desc(signal_strength), desc(abs(zscore)))
 
-        cat("Filtered bonds:", nrow(opportunities), "\n")
+        log_debug("Filtered bonds: ", nrow(opportunities))
 
         # Select columns - use x_value which is the DYNAMIC x-axis value
         # FIX #4: Include score_breakdown for transparency
@@ -10800,8 +10801,8 @@ server <- function(input, output, session) {
         # DEBUG LOGGING: Confirm bond universe for Trading Signals
         # =========================================================================
         bonds_in_signals <- sort(unique(data$bond))
-        message(sprintf("[TRADING SIGNALS] Active bonds: %d", length(bonds_in_signals)))
-        message(sprintf("[TRADING SIGNALS] List: %s", paste(bonds_in_signals, collapse = ", ")))
+        log_debug(sprintf("[TRADING SIGNALS] Active bonds: %d", length(bonds_in_signals)))
+        log_debug(sprintf("[TRADING SIGNALS] List: %s", paste(bonds_in_signals, collapse = ", ")))
 
         # Verify no known matured bonds are present (safety check)
         known_matured_bonds <- c("R157", "R186", "R197", "R203", "R204", "R207", "R208", "R212", "R2023")
@@ -10810,7 +10811,7 @@ server <- function(input, output, session) {
             warning(sprintf("[TRADING SIGNALS] !!! POTENTIAL MATURED BONDS PRESENT: %s",
                            paste(found_matured, collapse = ", ")))
         } else {
-            message("[TRADING SIGNALS] ✓ No known matured bonds present")
+            log_debug("[TRADING SIGNALS] ✓ No known matured bonds present")
         }
 
         # ════════════════════════════════════════════════════════════════════════
@@ -11794,7 +11795,7 @@ server <- function(input, output, session) {
                 }
             }, error = function(e) {
                 # Error fallback - generate a proper error message plot
-                message(sprintf("[DOWNLOAD ERROR] %s", e$message))
+                log_debug(sprintf("[DOWNLOAD ERROR] %s", e$message))
                 p <- ggplot() +
                     annotate("text", x = 0.5, y = 0.55,
                              label = "Error Generating Chart",
@@ -12167,7 +12168,7 @@ server <- function(input, output, session) {
                               gp = gpar(fontsize = 9, col = "white"))
 
                     }, error = function(e) {
-                        message(sprintf("Title page error: %s", e$message))
+                        log_debug(sprintf("Title page error: %s", e$message))
                         grid.newpage()
                         grid.text("SA Government Bond Analysis Report", x = 0.5, y = 0.5,
                                   gp = gpar(fontsize = 24, fontface = 2, col = "#1B3A6B"))
@@ -12283,7 +12284,7 @@ server <- function(input, output, session) {
 
                         add_footer(page_number, total_pages)
                         }, error = function(e) {
-                            message(sprintf("Executive summary page error: %s", e$message))
+                            log_debug(sprintf("Executive summary page error: %s", e$message))
                             grid.newpage()
                             grid.text("Executive Summary", x = 0.5, y = 0.5,
                                       gp = gpar(fontsize = 18, fontface = 2, col = "#1B3A6B"))
@@ -12483,7 +12484,7 @@ server <- function(input, output, session) {
 
                     add_footer(page_number, total_pages)
                     }, error = function(e) {
-                        message(sprintf("Footer page error: %s", e$message))
+                        log_debug(sprintf("Footer page error: %s", e$message))
                         grid.newpage()
                         grid.text("\u00A9 Insele Capital Partners", x = 0.5, y = 0.5,
                                   gp = gpar(fontsize = 10, col = "#666666"))
@@ -13889,9 +13890,9 @@ $$Net Return = Carry + Roll - Funding Cost$$
     # from the session, preventing resource leaks and orphaned processes.
 
     session$onSessionEnded(function() {
-        cat("\n", rep("=", 60), "\n", sep = "")
-        cat("Session ended - Cleaning up resources...\n")
-        cat(rep("=", 60), "\n\n", sep = "")
+        log_debug(paste0("\n", paste(rep("=", 60), collapse = "")))
+        log_debug("Session ended - Cleaning up resources...")
+        log_debug(paste(rep("=", 60), collapse = ""))
 
         # Clean up theme cache if it exists
         if (exists(".theme_manager", envir = .GlobalEnv)) {
@@ -13899,10 +13900,10 @@ $$Net Return = Carry + Roll - Funding Cost$$
                 theme_mgr <- get(".theme_manager", envir = .GlobalEnv)
                 if (!is.null(theme_mgr) && "clear_cache" %in% names(theme_mgr)) {
                     theme_mgr$clear_cache()
-                    cat("✓ Theme cache cleared\n")
+                    log_debug("✓ Theme cache cleared")
                 }
             }, error = function(e) {
-                cat("✗ Error clearing theme cache:", conditionMessage(e), "\n")
+                log_debug("✗ Error clearing theme cache: ", conditionMessage(e))
             })
         }
 
@@ -13913,10 +13914,10 @@ $$Net Return = Carry + Roll - Funding Cost$$
             if (length(temp_files) > 0) {
                 tryCatch({
                     file.remove(temp_files)
-                    cat(sprintf("✓ Removed %d temporary file(s) matching '%s'\n",
+                    log_debug(sprintf("✓ Removed %d temporary file(s) matching '%s'",
                                 length(temp_files), pattern))
                 }, error = function(e) {
-                    cat(sprintf("✗ Error removing temp files '%s': %s\n",
+                    log_debug(sprintf("✗ Error removing temp files '%s': %s",
                                 pattern, conditionMessage(e)))
                 })
             }
@@ -13925,14 +13926,14 @@ $$Net Return = Carry + Roll - Funding Cost$$
         # Garbage collection to free memory
         tryCatch({
             gc()
-            cat("✓ Garbage collection completed\n")
+            log_debug("✓ Garbage collection completed")
         }, error = function(e) {
-            cat("✗ Error during garbage collection:", conditionMessage(e), "\n")
+            log_debug("✗ Error during garbage collection: ", conditionMessage(e))
         })
 
-        cat("\n", rep("=", 60), "\n", sep = "")
-        cat("Session cleanup completed\n")
-        cat(rep("=", 60), "\n\n", sep = "")
+        log_debug(paste0("\n", paste(rep("=", 60), collapse = "")))
+        log_debug("Session cleanup completed")
+        log_debug(paste(rep("=", 60), collapse = ""))
 
         # Auto-close when launched from desktop shortcut
         stopApp()

@@ -250,7 +250,7 @@ fit_nss_model <- function(data, method = "nss") {
 
         return(data)
     }, error = function(e) {
-        message("NSS fitting failed: ", e$message)
+        log_debug("NSS fitting failed: ", e$message)
         return(data)
     })
 }
@@ -289,7 +289,7 @@ perform_curve_pca <- function(historical_data, n_components = 3) {
 
         return(components)
     }, error = function(e) {
-        message("PCA failed: ", e$message)
+        log_debug("PCA failed: ", e$message)
         return(NULL)
     })
 }
@@ -412,7 +412,7 @@ calculate_advanced_carry_roll <- memoise(function(data,
 
         return(combined)
     }, error = function(e) {
-        message("Advanced carry & roll calculation failed: ", e$message)
+        log_debug("Advanced carry & roll calculation failed: ", e$message)
         return(data.frame())
     })
 })
@@ -457,7 +457,7 @@ detect_market_regime <- function(data, config = regime_config) {
 
         return(regime)
     }, error = function(e) {
-        message("Regime detection failed: ", e$message)
+        log_debug("Regime detection failed: ", e$message)
         return("unknown")
     })
 }
@@ -548,10 +548,10 @@ detect_anomalies <- function(data, contamination = 0.05) {
             )
 
         # Add summary message
-        message(sprintf("Anomaly detection complete: %d anomalies detected (%.1f%%)",
+        log_debug(sprintf("Anomaly detection complete: %d anomalies detected (%.1f%%)",
                         sum(data$is_anomaly, na.rm = TRUE),
                         mean(data$is_anomaly, na.rm = TRUE) * 100))
-        message(sprintf("LOF computed for %d/%d rows (%.1f%% complete cases)",
+        log_debug(sprintf("LOF computed for %d/%d rows (%.1f%% complete cases)",
                         sum(!is.na(lof_scores_full)),
                         nrow(data),
                         sum(complete_rows) / nrow(data) * 100))
@@ -559,7 +559,7 @@ detect_anomalies <- function(data, contamination = 0.05) {
         return(data)
 
     }, error = function(e) {
-        message("Anomaly detection failed: ", e$message)
+        log_debug("Anomaly detection failed: ", e$message)
         # Return data with NA columns to maintain structure
         data$anomaly_score <- NA
         data$lof_score <- NA
@@ -669,9 +669,9 @@ process_bond_data_advanced <- function(file_path = "data/Siyanda Bonds.xlsx") {
     # Start processing timer
     start_time <- Sys.time()
 
-    message("\n╔════════════════════════════════════════════════════════════════╗")
-    message("║  INITIATING ADVANCED BOND ANALYTICS PROCESSING PIPELINE       ║")
-    message("╚════════════════════════════════════════════════════════════════╝\n")
+    log_debug("╔════════════════════════════════════════════════════════════════╗")
+    log_debug("║  INITIATING ADVANCED BOND ANALYTICS PROCESSING PIPELINE       ║")
+    log_debug("╚════════════════════════════════════════════════════════════════╝\n")
 
     # Set data parameters
     last_date <- today()
@@ -687,7 +687,7 @@ process_bond_data_advanced <- function(file_path = "data/Siyanda Bonds.xlsx") {
     } else {
         function(amount, detail = NULL) {
             if(!is.null(detail)) {
-                message("► ", detail)
+                log_debug("► ", detail)
             }
         }
     }
@@ -728,7 +728,7 @@ process_bond_data_advanced <- function(file_path = "data/Siyanda Bonds.xlsx") {
 
                 if (sheet == "mod_dur") {
                     available_bonds <- detect_available_bonds(df)
-                    message("✓ Detected ", length(available_bonds), " bonds: ",
+                    log_debug("✓ Detected ", length(available_bonds), " bonds: ",
                             paste(available_bonds, collapse = ", "))
                 }
 
@@ -763,7 +763,7 @@ process_bond_data_advanced <- function(file_path = "data/Siyanda Bonds.xlsx") {
                 loaded_data[[sheet]] <- df
 
             }, error = function(e) {
-                message("⚠ Optional sheet '", sheet, "' not found - skipping")
+                log_debug("⚠ Optional sheet '", sheet, "' not found - skipping")
             })
         }
 
