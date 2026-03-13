@@ -126,7 +126,7 @@ generate_regime_analysis_plot <- function(data, params) {
             sec.axis = sec_axis(
                 # Inverse transform: y_vol -> stress
                 # stress = y_vol / scale + offset = y_vol / (vol_max/5) + (-2.5)
-                trans = ~ . / stress_to_vol_scale + stress_to_vol_offset,
+                transform = ~ . / stress_to_vol_scale + stress_to_vol_offset,
                 name = "Stress Score",
                 breaks = c(-2, -1, 0, 1, 2),
                 labels = c("-2", "-1", "0", "+1", "+2")

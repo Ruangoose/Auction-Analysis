@@ -13,12 +13,12 @@ prepare_var_data_for_plotting <- function(var_data, source = "VaR") {
 
     # Handle NULL or empty input
     if (is.null(var_data) || nrow(var_data) == 0) {
-        message(sprintf("[%s Plot Prep] Input is NULL or empty", source))
+        log_debug(sprintf("[%s Plot Prep] Input is NULL or empty", source))
         return(data.frame())
     }
 
     n_total <- nrow(var_data)
-    message(sprintf("[%s Plot Prep] Input: %d bonds", source, n_total))
+    log_debug(sprintf("[%s Plot Prep] Input: %d bonds", source, n_total))
 
     # Determine which columns to check based on what's available
     # Distribution plot uses VaR_95, VaR_99 (percentages)
@@ -99,7 +99,7 @@ prepare_var_data_for_plotting <- function(var_data, source = "VaR") {
         }
     }
 
-    message(sprintf("[%s Plot Prep] Output: %d valid bonds", source, nrow(valid_data)))
+    log_debug(sprintf("[%s Plot Prep] Output: %d valid bonds", source, nrow(valid_data)))
 
     # Final verification
     if (has_bps && nrow(valid_data) > 0) {
@@ -163,14 +163,14 @@ assess_data_quality_for_var <- function(data, lookback_days, min_ratio = 0.8) {
         )
 
     # Log summary
-    message(sprintf("[Data Quality] Lookback: %d days", lookback_days))
-    message(sprintf("  Good (>=%d obs): %d bonds",
+    log_debug(sprintf("[Data Quality] Lookback: %d days", lookback_days))
+    log_debug(sprintf("  Good (>=%d obs): %d bonds",
                    recommended, sum(obs_count$data_quality == "Good")))
-    message(sprintf("  Adequate (%d-%d obs): %d bonds",
+    log_debug(sprintf("  Adequate (%d-%d obs): %d bonds",
                    limited_threshold, recommended, sum(obs_count$data_quality == "Adequate")))
-    message(sprintf("  Limited (<%d obs): %d bonds",
+    log_debug(sprintf("  Limited (<%d obs): %d bonds",
                    limited_threshold, sum(obs_count$data_quality == "Limited")))
-    message(sprintf("  Insufficient (<%d obs): %d bonds",
+    log_debug(sprintf("  Insufficient (<%d obs): %d bonds",
                    min_required, sum(obs_count$data_quality == "Insufficient")))
 
     return(obs_count)
@@ -210,11 +210,11 @@ filter_bonds_for_var_method <- function(data, method, lookback_days) {
 
     # Log exclusions
     if (length(insufficient_bonds) > 0) {
-        message(sprintf("[VaR Filter] Excluding %d bonds with insufficient data for %s method (need %d+ obs):",
+        log_debug(sprintf("[VaR Filter] Excluding %d bonds with insufficient data for %s method (need %d+ obs):",
                        length(insufficient_bonds), method, min_required))
         for (b in insufficient_bonds) {
             n <- obs_counts$n_obs[obs_counts$bond == b]
-            message(sprintf("  %s: %d obs", b, n))
+            log_debug(sprintf("  %s: %d obs", b, n))
         }
     }
 
@@ -323,7 +323,7 @@ generate_var_distribution_plot <- function(data, params = list()) {
         "historical" = params$min_observations %||% 20       # Empirical quantiles work with fewer samples
     )
 
-    message(sprintf("[VaR Distribution] Method: %s | Min observations: %d | Horizon: %d days",
+    log_debug(sprintf("[VaR Distribution] Method: %s | Min observations: %d | Horizon: %d days",
                    method, min_observations, horizon_days))
 
     # Validate required columns
@@ -346,11 +346,11 @@ generate_var_distribution_plot <- function(data, params = list()) {
             pull(bond)
 
         # Log exclusions with observation counts
-        message(sprintf("[VaR Distribution] Excluding %d bond(s) with insufficient data for %s method:",
+        log_debug(sprintf("[VaR Distribution] Excluding %d bond(s) with insufficient data for %s method:",
                        length(insufficient_bonds), method))
         for (b in insufficient_bonds) {
             n <- data_check$n_obs[data_check$bond == b]
-            message(sprintf("  - %s: %d obs (need %d+)", b, n, min_observations))
+            log_debug(sprintf("  - %s: %d obs (need %d+)", b, n, min_observations))
         }
 
         data <- data %>%
@@ -371,11 +371,11 @@ generate_var_distribution_plot <- function(data, params = list()) {
         )
     }
 
-    message(sprintf("[VaR Distribution] Processing %d bonds", n_distinct(data$bond)))
+    log_debug(sprintf("[VaR Distribution] Processing %d bonds", n_distinct(data$bond)))
 
     # COMPREHENSIVE DATA QUALITY CHECKS
     if (enable_diagnostics) {
-        cat("\n=== VaR ANALYSIS: DATA QUALITY REPORT ===\n")
+        log_debug("=== VaR ANALYSIS: DATA QUALITY REPORT ===")
 
         unique_bonds <- unique(data$bond)
         quality_report <- list()
@@ -385,14 +385,13 @@ generate_var_distribution_plot <- function(data, params = list()) {
 
             # Warn about low-quality bonds
             if (quality_report[[b]]$quality_score < 70) {
-                cat(sprintf("\n⚠️  WARNING: %s data quality issues (Score: %.1f/100)\n",
+                log_debug(sprintf("WARNING: %s data quality issues (Score: %.1f/100)",
                             b, quality_report[[b]]$quality_score))
-                cat(sprintf("   - Missing values: %.1f%%\n", quality_report[[b]]$pct_missing))
-                cat(sprintf("   - Extreme yield changes: %d\n", quality_report[[b]]$extreme_changes))
-                cat(sprintf("   - Suspicious yields: %d\n", quality_report[[b]]$suspicious_yields))
+                log_debug(sprintf("   - Missing values: %.1f%%", quality_report[[b]]$pct_missing))
+                log_debug(sprintf("   - Extreme yield changes: %d", quality_report[[b]]$extreme_changes))
+                log_debug(sprintf("   - Suspicious yields: %d", quality_report[[b]]$suspicious_yields))
             }
         }
-        cat("\n")
     }
 
     # Calculate price returns properly
@@ -446,9 +445,9 @@ generate_var_distribution_plot <- function(data, params = list()) {
                     .groups = "drop"
                 )
 
-            cat("=== OUTLIER REMOVAL SUMMARY (ADAPTIVE THRESHOLDS) ===\n")
+            log_debug("=== OUTLIER REMOVAL SUMMARY (ADAPTIVE THRESHOLDS) ===")
             for (i in 1:nrow(outlier_summary)) {
-                cat(sprintf("%s (D=%.1fy): %.1fσ threshold → %d/%d outliers (%.1f%%)\n",
+                log_debug(sprintf("%s (D=%.1fy): %.1f sigma threshold -> %d/%d outliers (%.1f%%)",
                             outlier_summary$bond[i],
                             outlier_summary$duration[i],
                             outlier_summary$threshold[i],
@@ -456,7 +455,6 @@ generate_var_distribution_plot <- function(data, params = list()) {
                             outlier_summary$n_total[i],
                             outlier_summary$pct_outliers[i]))
             }
-            cat("\n")
         }
 
         returns_data <- returns_data %>%
@@ -504,16 +502,15 @@ generate_var_distribution_plot <- function(data, params = list()) {
             filter(n_capped > 0)
 
         if (nrow(capping_summary) > 0) {
-            cat("=== EXTREME RETURN CAPPING SUMMARY ===\n")
-            cat(sprintf("Maximum daily return cap: ±%.1f%%\n", max_daily_return))
+            log_debug("=== EXTREME RETURN CAPPING SUMMARY ===")
+            log_debug(sprintf("Maximum daily return cap: +/-%.1f%%", max_daily_return))
             for (i in 1:nrow(capping_summary)) {
-                cat(sprintf("%s: %d returns capped (%.1f%%), max was %.2f%%\n",
+                log_debug(sprintf("%s: %d returns capped (%.1f%%), max was %.2f%%",
                             capping_summary$bond[i],
                             capping_summary$n_capped[i],
                             capping_summary$pct_capped[i],
                             capping_summary$max_original[i]))
             }
-            cat("\n")
         }
     }
 
@@ -542,7 +539,7 @@ generate_var_distribution_plot <- function(data, params = list()) {
         )
     n_removed <- n_before_sanitize - nrow(returns_data)
     if (n_removed > 0) {
-        message(sprintf("[VaR Distribution] Removed %d rows with NA/NaN/Inf scaled_return", n_removed))
+        log_debug(sprintf("[VaR Distribution] Removed %d rows with NA/NaN/Inf scaled_return", n_removed))
     }
 
     # =========================================================================
@@ -566,7 +563,7 @@ generate_var_distribution_plot <- function(data, params = list()) {
         pull(bond)
 
     if (length(insufficient_bonds) > 0) {
-        message(sprintf("[VaR Distribution] Excluding %d bond(s) with <%d return observations for density estimation: %s",
+        log_debug(sprintf("[VaR Distribution] Excluding %d bond(s) with <%d return observations for density estimation: %s",
                         length(insufficient_bonds), min_obs_for_density,
                         paste(insufficient_bonds, collapse = ", ")))
     }
@@ -590,7 +587,7 @@ generate_var_distribution_plot <- function(data, params = list()) {
         pull(bond)
 
     if (length(low_variance_bonds) > 0) {
-        message(sprintf("[VaR Distribution] Excluding %d bond(s) with near-zero return variance (sd < %.2f%%): %s",
+        log_debug(sprintf("[VaR Distribution] Excluding %d bond(s) with near-zero return variance (sd < %.2f%%): %s",
                         length(low_variance_bonds), min_variance_for_density,
                         paste(low_variance_bonds, collapse = ", ")))
         returns_data <- returns_data %>%
@@ -708,10 +705,7 @@ generate_var_distribution_plot <- function(data, params = list()) {
     #   - Long-term (12-30y): 2.0% - 3.5%
 
     if (enable_diagnostics) {
-        cat("\n")
-        cat("╔════════════════════════════════════════════════════════════════╗\n")
-        cat("║  CRITICAL: VOLATILITY & VAR VALIDATION CHECKS                 ║\n")
-        cat("╚════════════════════════════════════════════════════════════════╝\n\n")
+        log_debug("CRITICAL: VOLATILITY & VAR VALIDATION CHECKS")
 
         # 1. VOLATILITY RANGE CHECK
         vol_min <- min(var_levels$vol, na.rm = TRUE)
@@ -719,101 +713,87 @@ generate_var_distribution_plot <- function(data, params = list()) {
         vol_mean <- mean(var_levels$vol, na.rm = TRUE)
         vol_unique <- length(unique(round(var_levels$vol, 4)))
 
-        cat(sprintf("📊 Volatility Statistics:\n"))
-        cat(sprintf("   Range: %.3f%% - %.3f%%\n", vol_min, vol_max))
-        cat(sprintf("   Mean: %.3f%%\n", vol_mean))
-        cat(sprintf("   Unique values: %d/%d bonds\n", vol_unique, nrow(var_levels)))
+        log_debug("Volatility Statistics:")
+        log_debug(sprintf("   Range: %.3f%% - %.3f%%", vol_min, vol_max))
+        log_debug(sprintf("   Mean: %.3f%%", vol_mean))
+        log_debug(sprintf("   Unique values: %d/%d bonds", vol_unique, nrow(var_levels)))
 
         # Check for suspiciously low volatility (< 0.5%)
         if (vol_mean < 0.5) {
-            cat("\n")
-            cat("╔════════════════════════════════════════════════════════════════╗\n")
-            cat("║  🚨 CRITICAL BUG DETECTED: VOLATILITY TOO LOW 🚨              ║\n")
-            cat("╚════════════════════════════════════════════════════════════════╝\n")
-            cat(sprintf("   Mean volatility: %.4f%% (EXPECTED: 1.0-3.0%%)\n", vol_mean))
-            cat(sprintf("   This is %.0fx too small!\n", 1.5 / vol_mean))
-            cat("\n   POSSIBLE CAUSES:\n")
-            cat("   1. Yield changes divided by 10000 instead of 100\n")
-            cat("   2. Price returns not converted to percentage (missing ×100)\n")
-            cat("   3. Volatility inherited from upstream calculation bug\n")
-            cat("   4. Rolling window calculation error\n")
-            cat("\n   IMPACT:\n")
-            cat("   - VaR distributions will be unrealistically narrow\n")
-            cat("   - Risk severely underestimated\n")
-            cat("   - All risk metrics (VaR, CVaR) will be wrong\n")
-            cat("\n   ACTION REQUIRED:\n")
-            cat("   - Investigate yield_change calculation in data preparation\n")
-            cat("   - Check for missing percentage conversions\n")
-            cat("   - Verify upstream volatility calculations\n")
-            cat("╚════════════════════════════════════════════════════════════════╝\n\n")
+            log_debug("CRITICAL BUG DETECTED: VOLATILITY TOO LOW")
+            log_debug(sprintf("   Mean volatility: %.4f%% (EXPECTED: 1.0-3.0%%)", vol_mean))
+            log_debug(sprintf("   This is %.0fx too small!", 1.5 / vol_mean))
+            log_debug("   POSSIBLE CAUSES:")
+            log_debug("   1. Yield changes divided by 10000 instead of 100")
+            log_debug("   2. Price returns not converted to percentage (missing x100)")
+            log_debug("   3. Volatility inherited from upstream calculation bug")
+            log_debug("   4. Rolling window calculation error")
+            log_debug("   IMPACT:")
+            log_debug("   - VaR distributions will be unrealistically narrow")
+            log_debug("   - Risk severely underestimated")
+            log_debug("   - All risk metrics (VaR, CVaR) will be wrong")
+            log_debug("   ACTION REQUIRED:")
+            log_debug("   - Investigate yield_change calculation in data preparation")
+            log_debug("   - Check for missing percentage conversions")
+            log_debug("   - Verify upstream volatility calculations")
 
             warning("CRITICAL: Mean volatility ", sprintf("%.4f%%", vol_mean),
                     " is suspiciously low (expected 1-3%). Check data preparation!")
         } else if (vol_mean < 1.0) {
-            cat("\n")
-            cat("⚠️  WARNING: Volatility appears low (%.3f%%, expected 1.0-3.0%%)\n", vol_mean)
-            cat("   Consider reviewing data quality and calculation methods.\n\n")
+            log_debug(sprintf("WARNING: Volatility appears low (%.3f%%, expected 1.0-3.0%%)", vol_mean))
+            log_debug("   Consider reviewing data quality and calculation methods.")
             warning("Volatility ", sprintf("%.3f%%", vol_mean),
                     " is lower than expected for SA govt bonds (1-3%)")
         } else if (vol_mean > 5.0) {
-            cat("\n")
-            cat("⚠️  WARNING: Volatility appears high (%.3f%%, expected 1.0-3.0%%)\n", vol_mean)
-            cat("   This could indicate:\n")
-            cat("   - Data quality issues (outliers not removed)\n")
-            cat("   - Calculation errors (e.g., multiplied by 100 twice)\n")
-            cat("   - Extreme market conditions\n\n")
+            log_debug(sprintf("WARNING: Volatility appears high (%.3f%%, expected 1.0-3.0%%)", vol_mean))
+            log_debug("   This could indicate:")
+            log_debug("   - Data quality issues (outliers not removed)")
+            log_debug("   - Calculation errors (e.g., multiplied by 100 twice)")
+            log_debug("   - Extreme market conditions")
             warning("Volatility ", sprintf("%.3f%%", vol_mean),
                     " is higher than typical for SA govt bonds (1-3%)")
         } else {
-            cat(sprintf("✓ Volatility range is reasonable (%.2f%% - %.2f%%)\n",
+            log_debug(sprintf("Volatility range is reasonable (%.2f%% - %.2f%%)",
                         vol_min, vol_max))
         }
 
         # Check for suspiciously uniform volatility (all bonds same vol)
         if (vol_unique < nrow(var_levels) * 0.3) {
-            cat(sprintf("\n⚠️  WARNING: Only %d unique volatility values for %d bonds\n",
+            log_debug(sprintf("WARNING: Only %d unique volatility values for %d bonds",
                         vol_unique, nrow(var_levels)))
-            cat("   Bonds should have different volatilities based on duration.\n")
-            cat("   This suggests a calculation error or data quality issue.\n")
+            log_debug("   Bonds should have different volatilities based on duration.")
+            log_debug("   This suggests a calculation error or data quality issue.")
         }
-
-        cat("\n")
 
         # 2. VAR MAGNITUDE CHECK
         var_95_mean <- mean(abs(var_levels$VaR_95), na.rm = TRUE)
         var_95_min <- min(abs(var_levels$VaR_95), na.rm = TRUE)
         var_95_max <- max(abs(var_levels$VaR_95), na.rm = TRUE)
 
-        cat(sprintf("📊 VaR95 Statistics:\n"))
-        cat(sprintf("   Range: %.3f%% - %.3f%%\n", var_95_min, var_95_max))
-        cat(sprintf("   Mean: %.3f%%\n", var_95_mean))
+        log_debug("VaR95 Statistics:")
+        log_debug(sprintf("   Range: %.3f%% - %.3f%%", var_95_min, var_95_max))
+        log_debug(sprintf("   Mean: %.3f%%", var_95_mean))
 
         # Check for suspiciously small VaR (< 0.1%)
         if (var_95_mean < 0.1) {
-            cat("\n")
-            cat("╔════════════════════════════════════════════════════════════════╗\n")
-            cat("║  🚨 CRITICAL BUG DETECTED: VAR TOO SMALL 🚨                   ║\n")
-            cat("╚════════════════════════════════════════════════════════════════╝\n")
-            cat(sprintf("   Mean VaR95: %.4f%% (EXPECTED: 1.0-3.0%%)\n", var_95_mean))
-            cat("\n   This indicates volatility is calculated incorrectly!\n")
-            cat("   VaR should be ~1.65 × volatility for normal distribution.\n")
-            cat(sprintf("   Current implies volatility: %.4f%% (actual: %.4f%%)\n",
+            log_debug("CRITICAL BUG DETECTED: VAR TOO SMALL")
+            log_debug(sprintf("   Mean VaR95: %.4f%% (EXPECTED: 1.0-3.0%%)", var_95_mean))
+            log_debug("   This indicates volatility is calculated incorrectly!")
+            log_debug("   VaR should be ~1.65 x volatility for normal distribution.")
+            log_debug(sprintf("   Current implies volatility: %.4f%% (actual: %.4f%%)",
                         var_95_mean / 1.65, vol_mean))
-            cat("╚════════════════════════════════════════════════════════════════╝\n\n")
 
             warning("CRITICAL: Mean VaR95 ", sprintf("%.4f%%", var_95_mean),
                     " is too small (expected 1-3%). Volatility calculation is wrong!")
         } else if (var_95_mean < 0.5) {
-            cat(sprintf("\n⚠️  WARNING: VaR95 appears low (%.3f%%, expected 1.0-3.0%%)\n",
+            log_debug(sprintf("WARNING: VaR95 appears low (%.3f%%, expected 1.0-3.0%%)",
                         var_95_mean))
             warning("VaR95 ", sprintf("%.3f%%", var_95_mean),
                     " is lower than expected for SA govt bonds")
         } else {
-            cat(sprintf("✓ VaR95 range is reasonable (%.2f%% - %.2f%%)\n",
+            log_debug(sprintf("VaR95 range is reasonable (%.2f%% - %.2f%%)",
                         var_95_min, var_95_max))
         }
-
-        cat("\n")
 
         # 3. DURATION VS VOLATILITY RELATIONSHIP CHECK
         if ("modified_duration" %in% names(data)) {
@@ -832,35 +812,33 @@ generate_var_distribution_plot <- function(data, params = list()) {
                                    duration_vol_check$vol,
                                    use = "complete.obs")
 
-                cat(sprintf("📊 Duration vs Volatility Relationship:\n"))
-                cat(sprintf("   Correlation: %.3f\n", dur_vol_cor))
+                log_debug("Duration vs Volatility Relationship:")
+                log_debug(sprintf("   Correlation: %.3f", dur_vol_cor))
 
-                # We expect positive correlation (longer duration → higher vol)
+                # We expect positive correlation (longer duration -> higher vol)
                 if (dur_vol_cor < 0.3) {
-                    cat("\n⚠️  WARNING: Weak or negative correlation between duration and volatility\n")
-                    cat("   Expected: Longer duration bonds should have higher volatility\n")
-                    cat("   Actual correlation: ", sprintf("%.3f", dur_vol_cor), "\n")
-                    cat("   This suggests a data quality or calculation issue.\n")
+                    log_debug("WARNING: Weak or negative correlation between duration and volatility")
+                    log_debug("   Expected: Longer duration bonds should have higher volatility")
+                    log_debug(sprintf("   Actual correlation: %.3f", dur_vol_cor))
+                    log_debug("   This suggests a data quality or calculation issue.")
                 } else {
-                    cat("✓ Duration-volatility relationship is reasonable\n")
+                    log_debug("Duration-volatility relationship is reasonable")
                 }
 
                 # Show extremes
-                cat(sprintf("\n   Shortest duration: %s (%.1fy, vol=%.3f%%)\n",
+                log_debug(sprintf("   Shortest duration: %s (%.1fy, vol=%.3f%%)",
                             duration_vol_check$bond[1],
                             duration_vol_check$duration[1],
                             duration_vol_check$vol[1]))
-                cat(sprintf("   Longest duration: %s (%.1fy, vol=%.3f%%)\n",
+                log_debug(sprintf("   Longest duration: %s (%.1fy, vol=%.3f%%)",
                             duration_vol_check$bond[nrow(duration_vol_check)],
                             duration_vol_check$duration[nrow(duration_vol_check)],
                             duration_vol_check$vol[nrow(duration_vol_check)]))
             }
         }
 
-        cat("\n")
-
         # 4. INPUT DATA QUALITY SUMMARY
-        cat(sprintf("📊 Input Data Summary:\n"))
+        log_debug("Input Data Summary:")
         returns_summary <- returns_data %>%
             group_by(bond) %>%
             summarise(
@@ -873,19 +851,16 @@ generate_var_distribution_plot <- function(data, params = list()) {
                 .groups = "drop"
             )
 
-        cat(sprintf("   Total returns used: %d-%d per bond\n",
+        log_debug(sprintf("   Total returns used: %d-%d per bond",
                     min(returns_summary$n_returns),
                     max(returns_summary$n_returns)))
-        cat(sprintf("   Return range: %.3f%% to %.3f%%\n",
+        log_debug(sprintf("   Return range: %.3f%% to %.3f%%",
                     min(returns_summary$min_ret, na.rm = TRUE),
                     max(returns_summary$max_ret, na.rm = TRUE)))
-        cat(sprintf("   Mean return volatility: %.3f%%\n",
+        log_debug(sprintf("   Mean return volatility: %.3f%%",
                     mean(returns_summary$sd_ret, na.rm = TRUE)))
 
-        cat("\n")
-        cat("╔════════════════════════════════════════════════════════════════╗\n")
-        cat("║  END VALIDATION CHECKS                                         ║\n")
-        cat("╚════════════════════════════════════════════════════════════════╝\n\n")
+        log_debug("END VALIDATION CHECKS")
     }
 
     # =================================================================
@@ -898,12 +873,9 @@ generate_var_distribution_plot <- function(data, params = list()) {
 
     if (recalculate_volatility_if_low && mean(var_levels$vol, na.rm = TRUE) < 0.5) {
         if (enable_diagnostics) {
-            cat("\n")
-            cat("╔════════════════════════════════════════════════════════════════╗\n")
-            cat("║  🔧 FAILSAFE ACTIVATED: RECALCULATING VOLATILITY              ║\n")
-            cat("╚════════════════════════════════════════════════════════════════╝\n\n")
-            cat("   Detected suspiciously low volatility.\n")
-            cat("   Recalculating volatility directly from yield changes...\n\n")
+            log_debug("FAILSAFE ACTIVATED: RECALCULATING VOLATILITY")
+            log_debug("   Detected suspiciously low volatility.")
+            log_debug("   Recalculating volatility directly from yield changes...")
         }
 
         # Store original values for comparison
@@ -998,19 +970,19 @@ generate_var_distribution_plot <- function(data, params = list()) {
                     var_change_pct = (VaR_95_new - VaR_95_old) / abs(VaR_95_old) * 100
                 )
 
-            cat("   Recalculation complete!\n\n")
-            cat("📊 Before vs After Comparison:\n")
-            cat(sprintf("   Mean volatility: %.4f%% → %.4f%% (%.0fx change)\n",
+            log_debug("   Recalculation complete!")
+            log_debug("Before vs After Comparison:")
+            log_debug(sprintf("   Mean volatility: %.4f%% -> %.4f%% (%.0fx change)",
                         mean(var_levels_original$vol),
                         mean(var_levels$vol),
                         mean(var_levels$vol) / mean(var_levels_original$vol)))
-            cat(sprintf("   Mean VaR95: %.4f%% → %.4f%%\n",
+            log_debug(sprintf("   Mean VaR95: %.4f%% -> %.4f%%",
                         mean(abs(var_levels_original$VaR_95)),
                         mean(abs(var_levels$VaR_95))))
 
-            cat("\n   Bond-by-bond changes:\n")
+            log_debug("   Bond-by-bond changes:")
             for (i in 1:min(5, nrow(comparison))) {
-                cat(sprintf("   %s: vol %.4f%% → %.4f%% (%+.0f%%)\n",
+                log_debug(sprintf("   %s: vol %.4f%% -> %.4f%% (%+.0f%%)",
                             comparison$bond[i],
                             comparison$vol_old[i],
                             comparison$vol_new[i],
@@ -1020,21 +992,21 @@ generate_var_distribution_plot <- function(data, params = list()) {
             # Check if recalculation fixed the issue
             new_vol_mean <- mean(var_levels$vol, na.rm = TRUE)
             if (new_vol_mean >= 1.0) {
-                cat("\n✓ SUCCESS: Volatility now in expected range (1-3%)\n")
-                cat("   The upstream data had a calculation error that has been corrected.\n")
+                log_debug("SUCCESS: Volatility now in expected range (1-3%)")
+                log_debug("   The upstream data had a calculation error that has been corrected.")
             } else if (new_vol_mean >= 0.5) {
-                cat("\n✓ IMPROVED: Volatility increased but still lower than expected\n")
-                cat("   Consider investigating data quality further.\n")
+                log_debug("IMPROVED: Volatility increased but still lower than expected")
+                log_debug("   Consider investigating data quality further.")
             } else {
-                cat("\n⚠️  WARNING: Volatility still too low after recalculation\n")
-                cat("   This suggests a fundamental data quality issue.\n")
-                cat("   Possible causes:\n")
-                cat("   - Insufficient data variation\n")
-                cat("   - Data collection or processing error\n")
-                cat("   - Market conditions (unusual period)\n")
+                log_debug("WARNING: Volatility still too low after recalculation")
+                log_debug("   This suggests a fundamental data quality issue.")
+                log_debug("   Possible causes:")
+                log_debug("   - Insufficient data variation")
+                log_debug("   - Data collection or processing error")
+                log_debug("   - Market conditions (unusual period)")
             }
 
-            cat("\n╚════════════════════════════════════════════════════════════════╝\n\n")
+            log_debug("END FAILSAFE RECALCULATION")
         }
 
         # Update returns_data to use recalculated values
@@ -1043,20 +1015,20 @@ generate_var_distribution_plot <- function(data, params = list()) {
 
     # R2053-SPECIFIC DIAGNOSTIC REPORT
     if (enable_diagnostics && "R2053" %in% var_levels$bond) {
-        cat("=== R2053 DETAILED DIAGNOSTIC REPORT ===\n")
+        log_debug("=== R2053 DETAILED DIAGNOSTIC REPORT ===")
 
         r2053_stats <- var_levels %>% filter(bond == "R2053")
         r2053_returns <- returns_data %>% filter(bond == "R2053")
 
-        cat(sprintf("\nR2053 Statistics:\n"))
-        cat(sprintf("  Observations: %d\n", r2053_stats$n_observations))
-        cat(sprintf("  Mean return: %.3f%%\n", r2053_stats$mean_return))
-        cat(sprintf("  Median return: %.3f%%\n", r2053_stats$median_return))
-        cat(sprintf("  Volatility (σ): %.2f%%\n", r2053_stats$vol))
-        cat(sprintf("  Skewness: %.3f\n", r2053_stats$skewness))
-        cat(sprintf("  Kurtosis: %.3f (normal=3.0)\n", r2053_stats$kurtosis))
-        cat(sprintf("  VaR 95%%: %.2f%%\n", r2053_stats$VaR_95))
-        cat(sprintf("  VaR 99%%: %.2f%%\n", r2053_stats$VaR_99))
+        log_debug("R2053 Statistics:")
+        log_debug(sprintf("  Observations: %d", r2053_stats$n_observations))
+        log_debug(sprintf("  Mean return: %.3f%%", r2053_stats$mean_return))
+        log_debug(sprintf("  Median return: %.3f%%", r2053_stats$median_return))
+        log_debug(sprintf("  Volatility (sigma): %.2f%%", r2053_stats$vol))
+        log_debug(sprintf("  Skewness: %.3f", r2053_stats$skewness))
+        log_debug(sprintf("  Kurtosis: %.3f (normal=3.0)", r2053_stats$kurtosis))
+        log_debug(sprintf("  VaR 95%%: %.2f%%", r2053_stats$VaR_95))
+        log_debug(sprintf("  VaR 99%%: %.2f%%", r2053_stats$VaR_99))
 
         # Analyze return distribution
         r2053_extreme <- r2053_returns %>%
@@ -1072,28 +1044,28 @@ generate_var_distribution_plot <- function(data, params = list()) {
                 pct_beyond_5pct = mean(abs(scaled_return) > 5, na.rm = TRUE) * 100
             )
 
-        cat(sprintf("\nReturn Distribution Analysis:\n"))
-        cat(sprintf("  Range: %.2f%% to %.2f%% (span: %.2f%%)\n",
+        log_debug("Return Distribution Analysis:")
+        log_debug(sprintf("  Range: %.2f%% to %.2f%% (span: %.2f%%)",
                     r2053_extreme$min_return, r2053_extreme$max_return, r2053_extreme$range))
-        cat(sprintf("  Returns beyond 3σ: %d (%.1f%%) [Normal: ~0.3%%]\n",
+        log_debug(sprintf("  Returns beyond 3 sigma: %d (%.1f%%) [Normal: ~0.3%%]",
                     r2053_extreme$n_beyond_3sigma, r2053_extreme$pct_beyond_3sigma))
-        cat(sprintf("  Returns beyond ±5%%: %d (%.1f%%)\n",
+        log_debug(sprintf("  Returns beyond +/-5%%: %d (%.1f%%)",
                     r2053_extreme$n_beyond_5pct, r2053_extreme$pct_beyond_5pct))
 
         # Normality assessment
-        cat(sprintf("\nNormality Assessment:\n"))
+        log_debug("Normality Assessment:")
         if (abs(r2053_stats$kurtosis - 3) > 2) {
-            cat(sprintf("  ⚠️  High excess kurtosis (%.2f) indicates fat tails\n",
+            log_debug(sprintf("  High excess kurtosis (%.2f) indicates fat tails",
                         r2053_stats$kurtosis - 3))
         } else {
-            cat(sprintf("  ✓ Kurtosis is reasonable\n"))
+            log_debug("  Kurtosis is reasonable")
         }
 
         if (abs(r2053_stats$skewness) > 0.5) {
-            cat(sprintf("  ⚠️  Significant skewness (%.2f) indicates asymmetric distribution\n",
+            log_debug(sprintf("  Significant skewness (%.2f) indicates asymmetric distribution",
                         r2053_stats$skewness))
         } else {
-            cat(sprintf("  ✓ Skewness is acceptable\n"))
+            log_debug("  Skewness is acceptable")
         }
 
         # Compare to other bonds
@@ -1105,27 +1077,27 @@ generate_var_distribution_plot <- function(data, params = list()) {
                 avg_var99 = mean(VaR_99, na.rm = TRUE)
             )
 
-        cat(sprintf("\nComparison to Other Bonds:\n"))
-        cat(sprintf("  R2053 vol: %.2f%% vs Other bonds avg: %.2f%% (%.1fx)\n",
+        log_debug("Comparison to Other Bonds:")
+        log_debug(sprintf("  R2053 vol: %.2f%% vs Other bonds avg: %.2f%% (%.1fx)",
                     r2053_stats$vol, other_bonds_avg$avg_vol,
                     r2053_stats$vol / other_bonds_avg$avg_vol))
-        cat(sprintf("  R2053 VaR95: %.2f%% vs Other bonds avg: %.2f%% (%.1fx)\n",
+        log_debug(sprintf("  R2053 VaR95: %.2f%% vs Other bonds avg: %.2f%% (%.1fx)",
                     r2053_stats$VaR_95, other_bonds_avg$avg_var95,
                     abs(r2053_stats$VaR_95) / abs(other_bonds_avg$avg_var95)))
 
         # Recommendations
-        cat(sprintf("\nRecommendations:\n"))
+        log_debug("Recommendations:")
         if (r2053_stats$vol > other_bonds_avg$avg_vol * 2) {
-            cat("  ⚠️  R2053 volatility is >2x other bonds - investigate data quality\n")
+            log_debug("  R2053 volatility is >2x other bonds - investigate data quality")
         }
         if (r2053_extreme$pct_beyond_5pct > 5) {
-            cat("  ⚠️  >5%% of returns exceed ±5%% - check for data errors\n")
+            log_debug("  >5%% of returns exceed +/-5%% - check for data errors")
         }
         if (abs(r2053_stats$kurtosis - 3) > 3) {
-            cat("  ⚠️  Extreme kurtosis - distribution has very fat tails\n")
+            log_debug("  Extreme kurtosis - distribution has very fat tails")
         }
 
-        cat("\n========================================\n\n")
+        log_debug("=== END R2053 DIAGNOSTIC REPORT ===")
     }
 
     # =========================================================================
@@ -1280,16 +1252,16 @@ generate_var_distribution_plot <- function(data, params = list()) {
 
                 # Force ggplot to build the plot (triggers stat_density_ridges
                 # computation). Without this, warnings only surface at render time.
-                ggplot2::ggplot_build(p_ridge)
+                suppressWarnings(ggplot2::ggplot_build(p_ridge))
 
                 p_ridge  # return the successful plot
             }, error = function(e) {
                 ridgeline_failed <<- TRUE
-                warning(sprintf("[VaR Distribution] Ridgeline error: %s", e$message))
+                log_debug(sprintf("[VaR Distribution] Ridgeline error: %s", e$message))
                 NULL
             }),
             warning = function(w) {
-                if (grepl("stat_density_ridges|findInterval", conditionMessage(w))) {
+                if (grepl("findInterval.*NAs|bandwidth.*zero|singular", conditionMessage(w))) {
                     ridgeline_failed <<- TRUE
                     invokeRestart("muffleWarning")
                 }
@@ -1297,7 +1269,7 @@ generate_var_distribution_plot <- function(data, params = list()) {
         )
 
         if (ridgeline_failed || is.null(p)) {
-            message("[VaR Distribution] Ridgeline plot failed, falling back to faceted histogram")
+            log_debug("[VaR Distribution] Ridgeline plot failed, falling back to faceted histogram")
             use_ridgeline <- FALSE
         }
     }
@@ -1330,7 +1302,7 @@ generate_var_distribution_plot <- function(data, params = list()) {
         fallback_limit <- max(abs(fallback_range)) * 1.3
         fallback_limit <- max(fallback_limit, 0.5)
 
-        p <- ggplot(returns_data, aes(x = scaled_return)) +
+        p <- ggplot(returns_data %>% filter(!is.na(scaled_return)), aes(x = scaled_return)) +
             geom_histogram(aes(y = after_stat(density)), bins = 30,
                            fill = "#64B5F6", color = "white", alpha = 0.7) +
             geom_density(color = insele_palette$primary, linewidth = 0.8) +
@@ -1512,7 +1484,7 @@ generate_var_ladder_plot <- function(var_data, params = list()) {
                            length(bonds_not_in_order), paste(bonds_not_in_order, collapse = ", ")))
             var_ladder <- var_ladder %>%
                 filter(bond %in% bond_order)
-            message(sprintf("[Risk Ladder Plot] Filtered: %d -> %d bonds to match bond_order",
+            log_debug(sprintf("[Risk Ladder Plot] Filtered: %d -> %d bonds to match bond_order",
                            original_count, nrow(var_ladder)))
         }
 

@@ -148,7 +148,7 @@ calculate_relative_value <- memoise(function(data, lookback = NULL) {
     n_insufficient <- sum(result$rv_data_quality == "Insufficient", na.rm = TRUE)
     n_na_zscore <- sum(is.na(result$z_score))
 
-    message(sprintf("  Relative value calculation: Good=%d, Low=%d, Insufficient=%d, NA z-scores=%d",
+    log_debug(sprintf("  Relative value calculation: Good=%d, Low=%d, Insufficient=%d, NA z-scores=%d",
                    n_good, n_low, n_insufficient, n_na_zscore))
 
     return(result)
@@ -820,7 +820,7 @@ calculate_advanced_technicals <- function(data) {
             }
         }
 
-        message(sprintf(
+        log_debug(sprintf(
             "✓ Technical indicators SUCCESS: %d rows × %d cols | %d bonds",
             nrow(temp_result), ncol(temp_result), n_distinct(temp_result$bond)
         ))
@@ -1218,7 +1218,7 @@ calculate_var <- memoise(function(data, confidence_levels = c(0.95, 0.99), horiz
 
         # Log data quality after filtering
         n_bonds <- n_distinct(data$bond)
-        message(sprintf("[calculate_var] Processing %d bonds after filtering", n_bonds))
+        log_debug(sprintf("[calculate_var] Processing %d bonds after filtering", n_bonds))
 
         if (n_bonds == 0) {
             warning("calculate_var: No valid bonds after filtering - check data quality")
@@ -1370,9 +1370,9 @@ calculate_var <- memoise(function(data, confidence_levels = c(0.95, 0.99), horiz
         # Log validation results
         problematic <- var_results %>% filter(!is_reasonable)
         if (nrow(problematic) > 0) {
-            message(sprintf("[calculate_var] WARNING: %d bonds have unexpected VaR/duration ratio",
+            log_debug(sprintf("[calculate_var] WARNING: %d bonds have unexpected VaR/duration ratio",
                            nrow(problematic)))
-            message("Expected: ~10-25 bps VaR per year of modified duration")
+            log_debug("Expected: ~10-25 bps VaR per year of modified duration")
         }
 
         # ════════════════════════════════════════════════════════════════════════
@@ -1398,7 +1398,7 @@ calculate_var <- memoise(function(data, confidence_levels = c(0.95, 0.99), horiz
             select(-var_per_duration, -is_reasonable)
 
         # Log final results
-        message(sprintf("[calculate_var] Final output: %d bonds", nrow(var_results)))
+        log_debug(sprintf("[calculate_var] Final output: %d bonds", nrow(var_results)))
 
         if (nrow(var_results) == 0) {
             warning("calculate_var: All VaR results filtered - check data quality")
@@ -1853,7 +1853,7 @@ detect_market_regime <- function(data) {
             # Add diagnostic output (multiply by 100 for % display)
             vol_range <- range(vol_20d_vector, na.rm = TRUE)
             vol_unique <- length(unique(vol_20d_vector))
-            message(sprintf(
+            log_debug(sprintf(
                 "✓ 20-day volatility calculated: Range %.2f%% - %.2f%% | Unique values: %d/%d dates",
                 vol_range[1] * 100, vol_range[2] * 100, vol_unique, n_dates
             ))
@@ -2015,7 +2015,7 @@ detect_market_regime <- function(data) {
             )
 
         # Diagnostic: Check stress score characteristics
-        message(sprintf("Stress score - Range: [%.2f, %.2f] | SD: %.3f | NA count: %d",
+        log_debug(sprintf("Stress score - Range: [%.2f, %.2f] | SD: %.3f | NA count: %d",
                         min(market_metrics$stress_score, na.rm = TRUE),
                         max(market_metrics$stress_score, na.rm = TRUE),
                         sd(market_metrics$stress_score, na.rm = TRUE),
@@ -2079,7 +2079,7 @@ detect_market_regime <- function(data) {
         total_capped <- sum(market_metrics$vol_20d_capped_flag, na.rm = TRUE)
 
         # Summary message
-        message(sprintf(
+        log_debug(sprintf(
             "✓ Market regime detection complete: %d dates | Avg data quality: %.1f/100 | Outliers Winsorized: %d | Periods capped: %d",
             nrow(market_metrics),
             avg_quality,
@@ -2092,13 +2092,13 @@ detect_market_regime <- function(data) {
             count(regime) %>%
             mutate(pct = n / nrow(market_metrics) * 100)
 
-        message(sprintf(
+        log_debug(sprintf(
             "  Regime distribution: %s",
             paste(sprintf("%s: %.0f%%", regime_summary$regime, regime_summary$pct), collapse = " | ")
         ))
 
         # Volatility summary (multiply by 100 for % display since values are decimal)
-        message(sprintf(
+        log_debug(sprintf(
             "  Volatility range: %.1f%% - %.1f%% (20-day) | Median: %.1f%%",
             min(market_metrics$vol_20d, na.rm = TRUE) * 100,
             max(market_metrics$vol_20d, na.rm = TRUE) * 100,
@@ -2217,7 +2217,7 @@ estimate_curve_slope <- function(bond_data, target_duration, target_bond) {
                 # Tighter caps for ultra-long bonds: -5 to +25 bps/year
                 slope_bps_capped <- pmax(pmin(slope_bps_damped, 25), -5)
 
-                message(sprintf(
+                log_debug(sprintf(
                     "Ultra-long bond %s (%.1fy): slope %.1f bps → damped %.1f bps → capped %.1f bps",
                     target_bond, target_duration, slope_bps, slope_bps_damped, slope_bps_capped
                 ))
@@ -2406,7 +2406,7 @@ validate_funding_rate <- function(funding_rate) {
     if(funding_rate < 1) {
         # Likely decimal format (0.0825)
         standardized <- funding_rate * 100
-        message(sprintf("Funding rate converted from decimal: %.4f → %.2f%%",
+        log_debug(sprintf("Funding rate converted from decimal: %.4f → %.2f%%",
                         funding_rate, standardized))
         return(standardized)
     } else if(funding_rate > 20) {
@@ -2487,7 +2487,7 @@ calculate_advanced_carry_roll <- memoise(function(data,
             filter(date == max(date)) %>%
             ungroup()
 
-        message(sprintf("Calculating carry & roll for %d bonds at latest date: %s",
+        log_debug(sprintf("Calculating carry & roll for %d bonds at latest date: %s",
                         n_distinct(latest_data$bond),
                         max(latest_data$date)))
 
@@ -2533,7 +2533,7 @@ calculate_advanced_carry_roll <- memoise(function(data,
         # Report ILBs detected
         ilbs_detected <- latest_data %>% filter(is_ilb)
         if(nrow(ilbs_detected) > 0) {
-            message(sprintf("Inflation-linked bonds detected: %s",
+            log_debug(sprintf("Inflation-linked bonds detected: %s",
                             paste(ilbs_detected$bond, collapse = ", ")))
         }
 
@@ -2565,7 +2565,7 @@ calculate_advanced_carry_roll <- memoise(function(data,
                 n_fixed_assumption = sum(grepl("fixed_assumption", curve_slope_method))
             )
 
-        message(sprintf("Curve slope estimation: %.1f to %.1f bps/year (median: %.1f) | %d unique slopes | %d local, %d fixed",
+        log_debug(sprintf("Curve slope estimation: %.1f to %.1f bps/year (median: %.1f) | %d unique slopes | %d local, %d fixed",
                         slope_summary$min_slope, slope_summary$max_slope, slope_summary$median_slope,
                         slope_summary$n_unique_slopes,
                         slope_summary$n_local_regression, slope_summary$n_fixed_assumption))
@@ -2573,7 +2573,7 @@ calculate_advanced_carry_roll <- memoise(function(data,
         # Coupon uniqueness check
         n_unique_coupons <- n_distinct(round(latest_data$coupon_standardized, 2))
         coupon_range <- range(latest_data$coupon_standardized, na.rm = TRUE)
-        message(sprintf("Coupon values: %.2f%% to %.2f%% | %d unique coupons for %d bonds",
+        log_debug(sprintf("Coupon values: %.2f%% to %.2f%% | %d unique coupons for %d bonds",
                         coupon_range[1], coupon_range[2], n_unique_coupons, nrow(latest_data)))
 
         if(n_unique_coupons < min(3, nrow(latest_data))) {
@@ -2843,7 +2843,7 @@ calculate_advanced_carry_roll <- memoise(function(data,
                     max_net_return = max(net_return, na.rm = TRUE)
                 )
 
-            message(sprintf(
+            log_debug(sprintf(
                 "✓ Carry & roll complete: %d bonds × %d periods | Validation: %d coupon, %d carry, %d net return, %d outliers",
                 validation_summary$total_bonds,
                 length(holding_periods),
@@ -2853,7 +2853,7 @@ calculate_advanced_carry_roll <- memoise(function(data,
                 validation_summary$outliers
             ))
 
-            message(sprintf(
+            log_debug(sprintf(
                 "  %d-day net returns: %.2f%% to %.2f%% (median: %.2f%%)",
                 max(holding_periods),
                 validation_summary$min_net_return,
@@ -2903,10 +2903,10 @@ calculate_advanced_carry_roll <- memoise(function(data,
                            curve_slope_bps, carry_income, roll_return, gross_return) %>%
                     head(5)
 
-                message("Sample calculation data (90d, first 5 bonds):")
+                log_debug("Sample calculation data (90d, first 5 bonds):")
                 print(sample_data)
             } else {
-                message(sprintf("✓ Return variation check passed: %d unique returns for %d bonds", n_unique_gross, n_bonds))
+                log_debug(sprintf("✓ Return variation check passed: %d unique returns for %d bonds", n_unique_gross, n_bonds))
             }
 
             return(combined)
@@ -3421,7 +3421,7 @@ clean_auction_data <- function(auction_data) {
         if (col %in% names(auction_data)) {
             # Check current type
             if (!is.numeric(auction_data[[col]])) {
-                message(sprintf("[AUCTION DATA] Converting %s from %s to numeric",
+                log_debug(sprintf("[AUCTION DATA] Converting %s from %s to numeric",
                                 col, class(auction_data[[col]])[1]))
 
                 # Remove any commas, spaces, percentage signs
@@ -3435,7 +3435,7 @@ clean_auction_data <- function(auction_data) {
             # Log summary
             n_valid <- sum(!is.na(auction_data[[col]]))
             n_total <- nrow(auction_data)
-            message(sprintf("[AUCTION DATA] %s: %d/%d valid values (%.1f%%)",
+            log_debug(sprintf("[AUCTION DATA] %s: %d/%d valid values (%.1f%%)",
                             col, n_valid, n_total, n_valid/n_total*100))
         }
     }
@@ -3472,7 +3472,7 @@ calculate_enhanced_auction_metrics <- function(auction_data, bond_data = NULL) {
     missing_cols <- setdiff(required_new_cols, names(auction_data))
 
     if (length(missing_cols) > 0) {
-        message(sprintf("Note: Missing auction columns: %s. Some metrics will be NA.",
+        log_debug(sprintf("Note: Missing auction columns: %s. Some metrics will be NA.",
                         paste(missing_cols, collapse = ", ")))
     }
 
@@ -3486,7 +3486,7 @@ calculate_enhanced_auction_metrics <- function(auction_data, bond_data = NULL) {
     has_clearing <- "clearing_yield" %in% names(auction_data) &&
                     any(!is.na(auction_data$clearing_yield))
 
-    message(sprintf("[AUCTION METRICS] Data availability: non_comps=%s, num_bids=%s, best/worst=%s, clearing=%s",
+    log_debug(sprintf("[AUCTION METRICS] Data availability: non_comps=%s, num_bids=%s, best/worst=%s, clearing=%s",
                     has_non_comps, has_num_bids, has_best_worst, has_clearing))
 
     enhanced_data <- auction_data %>%
@@ -3597,8 +3597,9 @@ calculate_enhanced_auction_metrics <- function(auction_data, bond_data = NULL) {
                 mutate(
                     pre_auction_date = offer_date - 1,
                     pre_auction_ytm = {
+                        cur_bond <- bond
                         ytm_data <- bond_data %>%
-                            filter(bond == .data$bond, date <= pre_auction_date) %>%
+                            filter(bond == cur_bond, date <= pre_auction_date) %>%
                             arrange(desc(date)) %>%
                             slice(1) %>%
                             pull(yield_to_maturity)
@@ -3740,7 +3741,7 @@ calculate_enhanced_auction_metrics <- function(auction_data, bond_data = NULL) {
             )
         )
 
-    message(sprintf("✓ Enhanced auction metrics calculated for %d auctions", nrow(enhanced_data)))
+    log_debug(sprintf("✓ Enhanced auction metrics calculated for %d auctions", nrow(enhanced_data)))
 
     return(enhanced_data)
 }
@@ -3859,7 +3860,7 @@ predict_btc_arima <- function(historical_data, bond_name, h = 1) {
         n_valid <- nrow(bond_data)
         btc_values <- bond_data$bid_to_cover
 
-        message(sprintf("[FORECAST %s] Starting with %d valid observations", bond_name, n_valid))
+        log_debug(sprintf("[FORECAST %s] Starting with %d valid observations", bond_name, n_valid))
 
         # Initialize result
         result <- list(
@@ -3874,7 +3875,7 @@ predict_btc_arima <- function(historical_data, bond_name, h = 1) {
         )
 
         if (n_valid == 0) {
-            message(sprintf("[FORECAST %s] No valid bid-to-cover values", bond_name))
+            log_debug(sprintf("[FORECAST %s] No valid bid-to-cover values", bond_name))
             return(result)
         }
 
@@ -3882,7 +3883,7 @@ predict_btc_arima <- function(historical_data, bond_name, h = 1) {
         # TIER 1: Full time series model (requires 10+ observations)
         # ═══════════════════════════════════════════════════════════════
         if (n_valid >= 10) {
-            message(sprintf("[FORECAST %s] Using TIER 1: Time series model", bond_name))
+            log_debug(sprintf("[FORECAST %s] Using TIER 1: Time series model", bond_name))
 
             # Create time series
             ts_data <- ts(btc_values, frequency = 12)
@@ -3903,7 +3904,7 @@ predict_btc_arima <- function(historical_data, bond_name, h = 1) {
                                  model$arma[3] == 0 && model$arma[7] == 0 && model$arma[4] == 0)
 
                 if (is_degenerate) {
-                    message(sprintf("[FORECAST %s] WARNING: ARIMA(0,0,0) detected - falling back to ETS", bond_name))
+                    log_debug(sprintf("[FORECAST %s] WARNING: ARIMA(0,0,0) detected - falling back to ETS", bond_name))
                     NULL
                 } else {
                     fc <- forecast::forecast(model, h = h, level = c(80, 95))
@@ -3911,7 +3912,7 @@ predict_btc_arima <- function(historical_data, bond_name, h = 1) {
                     list(fc = fc, model_type = model_type)
                 }
             }, error = function(e) {
-                message(sprintf("[FORECAST %s] ARIMA failed: %s", bond_name, e$message))
+                log_debug(sprintf("[FORECAST %s] ARIMA failed: %s", bond_name, e$message))
                 NULL
             })
 
@@ -3923,7 +3924,7 @@ predict_btc_arima <- function(historical_data, bond_name, h = 1) {
                     model_type <- sprintf("ETS(%s)", model$method)
                     list(fc = fc, model_type = model_type)
                 }, error = function(e) {
-                    message(sprintf("[FORECAST %s] ETS failed: %s", bond_name, e$message))
+                    log_debug(sprintf("[FORECAST %s] ETS failed: %s", bond_name, e$message))
                     NULL
                 })
 
@@ -3948,7 +3949,7 @@ predict_btc_arima <- function(historical_data, bond_name, h = 1) {
         # TIER 2: Simple regression/trend (requires 5-9 observations)
         # ═══════════════════════════════════════════════════════════════
         else if (n_valid >= 5) {
-            message(sprintf("[FORECAST %s] Using TIER 2: Linear trend model", bond_name))
+            log_debug(sprintf("[FORECAST %s] Using TIER 2: Linear trend model", bond_name))
 
             # Fit simple linear trend
             df <- data.frame(x = seq_along(btc_values), y = btc_values)
@@ -3972,7 +3973,7 @@ predict_btc_arima <- function(historical_data, bond_name, h = 1) {
         # TIER 3: Weighted average with uncertainty (requires 3-4 observations)
         # ═══════════════════════════════════════════════════════════════
         else if (n_valid >= 3) {
-            message(sprintf("[FORECAST %s] Using TIER 3: Weighted average", bond_name))
+            log_debug(sprintf("[FORECAST %s] Using TIER 3: Weighted average", bond_name))
 
             # Weighted average (more recent = higher weight)
             weights <- seq(0.5, 1, length.out = n_valid)
@@ -3992,7 +3993,7 @@ predict_btc_arima <- function(historical_data, bond_name, h = 1) {
         # TIER 4: Simple average (requires 1-2 observations)
         # ═══════════════════════════════════════════════════════════════
         else if (n_valid >= 1) {
-            message(sprintf("[FORECAST %s] Using TIER 4: Simple average", bond_name))
+            log_debug(sprintf("[FORECAST %s] Using TIER 4: Simple average", bond_name))
 
             mean_val <- mean(btc_values, na.rm = TRUE)
             # Wide confidence interval for low data
@@ -4025,7 +4026,7 @@ predict_btc_arima <- function(historical_data, bond_name, h = 1) {
                 TRUE ~ "Very Low"
             )
 
-            message(sprintf("[FORECAST %s] SUCCESS: %.2fx [%.2f-%.2f] using %s (quality=%d)",
+            log_debug(sprintf("[FORECAST %s] SUCCESS: %.2fx [%.2f-%.2f] using %s (quality=%d)",
                            bond_name, result$forecast, result$lower_80, result$upper_80,
                            result$model_type, result$quality_score))
         }
@@ -4153,7 +4154,7 @@ validate_approved_series <- function(data) {
     truly_problematic <- unapproved[!grepl("^(n_obs|min_|max_|avg_|total_|count_)", unapproved)]
 
     if(length(truly_problematic) > 0) {
-        warning(paste(
+        log_debug(paste(
             "Unapproved columns detected (not removed, just flagged):",
             paste(truly_problematic, collapse = ", ")
         ))
@@ -4173,7 +4174,7 @@ validate_approved_series <- function(data) {
     if(length(offer_idx) > 0 && !"offer_amount" %in% names(data)) {
         old_name <- names(data)[offer_idx[1]]
         names(data)[offer_idx[1]] <- "offer_amount"
-        message(sprintf("Mapped: %s → offer_amount", old_name))
+        log_debug(sprintf("Mapped: %s → offer_amount", old_name))
     }
 
     # Map 'bids' to 'bids_received' if needed (case-insensitive)
@@ -4181,7 +4182,7 @@ validate_approved_series <- function(data) {
     if(length(bids_idx) > 0 && !"bids_received" %in% names(data)) {
         old_name <- names(data)[bids_idx[1]]
         names(data)[bids_idx[1]] <- "bids_received"
-        message(sprintf("Mapped: %s → bids_received", old_name))
+        log_debug(sprintf("Mapped: %s → bids_received", old_name))
     }
 
     # Map 'dv01' to 'basis_point_value' if needed (case-insensitive)
@@ -4189,7 +4190,7 @@ validate_approved_series <- function(data) {
     if(length(dv01_idx) > 0 && !"basis_point_value" %in% names(data)) {
         old_name <- names(data)[dv01_idx[1]]
         names(data)[dv01_idx[1]] <- "basis_point_value"
-        message(sprintf("Mapped: %s → basis_point_value", old_name))
+        log_debug(sprintf("Mapped: %s → basis_point_value", old_name))
     }
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -4199,7 +4200,7 @@ validate_approved_series <- function(data) {
     # Count core approved series present
     core_present <- intersect(approved_core, names(data))
 
-    message(sprintf(
+    log_debug(sprintf(
         "✓ Data validation: %d core approved series, %d derived columns",
         length(core_present),
         length(intersect(allowed_derived, names(data)))

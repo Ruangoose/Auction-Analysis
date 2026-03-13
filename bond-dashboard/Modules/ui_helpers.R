@@ -3,6 +3,15 @@
 # ════════════════════════════════════════════════════════════════════════
 
 #' @export
+#' @title Debug Logger
+#' @description Logs messages only when verbose mode is enabled via options(insele.verbose = TRUE).
+#'   Use this instead of message() for debug/diagnostic output throughout the app.
+#' @param ... Arguments passed to message()
+log_debug <- function(...) {
+    if (getOption("insele.verbose", FALSE)) message(...)
+}
+
+#' @export
 #' @title Ensure Date Columns
 #' @description Ensure specified columns are Date objects (fixes character date issues)
 #' @param data Data frame to check
@@ -121,8 +130,8 @@ sanitize_pipeline_data <- function(data, context = "unknown") {
     # STEP 4: Verify row names are simple integers
     rownames(result) <- NULL
 
-    # STEP 5: Log for debugging
-    message(sprintf(
+    # STEP 5: Log for debugging (only in verbose mode)
+    log_debug(sprintf(
         "[%s] ✓ Sanitized: %d rows × %d cols | class=%s",
         context,
         nrow(result),

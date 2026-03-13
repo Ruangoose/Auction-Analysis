@@ -3,7 +3,7 @@
 # ================================================================================
 # ggrepel is required for non-overlapping label positioning
 if (!requireNamespace("ggrepel", quietly = TRUE)) {
-    message("Installing ggrepel for label positioning...")
+    log_debug("Installing ggrepel for label positioning...")
     install.packages("ggrepel")
 }
 
@@ -111,7 +111,7 @@ generate_enhanced_yield_curve <- function(data, params) {
         )
     n_after <- nrow(data)
     if (n_before > n_after) {
-        message(sprintf("  [Yield Curve] Filtered %d bonds with invalid data (keeping %d)",
+        log_debug(sprintf("  [Yield Curve] Filtered %d bonds with invalid data (keeping %d)",
                        n_before - n_after, n_after))
     }
 
@@ -128,12 +128,12 @@ generate_enhanced_yield_curve <- function(data, params) {
         data <- data %>%
             filter(date == latest_curve_date)
 
-        message(sprintf("  [Yield Curve] Using data from: %s (%d bonds)",
+        log_debug(sprintf("  [Yield Curve] Using data from: %s (%d bonds)",
                        format(latest_curve_date, "%Y-%m-%d"), nrow(data)))
 
         # DEBUG: Log bond list for comparison with Trading Signals
         bonds_in_curve <- sort(unique(data$bond))
-        message(sprintf("  [YIELD CURVE] Bond list: %s", paste(bonds_in_curve, collapse = ", ")))
+        log_debug(sprintf("  [YIELD CURVE] Bond list: %s", paste(bonds_in_curve, collapse = ", ")))
     } else {
         # No date column - use all data (shouldn't happen normally)
         latest_curve_date <- Sys.Date()
@@ -737,10 +737,10 @@ generate_relative_value_heatmap <- function(data, params) {
         bonds_after <- unique(data$bond)
         excluded <- setdiff(bonds_before, bonds_after)
         if (length(excluded) > 0) {
-            message(sprintf("[Heatmap] Filtered to %d active bonds (excluded: %s)",
+            log_debug(sprintf("[Heatmap] Filtered to %d active bonds (excluded: %s)",
                            length(bonds_after), paste(excluded, collapse = ", ")))
         } else {
-            message(sprintf("[Heatmap] Using %d active bonds", length(bonds_after)))
+            log_debug(sprintf("[Heatmap] Using %d active bonds", length(bonds_after)))
         }
     }
 
@@ -773,9 +773,9 @@ generate_relative_value_heatmap <- function(data, params) {
         group_by(bond) %>%
         summarise(avg_duration = mean(modified_duration, na.rm = TRUE), .groups = "drop") %>%
         arrange(desc(avg_duration))  # Show longest first for logging
-    message("[Heatmap] Bond ordering (long at top):")
+    log_debug("[Heatmap] Bond ordering (long at top):")
     for (i in seq_len(min(5, nrow(duration_info)))) {
-        message(sprintf("  TOP-%d: %s (%.1fy)", i, duration_info$bond[i], duration_info$avg_duration[i]))
+        log_debug(sprintf("  TOP-%d: %s (%.1fy)", i, duration_info$bond[i], duration_info$avg_duration[i]))
     }
 
     # Use custom order if provided in params
@@ -2146,12 +2146,12 @@ generate_yield_percentile_heatmap <- function(data, params) {
     }
 
     # Debug output with more detail
-    message("=== YIELD PERCENTILE DEBUG ===")
-    message(sprintf("Using FULL historical data: %s to %s (%.1f years)",
+    log_debug("=== YIELD PERCENTILE DEBUG ===)
+    log_debug(sprintf("Using FULL historical data: %s to %s (%.1f years)",
                     format(min_date, "%Y-%m-%d"),
                     format(max_date, "%Y-%m-%d"),
                     date_range_years))
-    message(sprintf("Total observations: %d | Unique bonds: %d",
+    log_debug(sprintf("Total observations: %d | Unique bonds: %d",
                     nrow(data), n_distinct(data$bond)))
 
     # Define tenor buckets
@@ -2343,10 +2343,10 @@ generate_rate_of_change_monitor <- function(data, params) {
         filter(!is.na(tenor))
 
     # Debug: Print tenor distribution
-    message("=== RATE MOMENTUM DEBUG ===")
-    message(sprintf("Bonds with duration >= 10: %d",
+    log_debug("=== RATE MOMENTUM DEBUG ===)
+    log_debug(sprintf("Bonds with duration >= 10: %d",
                     sum(roc_data$modified_duration >= 10, na.rm = TRUE)))
-    message("Tenor counts:")
+    log_debug("Tenor counts:")
     print(table(roc_data$tenor, useNA = "always"))
 
     # Calculate average change by tenor and horizon
@@ -2524,17 +2524,17 @@ generate_curve_comparison_plot <- function(data, params) {
     if (nrow(current_curve) < 3) return(NULL)
 
     # Debug output: Log what bonds are in each curve
-    message("=== CURVE COMPARISON DEBUG ===")
-    message(sprintf("Current curve (%s): %d bonds - %s",
+    log_debug("=== CURVE COMPARISON DEBUG ===)
+    log_debug(sprintf("Current curve (%s): %d bonds - %s",
                     max_date, nrow(current_curve),
                     paste(sort(current_curve$bond), collapse = ", ")))
     if(nrow(curve_1m) > 0) {
-        message(sprintf("1M Ago curve (%s): %d bonds - %s",
+        log_debug(sprintf("1M Ago curve (%s): %d bonds - %s",
                         curve_1m$curve_date[1], nrow(curve_1m),
                         paste(sort(curve_1m$bond), collapse = ", ")))
     }
     if(nrow(curve_3m) > 0) {
-        message(sprintf("3M Ago curve (%s): %d bonds - %s",
+        log_debug(sprintf("3M Ago curve (%s): %d bonds - %s",
                         curve_3m$curve_date[1], nrow(curve_3m),
                         paste(sort(curve_3m$bond), collapse = ", ")))
     }
@@ -2543,7 +2543,7 @@ generate_curve_comparison_plot <- function(data, params) {
     all_historical_bonds <- union(curve_1m$bond, curve_3m$bond)
     matured_bonds <- setdiff(all_historical_bonds, current_curve$bond)
     if(length(matured_bonds) > 0) {
-        message(sprintf("Bonds in historical curves but not current (matured?): %s",
+        log_debug(sprintf("Bonds in historical curves but not current (matured?): %s",
                         paste(sort(matured_bonds), collapse = ", ")))
     }
 
@@ -2596,10 +2596,10 @@ generate_curve_comparison_plot <- function(data, params) {
                 mutate(curve_type = "Hist. Avg",
                        curve_date = as.Date(NA))
 
-            message(sprintf("Hist. Avg: Fitted loess curve from %d historical points, generating %d smooth points",
+            log_debug(sprintf("Hist. Avg: Fitted loess curve from %d historical points, generating %d smooth points",
                             nrow(hist_data), nrow(avg_curve)))
         }, error = function(e) {
-            message("Warning: Could not fit loess for historical average: ", e$message)
+            log_debug("Warning: Could not fit loess for historical average: ", e$message)
             avg_curve <<- data.frame()
         })
     }
@@ -2712,7 +2712,7 @@ generate_curve_comparison_plot <- function(data, params) {
 
         create_insele_theme() +
         theme(
-            legend.position = c(0.02, 0.98),
+            legend.position.inside = c(0.02, 0.98),
             legend.justification = c(0, 1),
             legend.background = element_rect(fill = alpha("white", 0.9), color = NA),
             legend.key.width = unit(1.5, "cm"),

@@ -392,7 +392,7 @@ collect_report_charts <- function(processed_data, filtered_data, filtered_data_w
             if(!is.null(selected_plots) &&
                !is.null(selected_plots[[chart_name]]) &&
                !isTRUE(selected_plots[[chart_name]])) {
-                message(sprintf("⊘ Skipping chart: %s (not selected)", chart_name))
+                log_debug(sprintf("⊘ Skipping chart: %s (not selected)", chart_name))
                 next
             }
 
@@ -409,7 +409,7 @@ collect_report_charts <- function(processed_data, filtered_data, filtered_data_w
                     charts[[chart_name]] <- chart_file
 
                     # Log success
-                    message(sprintf("✓ Generated chart: %s (%s)",
+                    log_debug(sprintf("✓ Generated chart: %s (%s)",
                                     chart_name, section))
                 } else {
                     # Chart returned NULL (insufficient data, etc.)
@@ -443,20 +443,20 @@ collect_report_charts <- function(processed_data, filtered_data, filtered_data_w
     # REPORT SUMMARY
     # ══════════════════════════════════════════════════════════════════════
 
-    message("\n╔══════════════════════════════════════════════════════╗")
-    message("║         CHART GENERATION SUMMARY                     ║")
-    message("╚══════════════════════════════════════════════════════╝")
-    message(sprintf("  ✓ Successful: %d charts", length(charts)))
-    message(sprintf("  ✗ Failed:     %d charts", length(failed_charts)))
+    log_debug("\n╔══════════════════════════════════════════════════════╗")
+    log_debug("║         CHART GENERATION SUMMARY                     ║")
+    log_debug("╚══════════════════════════════════════════════════════╝")
+    log_debug(sprintf("  ✓ Successful: %d charts", length(charts)))
+    log_debug(sprintf("  ✗ Failed:     %d charts", length(failed_charts)))
 
     if(length(failed_charts) > 0) {
-        message("\n⚠ Failed charts:")
+        log_debug("\n⚠ Failed charts:")
         for(name in names(failed_charts)) {
-            message(sprintf("  • %s", name))
-            message(sprintf("    %s", failed_charts[[name]]))
+            log_debug(sprintf("  • %s", name))
+            log_debug(sprintf("    %s", failed_charts[[name]]))
         }
     }
-    message("")
+    log_debug("")
 
     # ══════════════════════════════════════════════════════════════════════
     # CREATE CLEANUP FUNCTION (kept for backward compatibility)
@@ -464,7 +464,7 @@ collect_report_charts <- function(processed_data, filtered_data, filtered_data_w
 
     # Keep the manual cleanup function for now
     cleanup_function <- function() {
-        message("\n🧹 Cleaning up temporary chart files...")
+        log_debug("Cleaning up temporary chart files...")
 
         files_removed <- 0
         for(f in temp_files) {
@@ -480,7 +480,7 @@ collect_report_charts <- function(processed_data, filtered_data, filtered_data_w
             tryCatch({
                 unlink(temp_chart_dir, recursive = TRUE)
                 if(files_removed > 0) {
-                    message(sprintf("✓ Cleaned up %d temporary files", files_removed))
+                    log_debug(sprintf("✓ Cleaned up %d temporary files", files_removed))
                 }
             }, error = function(e) {})
         }
@@ -2341,7 +2341,7 @@ generate_pre_auction_pdf <- function(file, config, filtered_data, processed_data
     # ══════════════════════════════════════════════════════════════════
     # PRE-RENDER all plots to grobs BEFORE opening PDF device
     # ══════════════════════════════════════════════════════════════════
-    message("[PRE-AUCTION PDF] Pre-rendering plots...")
+    log_debug("[PRE-AUCTION PDF] Pre-rendering plots...")
 
     # Helper to safely render a ggplot to a rasterGrob
     safe_render_plot <- function(plot_expr, label = "plot", width = 10, height = 6) {
@@ -2452,7 +2452,7 @@ generate_pre_auction_pdf <- function(file, config, filtered_data, processed_data
         NULL
     })
 
-    message("[PRE-AUCTION PDF] Pre-rendering complete. Opening PDF device...")
+    log_debug("[PRE-AUCTION PDF] Pre-rendering complete. Opening PDF device...")
 
     # ══════════════════════════════════════════════════════════════════
     # GENERATE PDF
@@ -2735,7 +2735,7 @@ generate_pre_auction_pdf <- function(file, config, filtered_data, processed_data
             unlink(temp_pdf)
         }
 
-        message("[PRE-AUCTION PDF] Generation complete.")
+        log_debug("[PRE-AUCTION PDF] Generation complete.")
 
     }, error = function(e) {
         message(sprintf("[PRE-AUCTION PDF] ERROR: %s", e$message))
@@ -3391,7 +3391,7 @@ generate_treasury_holdings_pdf <- function(file, config, treasury_ts, treasury_b
     # ══════════════════════════════════════════════════════════════════
     # PRE-RENDER all charts BEFORE opening PDF device
     # ══════════════════════════════════════════════════════════════════
-    message("[TREASURY PDF] Pre-rendering charts...")
+    log_debug("[TREASURY PDF] Pre-rendering charts...")
 
     # Track which pages will be generated (cover always included)
     pages <- list()
@@ -3499,7 +3499,7 @@ generate_treasury_holdings_pdf <- function(file, config, treasury_ts, treasury_b
 
     total_pages <- length(pages)
 
-    message(sprintf("[TREASURY PDF] Pre-rendering complete. %d pages to generate.", total_pages))
+    log_debug(sprintf("[TREASURY PDF] Pre-rendering complete. %d pages to generate.", total_pages))
 
     # Determine data date range for the cover page
     data_date_range <- tryCatch({
@@ -3642,7 +3642,7 @@ generate_treasury_holdings_pdf <- function(file, config, treasury_ts, treasury_b
             file.copy(temp_pdf, file, overwrite = TRUE)
         }
 
-        message("[TREASURY PDF] PDF generation complete.")
+        log_debug("[TREASURY PDF] PDF generation complete.")
 
     }, error = function(e) {
         message(sprintf("[TREASURY PDF] Error: %s", e$message))
@@ -4720,7 +4720,7 @@ generate_technical_analysis_pdf <- function(file, selected_bonds, indicator_type
     # ══════════════════════════════════════════════════════════════════
     # PRE-RENDER all charts BEFORE opening PDF device
     # ══════════════════════════════════════════════════════════════════
-    message("[TECHNICAL PDF] Pre-rendering charts...")
+    log_debug("[TECHNICAL PDF] Pre-rendering charts...")
 
     pages <- list()
 
@@ -4906,7 +4906,7 @@ generate_technical_analysis_pdf <- function(file, selected_bonds, indicator_type
         file.copy(temp_pdf, file, overwrite = TRUE)
         unlink(temp_pdf)
 
-        message(sprintf("[TECHNICAL PDF] Generated %d pages successfully.", total_pages))
+        log_debug(sprintf("[TECHNICAL PDF] Generated %d pages successfully.", total_pages))
         return(list(success = TRUE, page_labels = page_labels, n_pages = total_pages))
 
     }, error = function(e) {
@@ -4985,7 +4985,7 @@ generate_butterfly_report_pdf <- function(file, selected_spreads, butterfly_deta
     # ══════════════════════════════════════════════════════════════════
     # PRE-RENDER all charts BEFORE opening PDF device
     # ══════════════════════════════════════════════════════════════════
-    message("[BUTTERFLY PDF] Pre-rendering charts...")
+    log_debug("[BUTTERFLY PDF] Pre-rendering charts...")
 
     pages <- list()
 
@@ -5216,7 +5216,7 @@ generate_butterfly_report_pdf <- function(file, selected_spreads, butterfly_deta
         file.copy(temp_pdf, file, overwrite = TRUE)
         unlink(temp_pdf)
 
-        message(sprintf("[BUTTERFLY PDF] Generated %d pages successfully.", total_pages))
+        log_debug(sprintf("[BUTTERFLY PDF] Generated %d pages successfully.", total_pages))
         return(list(success = TRUE, page_labels = page_labels, n_pages = total_pages))
 
     }, error = function(e) {
@@ -5303,7 +5303,7 @@ generate_relative_value_pdf <- function(file, selected_charts, curve_model = "lo
     # ══════════════════════════════════════════════════════════════════
     # PRE-RENDER all charts BEFORE opening PDF device
     # ══════════════════════════════════════════════════════════════════
-    message("[RV PDF] Pre-rendering charts...")
+    log_debug("[RV PDF] Pre-rendering charts...")
 
     pages <- list()
 
@@ -5541,7 +5541,7 @@ generate_relative_value_pdf <- function(file, selected_charts, curve_model = "lo
         file.copy(temp_pdf, file, overwrite = TRUE)
         unlink(temp_pdf)
 
-        message(sprintf("[RV PDF] Generated %d pages successfully.", total_pages))
+        log_debug(sprintf("[RV PDF] Generated %d pages successfully.", total_pages))
         return(list(success = TRUE, page_labels = page_labels, n_pages = total_pages))
 
     }, error = function(e) {

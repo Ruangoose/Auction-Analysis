@@ -64,7 +64,7 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
     }
 
     # ✅ Validation passed - log success
-    message(sprintf(
+    log_debug(sprintf(
         "[generate_advanced_technical_plot] ✓ Validated: %d bonds, %d total rows",
         validation$details$bonds,
         validation$details$total_rows
@@ -101,7 +101,7 @@ generate_advanced_technical_plot <- function(data, bond_select, indicator_type =
     has_technicals <- all(c("rsi_14", "bb_mean", "macd") %in% names(tech_data))
 
     if(!has_technicals) {
-        message(paste(
+        log_debug(paste(
             "Technical indicators not found for", bond_select,
             "- calculating now..."
         ))
@@ -1064,7 +1064,7 @@ generate_signal_matrix_heatmap <- function(data) {
         return(NULL)
     }
 
-    message(sprintf(
+    log_debug(sprintf(
         "[generate_signal_matrix_heatmap] ✓ Validated: %d bonds for matrix",
         validation$details$bonds
     ))
@@ -1205,38 +1205,38 @@ generate_signal_matrix_heatmap <- function(data) {
         )
 
     # Log diversity metrics
-    message("\n══════════════════════════════════════════════════════════════")
-    message("SIGNAL DIVERSITY REPORT")
-    message("══════════════════════════════════════════════════════════════")
-    message(sprintf("Total bonds: %d", signal_diversity$n_bonds))
-    message(sprintf("RSI unique signals: %d (expect 3-5 for diverse signals)",
+    log_debug("\n══════════════════════════════════════════════════════════════")
+    log_debug("SIGNAL DIVERSITY REPORT")
+    log_debug("══════════════════════════════════════════════════════════════")
+    log_debug(sprintf("Total bonds: %d", signal_diversity$n_bonds))
+    log_debug(sprintf("RSI unique signals: %d (expect 3-5 for diverse signals)",
                     signal_diversity$rsi_diversity))
-    message(sprintf("MACD unique signals: %d (expect 3-5 for diverse signals)",
+    log_debug(sprintf("MACD unique signals: %d (expect 3-5 for diverse signals)",
                     signal_diversity$macd_diversity))
-    message(sprintf("Bollinger unique signals: %d (expect 3-5 for diverse signals)",
+    log_debug(sprintf("Bollinger unique signals: %d (expect 3-5 for diverse signals)",
                     signal_diversity$bb_diversity))
-    message(sprintf("Momentum unique signals: %d (expect 3-5 for diverse signals)",
+    log_debug(sprintf("Momentum unique signals: %d (expect 3-5 for diverse signals)",
                     signal_diversity$momentum_diversity))
-    message(sprintf("RSI modal %% (should be <60%%): %.1f%%",
+    log_debug(sprintf("RSI modal %% (should be <60%%): %.1f%%",
                     signal_diversity$rsi_mode_pct))
-    message(sprintf("MACD modal %% (should be <60%%): %.1f%%",
+    log_debug(sprintf("MACD modal %% (should be <60%%): %.1f%%",
                     signal_diversity$macd_mode_pct))
-    message("══════════════════════════════════════════════════════════════")
+    log_debug("══════════════════════════════════════════════════════════════")
 
     # Warning if diversity is too low
     if(signal_diversity$rsi_mode_pct > 70 || signal_diversity$macd_mode_pct > 70) {
         warning(
-            "⚠ Low signal diversity detected - ",
+            "Low signal diversity detected - ",
             ">70% of bonds showing same signal. ",
             "May indicate extreme market conditions or calculation issues."
         )
     } else if(signal_diversity$rsi_mode_pct > 60 || signal_diversity$macd_mode_pct > 60) {
-        message(
-            "ℹ Moderate signal clustering detected (60-70% same signal). ",
+        log_debug(
+            "Moderate signal clustering detected (60-70% same signal). ",
             "May indicate trending market conditions."
         )
     } else {
-        message("✓ Good signal diversity - bonds showing differentiated signals")
+        log_debug("Good signal diversity - bonds showing differentiated signals")
     }
 
     # TODO: Consider adding RV_SIGNAL column derived from Z-score data (maps Z-score to -2/+2 scale)

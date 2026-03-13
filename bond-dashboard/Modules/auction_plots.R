@@ -706,12 +706,12 @@ generate_auction_forecast_plot <- function(data, selected_bonds) {
                 nrow()
         })
         forecast_bonds <- forecast_bonds[order(bond_counts, decreasing = TRUE)][1:6]
-        message(sprintf("[CHART] Limiting to 6 bonds (from %d) for readability", length(selected_bonds)))
+        log_debug(sprintf("[CHART] Limiting to 6 bonds (from %d) for readability", length(selected_bonds)))
     }
 
     # If no bonds have forecasts, show message and return NULL
     if (length(forecast_bonds) == 0) {
-        message("[CHART] No bonds with sufficient data for forecasts")
+        log_debug("[CHART] No bonds with sufficient data for forecasts")
         return(NULL)
     }
 
@@ -729,7 +729,7 @@ generate_auction_forecast_plot <- function(data, selected_bonds) {
                 auto.arima(ts_data, seasonal = TRUE, stepwise = FALSE,
                            approximation = FALSE, trace = FALSE)
             }, error = function(e) {
-                message(sprintf("[CHART ERROR] ARIMA failed for %s: %s", bond, e$message))
+                log_debug(sprintf("[CHART ERROR] ARIMA failed for %s: %s", bond, e$message))
                 NULL
             })
 
@@ -930,7 +930,7 @@ generate_demand_elasticity_plot <- function(data, params) {
         filter(quality_ok, !is.na(elasticity))
 
     # Log filtering results
-    message(sprintf(
+    log_debug(sprintf(
         "Demand elasticity: %d bonds total, %d bonds with sufficient data quality",
         n_distinct(elasticity_data$bond),
         n_distinct(elasticity_data_filtered$bond)
@@ -943,24 +943,24 @@ generate_demand_elasticity_plot <- function(data, params) {
         arrange(desc(abs(elasticity_raw)))
 
     if(nrow(outliers_summary) > 0) {
-        message(sprintf("  Warning: %d outlier elasticity values detected (capped at ±10):",
+        log_debug(sprintf("  Warning: %d outlier elasticity values detected (capped at ±10):",
                         nrow(outliers_summary)))
         for(i in 1:min(3, nrow(outliers_summary))) {
-            message(sprintf("    %s: %.1fx (offer Δ=%.1f%%, btc Δ=%.1f%%)",
+            log_debug(sprintf("    %s: %.1fx (offer Δ=%.1f%%, btc Δ=%.1f%%)",
                             outliers_summary$bond[i],
                             outliers_summary$elasticity_raw[i],
                             outliers_summary$offer_change[i],
                             outliers_summary$btc_change[i]))
         }
         if(nrow(outliers_summary) > 3) {
-            message(sprintf("    ... and %d more", nrow(outliers_summary) - 3))
+            log_debug(sprintf("    ... and %d more", nrow(outliers_summary) - 3))
         }
     }
 
     if(nrow(elasticity_data_filtered) == 0) {
         n_total_bonds <- n_distinct(elasticity_data$bond)
         n_qualifying <- sum(bond_quality$quality_ok, na.rm = TRUE)
-        message(sprintf("Demand elasticity: %d/%d bonds qualify for analysis", n_qualifying, n_total_bonds))
+        log_debug(sprintf("Demand elasticity: %d/%d bonds qualify for analysis", n_qualifying, n_total_bonds))
         # Return NULL so collect_report_charts() skips this chart gracefully
         return(NULL)
     }
@@ -1344,7 +1344,7 @@ generate_auction_sentiment_gauge <- function(data, params) {
                 result <- mean(values[periods == fallback], na.rm = TRUE)
                 period_count <- sum(periods == fallback)
                 if (!is.nan(result) && !is.na(result) && period_count > 0) {
-                    message(sprintf("Auction Sentiment: Using %s data (no %s data available)",
+                    log_debug(sprintf("Auction Sentiment: Using %s data (no %s data available)",
                                     fallback, target_period))
                     return(list(value = result, period_used = fallback, count = period_count))
                 }
@@ -1352,7 +1352,7 @@ generate_auction_sentiment_gauge <- function(data, params) {
             # If all fallbacks fail, use all available data
             result <- mean(values, na.rm = TRUE)
             period_count <- length(values[!is.na(values)])
-            message("Auction Sentiment: Using all available data (insufficient recent data)")
+            log_debug("Auction Sentiment: Using all available data (insufficient recent data)")
             return(list(value = result, period_used = "90d", count = period_count))
         }
         return(list(value = result, period_used = target_period, count = period_count))
@@ -1492,7 +1492,7 @@ generate_auction_sentiment_gauge <- function(data, params) {
 
         # If BTC > 3.0 (strong performance), ensure positive sentiment
         if (btc_90d_value > 3.0 && sentiment_score < 0) {
-            message(sprintf(
+            log_debug(sprintf(
                 "Auction Sentiment: Adjusting for strong performance (BTC: %.2fx)",
                 btc_90d_value
             ))
@@ -1501,7 +1501,7 @@ generate_auction_sentiment_gauge <- function(data, params) {
 
         # If BTC < 2.0 (weak performance) but sentiment is very positive, moderate it
         if (btc_90d_value < 2.0 && sentiment_score > 33) {
-            message(sprintf(
+            log_debug(sprintf(
                 "Auction Sentiment: Moderating positive sentiment given weak BTC (%.2fx)",
                 btc_90d_value
             ))
@@ -1511,7 +1511,7 @@ generate_auction_sentiment_gauge <- function(data, params) {
 
     # FIX 6: Diagnostic message when using fallback period
     if (period_used != "30d") {
-        message(sprintf(
+        log_debug(sprintf(
             "Auction Sentiment: Using %s window (%d auctions) instead of 30-day window",
             period_used, count_recent
         ))
