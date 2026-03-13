@@ -5,10 +5,7 @@
 # Create base64 logo string (with flexible path resolution)
 logo_base64 <- NULL
 logo_paths <- c(
-    "www/logo.png",                          # Standard Shiny www directory
-    "bond-dashboard/www/logo.png",           # Old structure
-    "logo.png",                              # Same directory
-    file.path("assets", "logo.png")          # Assets directory
+    "www/logo.png"
 )
 
 for (logo_path in logo_paths) {
