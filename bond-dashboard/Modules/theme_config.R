@@ -104,13 +104,13 @@ ThemeManager <- R6::R6Class(
             if(is.null(max_age_minutes)) {
                 # Clear all cache
                 rm(list = ls(envir = private$.cache), envir = private$.cache)
-                message("Theme cache cleared completely")
+                log_debug("Theme cache cleared completely")
             } else {
                 # Clear old cache entries
                 # Note: This requires tracking cache timestamps
                 # For now, just clear everything if called with parameter
                 rm(list = ls(envir = private$.cache), envir = private$.cache)
-                message(sprintf("Theme cache cleared (entries older than %d minutes)", max_age_minutes))
+                log_debug(sprintf("Theme cache cleared (entries older than %d minutes)", max_age_minutes))
             }
             invisible(NULL)
         },

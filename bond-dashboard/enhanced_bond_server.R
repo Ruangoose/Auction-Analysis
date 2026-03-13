@@ -238,17 +238,24 @@ server <- function(input, output, session) {
             }
 
             # Try multiple possible Excel file locations
+            # Paths are searched from both project root and bond-dashboard/ working directory
             excel_paths <- c(
-                "data/Insele Bonds Data File.xlsm",     # Primary: spaces + .xlsm (actual filename)
-                "data/Insele_Bonds_Data_File.xlsm",     # Underscores + .xlsm variant
-                "data/Insele Bonds Data File.xlsx",      # Spaces + .xlsx variant
-                "data/Insele_Bonds_Data_File.xlsx",      # Underscores + .xlsx variant
-                "data/Siyanda Bonds.xlsx"                # Legacy name
+                "data/Insele Bonds Data File.xlsm",
+                "data/Insele_Bonds_Data_File.xlsm",
+                "data/Insele Bonds Data File.xlsx",
+                "data/Insele_Bonds_Data_File.xlsx",
+                "data/Siyanda Bonds.xlsx",
+                "bond-dashboard/data/Insele Bonds Data File.xlsm",
+                "bond-dashboard/data/Insele_Bonds_Data_File.xlsm",
+                "bond-dashboard/data/Insele Bonds Data File.xlsx",
+                "bond-dashboard/data/Insele_Bonds_Data_File.xlsx",
+                "bond-dashboard/data/Siyanda Bonds.xlsx"
             )
 
             # Try multiple possible cache file locations
             cache_paths <- c(
-                "data/processed_bond_data.rds"
+                "data/processed_bond_data.rds",
+                "bond-dashboard/data/processed_bond_data.rds"
             )
 
             # Find the first existing Excel file
@@ -304,7 +311,7 @@ server <- function(input, output, session) {
         }, error = function(e) {
             warning(sprintf("Error loading bond data: %s", e$message))
             # Fallback to cache if Excel fails
-            for (path in c("data/processed_bond_data.rds")) {
+            for (path in c("data/processed_bond_data.rds", "bond-dashboard/data/processed_bond_data.rds")) {
                 if (file.exists(path)) {
                     log_debug(sprintf("Falling back to cache: %s", path))
                     return(readRDS(path))

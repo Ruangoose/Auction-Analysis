@@ -5,7 +5,8 @@
 # Create base64 logo string (with flexible path resolution)
 logo_base64 <- NULL
 logo_paths <- c(
-    "www/logo.png"
+    "www/logo.png",
+    "bond-dashboard/www/logo.png"
 )
 
 for (logo_path in logo_paths) {
