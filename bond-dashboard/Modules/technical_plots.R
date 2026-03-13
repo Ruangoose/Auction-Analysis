@@ -1110,9 +1110,9 @@ generate_signal_matrix_heatmap <- function(data) {
             rsi_signal = case_when(
                 is.na(rsi_14) ~ 0L,
                 rsi_14 < 20 ~ 2L,    # Extremely oversold yields → Strong Buy
-                rsi_14 < 30 ~ 1L,    # Oversold yields → Buy
+                rsi_14 < 35 ~ 1L,    # Oversold yields → Buy (was 30, widened to 35)
                 rsi_14 > 80 ~ -2L,   # Extremely overbought yields → Strong Sell
-                rsi_14 > 70 ~ -1L,   # Overbought yields → Sell
+                rsi_14 > 65 ~ -1L,   # Overbought yields → Sell (was 70, widened to 65)
                 TRUE ~ 0L            # Neutral (30-70)
             ),
 
@@ -1124,9 +1124,9 @@ generate_signal_matrix_heatmap <- function(data) {
             bb_signal = case_when(
                 is.na(bb_position) ~ 0L,
                 bb_position < 0 ~ 2L,       # Below lower band → Strong Buy
-                bb_position < 0.2 ~ 1L,     # Near lower band → Buy
+                bb_position < 0.3 ~ 1L,     # Near lower band → Buy (was 0.2, widened to 0.3)
                 bb_position > 1.0 ~ -2L,    # Above upper band → Strong Sell
-                bb_position > 0.8 ~ -1L,    # Near upper band → Sell
+                bb_position > 0.7 ~ -1L,    # Near upper band → Sell (was 0.8, widened to 0.7)
                 TRUE ~ 0L                   # Within bands → Neutral
             ),
 
@@ -1138,10 +1138,10 @@ generate_signal_matrix_heatmap <- function(data) {
             # ═══════════════════════════════════════════════════════════════
             macd_signal_score = case_when(
                 is.na(macd_histogram) ~ 0L,
-                macd_histogram > 0.08 ~ -2L,    # Strong bullish yields → Strong Sell
-                macd_histogram > 0.03 ~ -1L,    # Bullish yields → Sell
-                macd_histogram < -0.08 ~ 2L,    # Strong bearish yields → Strong Buy
-                macd_histogram < -0.03 ~ 1L,    # Bearish yields → Buy
+                macd_histogram > 0.03 ~ -2L,    # Strong bullish yields → Strong Sell (was 0.08)
+                macd_histogram > 0.01 ~ -1L,    # Bullish yields → Sell (was 0.03)
+                macd_histogram < -0.03 ~ 2L,    # Strong bearish yields → Strong Buy (was -0.08)
+                macd_histogram < -0.01 ~ 1L,    # Bearish yields → Buy (was -0.03)
                 TRUE ~ 0L                       # Dead zone (±0.03) → Neutral
             ),
 
@@ -1152,10 +1152,10 @@ generate_signal_matrix_heatmap <- function(data) {
             # ═══════════════════════════════════════════════════════════════
             momentum_signal = case_when(
                 is.na(roc_20) ~ 0L,
-                roc_20 > 5 ~ -2L,       # Strong yield rise → Strong Sell
-                roc_20 > 2 ~ -1L,       # Yield rise → Sell
-                roc_20 < -5 ~ 2L,       # Strong yield fall → Strong Buy
-                roc_20 < -2 ~ 1L,       # Yield fall → Buy
+                roc_20 > 3 ~ -2L,       # Strong yield rise → Strong Sell (was 5)
+                roc_20 > 1 ~ -1L,       # Yield rise → Sell (was 2)
+                roc_20 < -3 ~ 2L,       # Strong yield fall → Strong Buy (was -5)
+                roc_20 < -1 ~ 1L,       # Yield fall → Buy (was -2)
                 TRUE ~ 0L
             ),
 

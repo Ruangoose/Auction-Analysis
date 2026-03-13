@@ -703,9 +703,9 @@ calculate_advanced_technicals <- function(data) {
                 rsi_signal_score = case_when(
                     is.na(rsi_14) ~ 0L,
                     rsi_14 < 20 ~ 2L,        # Extremely oversold yields = prices rising fast = Strong Buy
-                    rsi_14 < 30 ~ 1L,        # Oversold yields = prices rising = Buy
+                    rsi_14 < 35 ~ 1L,        # Oversold yields = prices rising = Buy (was 30, widened to 35)
                     rsi_14 > 80 ~ -2L,       # Extremely overbought yields = prices falling fast = Strong Sell
-                    rsi_14 > 70 ~ -1L,       # Overbought yields = prices falling = Sell
+                    rsi_14 > 65 ~ -1L,       # Overbought yields = prices falling = Sell (was 70, widened to 65)
                     TRUE ~ 0L                 # Neutral zone (30-70)
                 ),
 
@@ -716,9 +716,9 @@ calculate_advanced_technicals <- function(data) {
                 bb_signal_score = case_when(
                     is.na(bb_position) ~ 0L,
                     bb_position < 0 ~ 2L,     # Below lower band - yields falling strongly = prices rising = Strong Buy
-                    bb_position < 0.2 ~ 1L,   # Near lower band - yields falling = prices rising = Buy
+                    bb_position < 0.3 ~ 1L,   # Near lower band - yields falling = prices rising = Buy (was 0.2, widened to 0.3)
                     bb_position > 1.0 ~ -2L,  # Above upper band - yields rising strongly = prices falling = Strong Sell
-                    bb_position > 0.8 ~ -1L,  # Near upper band - yields rising = prices falling = Sell
+                    bb_position > 0.7 ~ -1L,  # Near upper band - yields rising = prices falling = Sell (was 0.8, widened to 0.7)
                     TRUE ~ 0L                  # Within bands
                 ),
 
@@ -728,10 +728,10 @@ calculate_advanced_technicals <- function(data) {
                 # - Negative histogram = bearish yield momentum = prices rising = BUY
                 macd_signal_score = case_when(
                     is.na(macd_histogram) ~ 0L,
-                    macd_histogram > 0.08 ~ -2L,   # Strong bullish yields = prices falling fast = Strong Sell
-                    macd_histogram > 0.03 ~ -1L,   # Bullish yields = prices falling = Sell
-                    macd_histogram < -0.08 ~ 2L,   # Strong bearish yields = prices rising fast = Strong Buy
-                    macd_histogram < -0.03 ~ 1L,   # Bearish yields = prices rising = Buy
+                    macd_histogram > 0.03 ~ -2L,   # Strong bullish yields = prices falling fast = Strong Sell (was 0.08)
+                    macd_histogram > 0.01 ~ -1L,   # Bullish yields = prices falling = Sell (was 0.03)
+                    macd_histogram < -0.03 ~ 2L,   # Strong bearish yields = prices rising fast = Strong Buy (was -0.08)
+                    macd_histogram < -0.01 ~ 1L,   # Bearish yields = prices rising = Buy (was -0.03)
                     TRUE ~ 0L                      # Dead zone (±0.03) = Neutral
                 ),
 
@@ -741,10 +741,10 @@ calculate_advanced_technicals <- function(data) {
                 # - Negative ROC = yields falling = prices rising = BUY
                 momentum_signal_score = case_when(
                     is.na(roc_20) ~ 0L,
-                    roc_20 > 5 ~ -2L,         # Strong yield rise = prices falling fast = Strong Sell
-                    roc_20 > 2 ~ -1L,         # Yield rise = prices falling = Sell
-                    roc_20 < -5 ~ 2L,         # Strong yield decline = prices rising fast = Strong Buy
-                    roc_20 < -2 ~ 1L,         # Yield decline = prices rising = Buy
+                    roc_20 > 3 ~ -2L,         # Strong yield rise = prices falling fast = Strong Sell (was 5)
+                    roc_20 > 1 ~ -1L,         # Yield rise = prices falling = Sell (was 2)
+                    roc_20 < -3 ~ 2L,         # Strong yield decline = prices rising fast = Strong Buy (was -5)
+                    roc_20 < -1 ~ 1L,         # Yield decline = prices rising = Buy (was -2)
                     TRUE ~ 0L
                 ),
 
