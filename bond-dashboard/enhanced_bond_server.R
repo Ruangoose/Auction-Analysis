@@ -53,6 +53,7 @@ suppressPackageStartupMessages({
     library(jsonlite)
     library(ggrepel)
     library(ggridges)
+    library(moments)
 })
 
 # Verbose logging flag: set options(insele.verbose = TRUE) to enable debug output
@@ -2419,8 +2420,9 @@ server <- function(input, output, session) {
         req(var_data())
         req(assess_var_data_quality())
 
-        # Get the raw VaR data
+        # Get the raw VaR data and validate it's a data.frame
         raw_var_data <- var_data()
+        req(is.data.frame(raw_var_data), nrow(raw_var_data) > 0)
 
         # Apply comprehensive NA/invalid filtering using the new function
         valid_data <- prepare_var_data_for_plotting(raw_var_data, source = "VaR Ladder")
@@ -2662,9 +2664,11 @@ server <- function(input, output, session) {
         # Validate that Risk Analytics uses the same bond universe as other sections
         req(active_bonds_for_risk_analytics())
         req(var_data())
+        vd_check <- var_data()
+        req(is.data.frame(vd_check))
 
         risk_bonds <- sort(active_bonds_for_risk_analytics())
-        var_bonds <- sort(unique(var_data()$bond))
+        var_bonds <- sort(unique(vd_check$bond))
 
         # Get relative value bonds for comparison
         rel_val_bonds <- tryCatch({
@@ -4958,13 +4962,15 @@ server <- function(input, output, session) {
     # Add Risk Metrics Summary
     output$risk_metrics_summary <- renderUI({
         req(processed_data(), var_data())
+        vd <- var_data()
+        req(is.data.frame(vd), nrow(vd) > 0)
 
         # Get notional from input (same as DV01 ladder for consistency)
         notional <- as.numeric(input$dv01_notional) %||% 10000000
 
         # Get the data
         risk_data <- processed_data()
-        var_metrics <- var_data()
+        var_metrics <- vd
 
         # Calculate comprehensive risk metrics using correct DV01 formula
         # DV01 = Notional × Modified Duration × 0.0001
@@ -5047,6 +5053,8 @@ server <- function(input, output, session) {
 
     output$risk_metrics_table <- DT::renderDataTable({
         req(processed_data(), var_data())
+        vd <- var_data()
+        req(is.data.frame(vd), nrow(vd) > 0)
 
         # Get notional from input (same as DV01 ladder for consistency)
         notional <- as.numeric(input$dv01_notional) %||% 10000000
@@ -5069,7 +5077,7 @@ server <- function(input, output, session) {
         # Combine with VaR metrics - use full join to ensure all bonds appear
         # IMPORTANT: Remove modified_duration from var_data to avoid duplicate columns
         # (bond_latest already has modified_duration, and full_join creates .x/.y suffixes for duplicates)
-        var_metrics <- var_data() %>%
+        var_metrics <- vd %>%
             select(-modified_duration)
 
         risk_summary <- bond_latest %>%
@@ -11053,7 +11061,7 @@ server <- function(input, output, session) {
     output$advanced_insights_content <- renderUI({
         insight_list <- insights()
 
-        if (length(insight_list) == 0) {
+        if (length(insight_list) == 0 || !is.list(insight_list)) {
             return(div(
                 class = "insight-item",
                 span(class = "loading-spinner"),
@@ -11062,6 +11070,10 @@ server <- function(input, output, session) {
         }
 
         insight_divs <- lapply(insight_list, function(insight) {
+            # Guard against non-list items (e.g., error returns)
+            if (!is.list(insight) || is.null(insight$icon)) {
+                return(NULL)
+            }
             div(
                 class = "insight-item",
                 span(insight$icon, style = "font-size: 24px; margin-right: 15px;"),
@@ -11069,6 +11081,7 @@ server <- function(input, output, session) {
                 span(insight$category, class = "insight-category")
             )
         })
+        insight_divs <- Filter(Negate(is.null), insight_divs)
 
         do.call(tagList, insight_divs)
     })
@@ -11151,8 +11164,10 @@ server <- function(input, output, session) {
 
     output$portfolio_var_box <- renderValueBox({
         req(var_data())
+        vd <- var_data()
+        req(is.data.frame(vd), nrow(vd) > 0)
 
-        avg_var <- var_data() %>%
+        avg_var <- vd %>%
             summarise(avg_var_95 = mean(abs(VaR_95_bps), na.rm = TRUE)) %>%
             pull(avg_var_95)
 
