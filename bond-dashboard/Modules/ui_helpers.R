@@ -558,7 +558,7 @@ safe_execute <- function(expr, default = NULL, context = "", show_notification =
             )
         }
 
-        return(list(success = FALSE, error = e$message, data = default))
+        return(default)
     })
 }
 

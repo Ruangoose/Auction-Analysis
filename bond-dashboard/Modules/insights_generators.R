@@ -29,7 +29,7 @@ generate_advanced_insights <- function(data, processed_data, var_data, regime_da
         }
 
         # 2. Value-at-Risk Alert
-        if (!is.null(var_data) && nrow(var_data) > 0) {
+        if (!is.null(var_data) && is.data.frame(var_data) && nrow(var_data) > 0) {
             highest_var <- var_data %>%
                 arrange(desc(VaR_99_bps)) %>%
                 head(1)
