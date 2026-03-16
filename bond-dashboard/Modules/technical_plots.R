@@ -1103,46 +1103,46 @@ generate_signal_matrix_heatmap <- function(data) {
     signal_scores <- signal_matrix %>%
         mutate(
             # ═══════════════════════════════════════════════════════════════
-            # RSI Signal (PRICE perspective, trend-following)
-            # Low RSI on yields = yields falling = bond prices rising = BUY
-            # High RSI on yields = yields rising = bond prices falling = SELL
+            # RSI Signal (MEAN-REVERSION on yields)
+            # High RSI on yields = yields overextended UP = expect pullback DOWN = BUY bonds
+            # Low RSI on yields = yields overextended DOWN = expect bounce UP = SELL bonds
             # ═══════════════════════════════════════════════════════════════
             rsi_signal = case_when(
                 is.na(rsi_14) ~ 0L,
-                rsi_14 < 20 ~ 2L,    # Extremely oversold yields → Strong Buy
-                rsi_14 < 35 ~ 1L,    # Oversold yields → Buy (was 30, widened to 35)
-                rsi_14 > 80 ~ -2L,   # Extremely overbought yields → Strong Sell
-                rsi_14 > 65 ~ -1L,   # Overbought yields → Sell (was 70, widened to 65)
-                TRUE ~ 0L            # Neutral (30-70)
+                rsi_14 > 80 ~ 2L,    # Extremely overbought yields = expect sharp reversal down → Strong Buy
+                rsi_14 > 65 ~ 1L,    # Overbought yields = expect pullback → Buy
+                rsi_14 < 20 ~ -2L,   # Extremely oversold yields = expect sharp bounce up → Strong Sell
+                rsi_14 < 35 ~ -1L,   # Oversold yields = expect bounce → Sell
+                TRUE ~ 0L            # Neutral (35-65)
             ),
 
             # ═══════════════════════════════════════════════════════════════
-            # BB Signal (PRICE perspective, trend-following)
-            # bb_position < 0 = yields below lower band = prices rising = BUY
-            # bb_position > 1 = yields above upper band = prices falling = SELL
+            # BB Signal (MEAN-REVERSION on yields)
+            # Yield above upper band = overextended UP = expect reversion DOWN = BUY bonds
+            # Yield below lower band = overextended DOWN = expect reversion UP = SELL bonds
             # ═══════════════════════════════════════════════════════════════
             bb_signal = case_when(
                 is.na(bb_position) ~ 0L,
-                bb_position < 0 ~ 2L,       # Below lower band → Strong Buy
-                bb_position < 0.3 ~ 1L,     # Near lower band → Buy (was 0.2, widened to 0.3)
-                bb_position > 1.0 ~ -2L,    # Above upper band → Strong Sell
-                bb_position > 0.7 ~ -1L,    # Near upper band → Sell (was 0.8, widened to 0.7)
+                bb_position > 1.0 ~ 2L,     # Above upper band = yields overextended UP → Strong Buy (expect reversion down)
+                bb_position > 0.7 ~ 1L,     # Near upper band = yields elevated → Buy (expect pullback)
+                bb_position < 0 ~ -2L,       # Below lower band = yields overextended DOWN → Strong Sell (expect bounce up)
+                bb_position < 0.3 ~ -1L,     # Near lower band = yields depressed → Sell (expect bounce)
                 TRUE ~ 0L                   # Within bands → Neutral
             ),
 
             # ═══════════════════════════════════════════════════════════════
-            # MACD Signal (YIELD perspective, inverted for price)
-            # Positive histogram = yields momentum UP = prices falling = SELL
-            # Negative histogram = yields momentum DOWN = prices rising = BUY
-            # Dead zone ±0.03 to avoid false signals from near-zero values
+            # MACD Signal (TREND-FOLLOWING — correctly directional, no inversion)
+            # Positive histogram = yield momentum UP = prices falling = SELL
+            # Negative histogram = yield momentum DOWN = prices rising = BUY
+            # Widened thresholds: Strong at ±0.06 (was 0.03), Moderate at ±0.02 (was 0.01)
             # ═══════════════════════════════════════════════════════════════
             macd_signal_score = case_when(
                 is.na(macd_histogram) ~ 0L,
-                macd_histogram > 0.03 ~ -2L,    # Strong bullish yields → Strong Sell (was 0.08)
-                macd_histogram > 0.01 ~ -1L,    # Bullish yields → Sell (was 0.03)
-                macd_histogram < -0.03 ~ 2L,    # Strong bearish yields → Strong Buy (was -0.08)
-                macd_histogram < -0.01 ~ 1L,    # Bearish yields → Buy (was -0.03)
-                TRUE ~ 0L                       # Dead zone (±0.03) → Neutral
+                macd_histogram > 0.06 ~ -2L,    # Strong bullish yield momentum → Strong Sell
+                macd_histogram > 0.02 ~ -1L,    # Bullish yield momentum → Sell
+                macd_histogram < -0.06 ~ 2L,    # Strong bearish yield momentum → Strong Buy
+                macd_histogram < -0.02 ~ 1L,    # Bearish yield momentum → Buy
+                TRUE ~ 0L                       # Dead zone (±0.02) → Neutral
             ),
 
             # ═══════════════════════════════════════════════════════════════
