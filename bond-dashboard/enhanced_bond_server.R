@@ -8872,59 +8872,76 @@ server <- function(input, output, session) {
     # UPCOMING AUCTIONS SELECTION (User selects up to 3 bonds)
     # ════════════════════════════════════════════════════════════════════════════
 
-    # Populate upcoming auction bond choices (active bonds with auction history)
+    # Populate upcoming auction bond choices from RAW auction data (not time-series-joined)
+    # This ensures bonds appear even if their last auction predates the time series date range
     observe({
         req(bond_data())
 
         active <- tryCatch(active_bonds(), error = function(e) unique(bond_data()$bond))
 
-        # Get bonds that have auction history from FULL dataset (not date-filtered)
-        # This ensures bonds appear even if their last auction predates the sidebar date range
-        auction_data <- tryCatch({
-            bd <- bond_data()
-            if (!is.null(bd) && "bid_to_cover" %in% names(bd)) {
-                bd %>% dplyr::filter(!is.na(bid_to_cover))
+        # Read auction history directly from Excel — bypasses the left_join that drops
+        # auction records outside the time series date range
+        raw_auctions <- tryCatch({
+            excel_path <- values$excel_path
+            if (!is.null(excel_path) && file.exists(excel_path)) {
+                readxl::read_excel(excel_path, sheet = "auctions",
+                                   guess_max = 10000)
             } else {
                 NULL
             }
-        }, error = function(e) NULL)
+        }, error = function(e) {
+            log_debug(sprintf("[AUCTION PREDICTIONS] Error reading raw auctions: %s", e$message))
+            NULL
+        })
 
-        if (!is.null(auction_data) && nrow(auction_data) > 0) {
-            # Get bonds with auction history
-            bonds_with_auctions <- auction_data %>%
-                filter(!is.na(bid_to_cover)) %>%
-                distinct(bond) %>%
-                pull(bond)
+        if (!is.null(raw_auctions) && nrow(raw_auctions) > 0) {
+            # Get bonds that have at least one auction with bid_to_cover
+            auction_bonds <- raw_auctions %>%
+                dplyr::filter(!is.na(bid_to_cover)) %>%
+                dplyr::distinct(bond) %>%
+                dplyr::pull(bond)
 
-            # Only show active bonds with auction history
-            available_bonds <- intersect(active, bonds_with_auctions)
+            # Only show active bonds that have auction history
+            available_bonds <- intersect(active, auction_bonds)
 
             if (length(available_bonds) == 0) {
-                available_bonds <- active  # Fallback
+                available_bonds <- active  # Fallback to all active bonds
                 log_debug("[AUCTION PREDICTIONS] Warning: No bonds with auction history found")
             }
 
-            # Sort by most recent auction
-            bond_order <- auction_data %>%
-                filter(bond %in% available_bonds, !is.na(offer_date)) %>%
-                group_by(bond) %>%
-                summarise(last_auction = max(offer_date, na.rm = TRUE), .groups = "drop") %>%
-                arrange(desc(last_auction)) %>%
-                pull(bond)
+            # Sort by most recent auction date
+            bond_order <- raw_auctions %>%
+                dplyr::filter(bond %in% available_bonds, !is.na(offer_date)) %>%
+                dplyr::group_by(bond) %>%
+                dplyr::summarise(last_auction = max(offer_date, na.rm = TRUE), .groups = "drop") %>%
+                dplyr::arrange(dplyr::desc(last_auction)) %>%
+                dplyr::pull(bond)
 
             available_bonds <- bond_order
 
             log_debug(sprintf("[AUCTION PREDICTIONS] Available bonds (sorted by recent auction): %s",
-                            paste(available_bonds, collapse = ", ")))
+                             paste(available_bonds, collapse = ", ")))
         } else {
-            available_bonds <- active
+            # Fallback: use bond_data() if Excel path not available
+            available_bonds <- tryCatch({
+                bd <- bond_data()
+                if ("bid_to_cover" %in% names(bd)) {
+                    bonds_with_auctions <- bd %>%
+                        dplyr::filter(!is.na(bid_to_cover)) %>%
+                        dplyr::distinct(bond) %>%
+                        dplyr::pull(bond)
+                    intersect(active, bonds_with_auctions)
+                } else {
+                    active
+                }
+            }, error = function(e) active)
+
+            if (length(available_bonds) == 0) available_bonds <- active
         }
 
         # Default to first 3 available bonds
         default_selected <- if (length(available_bonds) >= 3) available_bonds[1:3] else available_bonds
 
-        # Note: auction_bonds_select is updated elsewhere via updatePickerInput
-        # This is a fallback for the "upcoming auctions" section if needed
         updatePickerInput(
             session,
             "auction_bonds_select",
