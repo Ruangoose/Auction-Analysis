@@ -200,7 +200,9 @@ server <- function(input, output, session) {
         alert_counter = 0,
         auction_performance_plot = NULL,  # Add this for storing plot
         carry_refresh = 0,  # Add this for carry & roll refresh trigger
-        excel_path = NULL   # Store the Excel file path for metadata creation
+        excel_path = NULL,  # Store the Excel file path for metadata creation
+        auction_raw = NULL,     # Complete auction history from Excel (not limited by time series join)
+        auction_summary = NULL  # Auction summary statistics
     )
 
     # Reactive value for forward rate chart-table interactivity
@@ -331,6 +333,26 @@ server <- function(input, output, session) {
             )
             return(NULL)
         }
+
+        # ════════════════════════════════════════════════════════════════════
+        # STEP 1.5: STORE RAW AUCTION DATA (complete history, not limited by time series join)
+        # ════════════════════════════════════════════════════════════════════
+        tryCatch({
+            excel_path <- values$excel_path
+            if (!is.null(excel_path) && file.exists(excel_path)) {
+                auction_raw <- readxl::read_excel(excel_path, sheet = "auctions",
+                                                   na = c("", "NA", "#N/A", "N/A", "#VALUE!", "#REF!"),
+                                                   guess_max = 10000)
+                if (!is.null(auction_raw) && nrow(auction_raw) > 0) {
+                    values$auction_raw <- auction_raw
+                    log_debug(sprintf("  Stored auction_raw: %d records for %d bonds",
+                                    nrow(auction_raw),
+                                    dplyr::n_distinct(auction_raw$bond)))
+                }
+            }
+        }, error = function(e) {
+            log_debug(sprintf("  Warning: Could not load auction_raw: %s", e$message))
+        })
 
         # ════════════════════════════════════════════════════════════════════
         # ✅ NEW: STEP 2 - STANDARDIZE COLUMN NAMES IMMEDIATELY
@@ -4166,18 +4188,19 @@ server <- function(input, output, session) {
 
     # Get available bonds with auction data, sorted by auction count
     available_auction_bonds <- reactive({
-        req(filtered_data())
+        raw_auctions <- raw_auction_data()
+        req(raw_auctions)
 
-        filtered_data() %>%
-            filter(!is.na(offer_date), !is.na(bid_to_cover), bid_to_cover > 0) %>%
-            group_by(bond) %>%
-            summarise(
-                n_auctions = n(),
+        raw_auctions %>%
+            dplyr::filter(!is.na(offer_date), !is.na(bid_to_cover), bid_to_cover > 0) %>%
+            dplyr::group_by(bond) %>%
+            dplyr::summarise(
+                n_auctions = dplyr::n(),
                 avg_b2c = mean(bid_to_cover, na.rm = TRUE),
                 last_auction = max(offer_date, na.rm = TRUE),
                 .groups = "drop"
             ) %>%
-            arrange(desc(n_auctions))
+            dplyr::arrange(dplyr::desc(n_auctions))
     })
 
     # Initialize picker with top 6 bonds by default
@@ -4213,16 +4236,21 @@ server <- function(input, output, session) {
     observeEvent(input$auction_perf_recent, {
         bonds_data <- available_auction_bonds()
         req(bonds_data)
-        # Most active YTD
-        ytd_active <- filtered_data() %>%
-            filter(
-                !is.na(offer_date),
-                !is.na(bid_to_cover),
-                lubridate::year(offer_date) == lubridate::year(Sys.Date())
-            ) %>%
-            count(bond, sort = TRUE) %>%
-            head(6) %>%
-            pull(bond)
+        # Most active YTD - use raw auction data
+        raw_auctions <- raw_auction_data()
+        ytd_active <- if (!is.null(raw_auctions) && nrow(raw_auctions) > 0) {
+            raw_auctions %>%
+                dplyr::filter(
+                    !is.na(offer_date),
+                    !is.na(bid_to_cover),
+                    lubridate::year(offer_date) == lubridate::year(Sys.Date())
+                ) %>%
+                dplyr::count(bond, sort = TRUE) %>%
+                utils::head(6) %>%
+                dplyr::pull(bond)
+        } else {
+            character(0)
+        }
 
         if(length(ytd_active) > 0) {
             shinyWidgets::updatePickerInput(session, "auction_perf_bonds", selected = ytd_active)
@@ -4261,7 +4289,8 @@ server <- function(input, output, session) {
 
     # Main plot output
     output$enhanced_auction_analytics <- renderPlot({
-        req(filtered_data())
+        auction_data <- enhanced_auction_data()
+        req(auction_data)
 
         # Get selected bonds (default to top 6 if none selected)
         selected_bonds <- input$auction_perf_bonds
@@ -4285,14 +4314,15 @@ server <- function(input, output, session) {
             show_trend = show_trend
         )
 
-        p <- generate_enhanced_auction_analytics(filtered_data(), params)
+        p <- generate_enhanced_auction_analytics(auction_data, params)
         if(!is.null(p)) print(p)
     })
 
 
     output$auction_forecast_plot <- renderPlot({
-        req(filtered_data(), input$auction_bonds_select)
-        p <- generate_auction_forecast_plot(filtered_data(), input$auction_bonds_select)
+        auction_data_for_forecast <- raw_auction_data()
+        req(auction_data_for_forecast, input$auction_bonds_select)
+        p <- generate_auction_forecast_plot(auction_data_for_forecast, input$auction_bonds_select)
         if(!is.null(p)) {
             print(p)
         } else {
@@ -4305,14 +4335,15 @@ server <- function(input, output, session) {
     # as part of Auction Intelligence tab overhaul
 
     output$auction_pattern_analysis <- renderPlot({
-        req(filtered_data())
+        auction_data <- raw_auction_data()
+        req(auction_data)
         # Get selected bonds for highlighting (default to empty if not set)
         selected_bonds <- if (!is.null(input$auction_bonds_select)) {
             input$auction_bonds_select
         } else {
             character(0)
         }
-        p <- generate_auction_pattern_analysis(filtered_data(), list(),
+        p <- generate_auction_pattern_analysis(auction_data, list(),
                                                 selected_bonds = selected_bonds)
         if(!is.null(p)) {
             gridExtra::grid.arrange(p)
@@ -4323,14 +4354,15 @@ server <- function(input, output, session) {
     })
 
     output$bid_distribution_plot <- renderPlot({
-        req(filtered_data())
+        auction_data <- raw_auction_data()
+        req(auction_data)
         # Get selected bonds for highlighting (default to empty if not set)
         selected_bonds <- if (!is.null(input$auction_bonds_select)) {
             input$auction_bonds_select
         } else {
             character(0)
         }
-        p <- generate_bid_distribution_plot(filtered_data(), list(),
+        p <- generate_bid_distribution_plot(auction_data, list(),
                                             selected_bonds = selected_bonds)
         if(!is.null(p)) {
             print(p)
@@ -4345,14 +4377,14 @@ server <- function(input, output, session) {
     # =====================================================
 
     output$total_auctions_analyzed <- renderText({
-        auction_data <- filtered_data()
+        auction_data <- raw_auction_data()
         req(auction_data)
-        n_auctions <- auction_data %>% filter(!is.na(bid_to_cover)) %>% nrow()
+        n_auctions <- auction_data %>% dplyr::filter(!is.na(bid_to_cover)) %>% nrow()
         as.character(n_auctions)
     })
 
     output$overall_avg_btc <- renderText({
-        auction_data <- filtered_data()
+        auction_data <- raw_auction_data()
         req(auction_data)
         avg_btc <- mean(auction_data$bid_to_cover, na.rm = TRUE)
         if (is.na(avg_btc) || is.nan(avg_btc)) {
@@ -4363,9 +4395,9 @@ server <- function(input, output, session) {
     })
 
     output$strong_auction_pct <- renderText({
-        auction_data <- filtered_data()
+        auction_data <- raw_auction_data()
         req(auction_data)
-        auction_data_valid <- auction_data %>% filter(!is.na(bid_to_cover))
+        auction_data_valid <- auction_data %>% dplyr::filter(!is.na(bid_to_cover))
         if (nrow(auction_data_valid) == 0) {
             "—"
         } else {
@@ -4375,7 +4407,7 @@ server <- function(input, output, session) {
     })
 
     output$selected_bonds_avg_btc <- renderUI({
-        auction_data <- filtered_data()
+        auction_data <- raw_auction_data()
         selected_bonds <- if (!is.null(input$auction_bonds_select)) {
             input$auction_bonds_select
         } else {
@@ -4388,7 +4420,7 @@ server <- function(input, output, session) {
         }
 
         selected_data <- auction_data %>%
-            filter(bond %in% selected_bonds, !is.na(bid_to_cover))
+            dplyr::filter(bond %in% selected_bonds, !is.na(bid_to_cover))
 
         if (nrow(selected_data) == 0) {
             return(div(style = "font-size: 1.4em; color: #666;", "—"))
@@ -4421,11 +4453,16 @@ server <- function(input, output, session) {
 
     # Get auction date range from data
     auction_date_bounds <- reactive({
-        req(bond_data())
+        raw_auctions <- raw_auction_data()
+        req(raw_auctions)
 
-        # Use bond_data() to get the full data range (not filtered_data which is already filtered)
-        auction_data <- bond_data() %>%
-            filter(!is.na(date), !is.na(offer_amount), offer_amount > 0)
+        # Use raw auction data to get the full date range
+        offer_col <- if ("offer_amount" %in% names(raw_auctions)) "offer_amount" else if ("offer" %in% names(raw_auctions)) "offer" else NULL
+        auction_data <- raw_auctions %>%
+            dplyr::filter(!is.na(date))
+        if (!is.null(offer_col)) {
+            auction_data <- auction_data %>% dplyr::filter(!is.na(.data[[offer_col]]), .data[[offer_col]] > 0)
+        }
 
         if (nrow(auction_data) == 0) {
             # Fallback to reasonable defaults if no auction data
@@ -4495,24 +4532,33 @@ server <- function(input, output, session) {
 
     # Filtered auction data reactive
     filtered_auction_data <- reactive({
-        req(bond_data(), input$auction_date_range)
+        raw_auctions <- raw_auction_data()
+        req(raw_auctions, input$auction_date_range)
 
         date_range <- input$auction_date_range
 
         # Validate date range exists
         if (is.null(date_range) || length(date_range) < 2) {
-            return(bond_data())
+            return(raw_auctions)
         }
 
-        # Filter data based on selected date range
-        bond_data() %>%
-            filter(
-                !is.na(date),
-                !is.na(offer_amount),
-                offer_amount > 0,
-                date >= date_range[1],
-                date <= date_range[2]
-            )
+        # Filter raw auction data based on selected date range
+        # Use offer_date (or date) for filtering and offer_amount (or offer) for amounts
+        offer_col <- if ("offer_amount" %in% names(raw_auctions)) "offer_amount" else if ("offer" %in% names(raw_auctions)) "offer" else NULL
+        date_col <- if ("date" %in% names(raw_auctions)) "date" else if ("offer_date" %in% names(raw_auctions)) "offer_date" else NULL
+
+        if (is.null(date_col)) return(raw_auctions)
+
+        result <- raw_auctions %>%
+            dplyr::filter(!is.na(.data[[date_col]]),
+                          .data[[date_col]] >= date_range[1],
+                          .data[[date_col]] <= date_range[2])
+
+        if (!is.null(offer_col)) {
+            result <- result %>% dplyr::filter(!is.na(.data[[offer_col]]), .data[[offer_col]] > 0)
+        }
+
+        result
     })
 
     # ========================================================================
@@ -7236,12 +7282,13 @@ server <- function(input, output, session) {
     # 14. ML Auction Predictions Display
     # Enhanced ML predictions with bond selection
     output$ml_auction_predictions <- renderUI({
-        req(filtered_data(), input$auction_bonds_select)
+        auction_data_ml <- raw_auction_data()
+        req(auction_data_ml, input$auction_bonds_select)
 
         selected_bonds <- input$auction_bonds_select
 
         prediction_cards <- lapply(selected_bonds, function(bond_name) {
-            pred <- predict_btc_arima(filtered_data(), bond_name)
+            pred <- predict_btc_arima(auction_data_ml, bond_name)
 
             # Enhanced prediction card with more metrics
             tags$div(
@@ -7263,13 +7310,13 @@ server <- function(input, output, session) {
                             style = "margin-top: 10px; padding-top: 10px; border-top: 1px solid #e0e0e0;",
                             tags$small(
                                 sprintf("Historical Avg: %.2fx | Last: %.2fx",
-                                        mean(filtered_data() %>%
-                                                 filter(bond == bond_name, !is.na(bid_to_cover)) %>%
-                                                 pull(bid_to_cover), na.rm = TRUE),
-                                        tail(filtered_data() %>%
-                                                 filter(bond == bond_name, !is.na(bid_to_cover)) %>%
-                                                 arrange(date) %>%
-                                                 pull(bid_to_cover), 1)),
+                                        mean(auction_data_ml %>%
+                                                 dplyr::filter(bond == bond_name, !is.na(bid_to_cover)) %>%
+                                                 dplyr::pull(bid_to_cover), na.rm = TRUE),
+                                        tail(auction_data_ml %>%
+                                                 dplyr::filter(bond == bond_name, !is.na(bid_to_cover)) %>%
+                                                 dplyr::arrange(date) %>%
+                                                 dplyr::pull(bid_to_cover), 1)),
                                 style = "color: #888;"
                             )
                         )
@@ -7327,14 +7374,15 @@ server <- function(input, output, session) {
     # 14c. Auction forecast visualization
     # Model performance metrics
     output$model_performance_metrics <- renderUI({
-        req(filtered_data(), input$auction_bonds_select)
+        auction_data_perf <- raw_auction_data()
+        req(auction_data_perf, input$auction_bonds_select)
 
         # Calculate average model performance
         performance_stats <- data.frame()
 
         for(bond in input$auction_bonds_select) {
-            hist_data <- filtered_data() %>%
-                filter(bond == !!bond, !is.na(bid_to_cover))
+            hist_data <- auction_data_perf %>%
+                dplyr::filter(bond == !!bond, !is.na(bid_to_cover))
 
             if(nrow(hist_data) > 10) {
                 # Simple backtest - last 5 predictions
@@ -7383,7 +7431,9 @@ server <- function(input, output, session) {
 
     # Enhanced auction data reactive (calculates new quality metrics)
     enhanced_auction_data <- reactive({
-        req(filtered_data())
+        # Use raw auction data (complete history) instead of filtered_data (limited by time series join)
+        raw_data <- raw_auction_data()
+        req(raw_data)
 
         # Define numeric columns that need conversion
         numeric_cols <- c("bid_to_cover", "bids_received", "offer_amount", "allocation",
@@ -7391,7 +7441,7 @@ server <- function(input, output, session) {
                           "best_bid", "worst_bid", "auction_tail")
 
         # Ensure numeric columns are actually numeric
-        auction_data <- filtered_data() %>%
+        auction_data <- raw_data %>%
             dplyr::mutate(dplyr::across(dplyr::any_of(numeric_cols),
                           ~ suppressWarnings(as.numeric(as.character(.x))))) %>%
             dplyr::filter(!is.na(bid_to_cover))
@@ -7401,8 +7451,9 @@ server <- function(input, output, session) {
         }
 
         # Calculate enhanced metrics using the new function
+        # Pass raw_data as the "full data" context since filtered_data doesn't have the auction records
         enhanced <- tryCatch(
-            calculate_enhanced_auction_metrics(auction_data, filtered_data()),
+            calculate_enhanced_auction_metrics(auction_data, auction_data),
             error = function(e) {
                 log_debug(sprintf("[AUCTION QUALITY] Error calculating metrics: %s", e$message))
                 auction_data  # Return original data on error
@@ -7410,6 +7461,89 @@ server <- function(input, output, session) {
         )
 
         return(enhanced)
+    })
+
+    # ════════════════════════════════════════════════════════════════════════════
+    # RAW AUCTION DATA - Complete auction history from Excel (not limited by time series join)
+    # Used for: dropdown population, quality dashboard, pattern recognition, bid distribution
+    # ════════════════════════════════════════════════════════════════════════════
+    raw_auction_data <- reactive({
+        # Primary source: auction_raw stored from data loader
+        if (!is.null(values$auction_raw) && nrow(values$auction_raw) > 0) {
+            auction_data <- values$auction_raw
+        } else {
+            # Fallback: read directly from Excel
+            excel_path <- values$excel_path
+            if (!is.null(excel_path) && file.exists(excel_path)) {
+                auction_data <- tryCatch({
+                    readxl::read_excel(excel_path, sheet = "auctions", guess_max = 10000)
+                }, error = function(e) {
+                    log_debug(sprintf("[RAW AUCTION] Error reading Excel: %s", e$message))
+                    return(NULL)
+                })
+            } else {
+                return(NULL)
+            }
+        }
+
+        if (is.null(auction_data) || nrow(auction_data) == 0) return(NULL)
+
+        # Standardize column names (handle both raw Excel and processed formats)
+        if ("offer_date" %in% names(auction_data) && !"date" %in% names(auction_data)) {
+            auction_data$date <- auction_data$offer_date
+        }
+
+        # Ensure date columns are Date type
+        date_cols <- c("date", "offer_date", "announce_date", "announcement_date",
+                       "sett_date", "settle_date", "mat_date", "mature_date")
+        for (col in intersect(date_cols, names(auction_data))) {
+            if (!inherits(auction_data[[col]], "Date")) {
+                auction_data[[col]] <- as.Date(auction_data[[col]])
+            }
+        }
+
+        # Ensure numeric columns are numeric
+        numeric_cols <- c("bid_to_cover", "offer", "offer_amount", "bids", "bids_received",
+                          "allocation", "clearing_yield", "non_comps", "number_bids_received",
+                          "best_bid", "worst_bid", "bond_coupon")
+        for (col in intersect(numeric_cols, names(auction_data))) {
+            auction_data[[col]] <- suppressWarnings(as.numeric(as.character(auction_data[[col]])))
+        }
+
+        # Map column names to match what enhanced_auction_data expects
+        if ("offer" %in% names(auction_data) && !"offer_amount" %in% names(auction_data)) {
+            auction_data$offer_amount <- auction_data$offer
+        }
+        if ("bids" %in% names(auction_data) && !"bids_received" %in% names(auction_data)) {
+            auction_data$bids_received <- auction_data$bids
+        }
+        if ("mat_date" %in% names(auction_data) && !"mature_date" %in% names(auction_data)) {
+            auction_data$mature_date <- auction_data$mat_date
+        }
+        if ("announce_date" %in% names(auction_data) && !"announcement_date" %in% names(auction_data)) {
+            auction_data$announcement_date <- auction_data$announce_date
+        }
+        if ("sett_date" %in% names(auction_data) && !"settle_date" %in% names(auction_data)) {
+            auction_data$settle_date <- auction_data$sett_date
+        }
+
+        # Calculate auction_tail from best_bid and worst_bid if not present
+        if (!"auction_tail" %in% names(auction_data) &&
+            all(c("best_bid", "worst_bid") %in% names(auction_data))) {
+            auction_data$auction_tail <- (auction_data$worst_bid - auction_data$best_bid) * 100
+        }
+
+        # Filter to valid auction records
+        auction_data <- auction_data %>%
+            dplyr::filter(!is.na(bid_to_cover))
+
+        log_debug(sprintf("[RAW AUCTION] Loaded %d auction records for %d bonds (date range: %s to %s)",
+                         nrow(auction_data),
+                         dplyr::n_distinct(auction_data$bond),
+                         min(auction_data$date, na.rm = TRUE),
+                         max(auction_data$date, na.rm = TRUE)))
+
+        return(auction_data)
     })
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -7919,18 +8053,19 @@ server <- function(input, output, session) {
 
     # Helper function to calculate auction predictions for selected bonds
     auction_predictions_data <- reactive({
-        req(filtered_data(), input$auction_bonds_select)
+        auction_data_pred <- raw_auction_data()
+        req(auction_data_pred, input$auction_bonds_select)
 
         selected_bonds <- input$auction_bonds_select
 
         # Calculate predictions for each bond
         predictions <- lapply(selected_bonds, function(bond_name) {
-            pred <- predict_btc_arima(filtered_data(), bond_name)
+            pred <- predict_btc_arima(auction_data_pred, bond_name)
 
             # Get historical stats
-            hist_data <- filtered_data() %>%
-                filter(bond == bond_name, !is.na(bid_to_cover)) %>%
-                arrange(date)
+            hist_data <- auction_data_pred %>%
+                dplyr::filter(bond == bond_name, !is.na(bid_to_cover)) %>%
+                dplyr::arrange(date)
 
             historical_avg <- if(nrow(hist_data) > 0) mean(hist_data$bid_to_cover, na.rm = TRUE) else NA
             last_value <- if(nrow(hist_data) > 0) tail(hist_data$bid_to_cover, 1) else NA
@@ -7957,15 +8092,16 @@ server <- function(input, output, session) {
 
     # Quick Stats Output
     output$auction_quick_stats <- renderUI({
-        req(filtered_data(), input$auction_bonds_select)
+        auction_data_qs <- raw_auction_data()
+        req(auction_data_qs, input$auction_bonds_select)
 
         selected_bonds <- input$auction_bonds_select
         n_selected <- length(selected_bonds)
 
         # Count bonds with sufficient data
         sufficient_data <- sapply(selected_bonds, function(bond_name) {
-            n <- filtered_data() %>%
-                filter(bond == bond_name, !is.na(bid_to_cover)) %>%
+            n <- auction_data_qs %>%
+                dplyr::filter(bond == bond_name, !is.na(bid_to_cover)) %>%
                 nrow()
             n >= 10
         })
@@ -7976,7 +8112,7 @@ server <- function(input, output, session) {
         model_info <- "N/A"
         if(n_sufficient > 0) {
             first_bond <- selected_bonds[sufficient_data][1]
-            pred <- predict_btc_arima(filtered_data(), first_bond)
+            pred <- predict_btc_arima(auction_data_qs, first_bond)
             model_info <- pred$model_type
         }
 
@@ -8003,15 +8139,16 @@ server <- function(input, output, session) {
 
     # Model Performance Card (replaces model_performance_metrics with actual calculations)
     output$model_performance_card <- renderUI({
-        req(filtered_data(), input$auction_bonds_select)
+        auction_data_bt <- raw_auction_data()
+        req(auction_data_bt, input$auction_bonds_select)
 
         # Calculate actual backtesting metrics
         backtest_results <- tryCatch({
             # Perform backtesting for selected bonds
             all_results <- lapply(input$auction_bonds_select, function(bond_name) {
-                hist_data <- filtered_data() %>%
-                    filter(bond == bond_name, !is.na(bid_to_cover)) %>%
-                    arrange(date)
+                hist_data <- auction_data_bt %>%
+                    dplyr::filter(bond == bond_name, !is.na(bid_to_cover)) %>%
+                    dplyr::arrange(date)
 
                 if(nrow(hist_data) < 15) return(NULL)
 
@@ -8447,10 +8584,10 @@ server <- function(input, output, session) {
 
     # Market Sentiment Compact (visual gauge)
     output$market_sentiment_compact <- renderUI({
-        req(filtered_data())
+        base_data <- raw_auction_data()
+        req(base_data)
 
         tryCatch({
-            base_data <- filtered_data()
 
             # DEBUG: Log what we have
             log_debug(sprintf("[SENTIMENT DEBUG] Base data: %d rows",
@@ -8659,12 +8796,17 @@ server <- function(input, output, session) {
         following_auction <- next_auction + days(7)
 
         # Get bonds with recent auction activity (likely to be in upcoming auctions)
-        recent_bonds <- bond_data() %>%
-            filter(!is.na(bid_to_cover), date >= today_date - days(90)) %>%
-            group_by(bond) %>%
-            summarise(n_auctions = n(), last_auction = max(date), .groups = "drop") %>%
-            arrange(desc(n_auctions), desc(last_auction)) %>%
-            pull(bond)
+        raw_auctions <- raw_auction_data()
+        recent_bonds <- if (!is.null(raw_auctions) && nrow(raw_auctions) > 0) {
+            raw_auctions %>%
+                dplyr::filter(!is.na(bid_to_cover), offer_date >= today_date - days(90)) %>%
+                dplyr::group_by(bond) %>%
+                dplyr::summarise(n_auctions = dplyr::n(), last_auction = max(offer_date), .groups = "drop") %>%
+                dplyr::arrange(dplyr::desc(n_auctions), dplyr::desc(last_auction)) %>%
+                dplyr::pull(bond)
+        } else {
+            character(0)
+        }
 
         # Common 3-bond selections for SA government bonds
         # These are typically auctioned together based on maturity buckets
@@ -8719,19 +8861,23 @@ server <- function(input, output, session) {
     observeEvent(input$select_next_auction, {
         req(bond_data())
 
-        # Get active bonds for current date range
         active <- tryCatch(active_bonds(), error = function(e) unique(bond_data()$bond))
 
-        # Get bonds with most recent auction activity (from active bonds only)
-        recent_bonds <- bond_data() %>%
-            filter(bond %in% active,
-                   !is.na(bid_to_cover),
-                   date >= today() - days(60)) %>%
-            group_by(bond) %>%
-            summarise(n_auctions = n(), .groups = "drop") %>%
-            arrange(desc(n_auctions)) %>%
-            head(3) %>%
-            pull(bond)
+        # Use raw auction data for complete bond list
+        raw_auctions <- raw_auction_data()
+        recent_bonds <- if (!is.null(raw_auctions) && nrow(raw_auctions) > 0) {
+            raw_auctions %>%
+                dplyr::filter(bond %in% active,
+                       !is.na(bid_to_cover)) %>%
+                dplyr::group_by(bond) %>%
+                dplyr::summarise(n_auctions = dplyr::n(),
+                                 last_auction = max(offer_date, na.rm = TRUE), .groups = "drop") %>%
+                dplyr::arrange(dplyr::desc(last_auction)) %>%
+                utils::head(3) %>%
+                dplyr::pull(bond)
+        } else {
+            character(0)
+        }
 
         if (length(recent_bonds) > 0) {
             updatePickerInput(session, "auction_bonds_select", selected = recent_bonds)
@@ -8746,19 +8892,23 @@ server <- function(input, output, session) {
     observeEvent(input$select_following_auction, {
         req(bond_data())
 
-        # Get active bonds for current date range
         active <- tryCatch(active_bonds(), error = function(e) unique(bond_data()$bond))
 
-        # Get bonds with recent auction activity (from active bonds only)
-        recent_bonds <- bond_data() %>%
-            filter(bond %in% active,
-                   !is.na(bid_to_cover),
-                   date >= today() - days(60)) %>%
-            group_by(bond) %>%
-            summarise(n_auctions = n(), .groups = "drop") %>%
-            arrange(desc(n_auctions)) %>%
-            head(3) %>%
-            pull(bond)
+        # Use raw auction data for complete bond list
+        raw_auctions <- raw_auction_data()
+        recent_bonds <- if (!is.null(raw_auctions) && nrow(raw_auctions) > 0) {
+            raw_auctions %>%
+                dplyr::filter(bond %in% active,
+                       !is.na(bid_to_cover)) %>%
+                dplyr::group_by(bond) %>%
+                dplyr::summarise(n_auctions = dplyr::n(),
+                                 last_auction = max(offer_date, na.rm = TRUE), .groups = "drop") %>%
+                dplyr::arrange(dplyr::desc(last_auction)) %>%
+                utils::head(3) %>%
+                dplyr::pull(bond)
+        } else {
+            character(0)
+        }
 
         if (length(recent_bonds) > 0) {
             updatePickerInput(session, "auction_bonds_select", selected = recent_bonds)
@@ -8773,18 +8923,22 @@ server <- function(input, output, session) {
     observeEvent(input$select_top_recent, {
         req(bond_data())
 
-        # Get active bonds for current date range
         active <- tryCatch(active_bonds(), error = function(e) unique(bond_data()$bond))
 
-        # Get the 3 bonds with most auction history (from active bonds only)
-        top_bonds <- bond_data() %>%
-            filter(bond %in% active,
-                   !is.na(bid_to_cover)) %>%
-            group_by(bond) %>%
-            summarise(n_auctions = n(), .groups = "drop") %>%
-            arrange(desc(n_auctions)) %>%
-            head(3) %>%
-            pull(bond)
+        # Use raw auction data for complete bond list
+        raw_auctions <- raw_auction_data()
+        top_bonds <- if (!is.null(raw_auctions) && nrow(raw_auctions) > 0) {
+            raw_auctions %>%
+                dplyr::filter(bond %in% active,
+                       !is.na(bid_to_cover)) %>%
+                dplyr::group_by(bond) %>%
+                dplyr::summarise(n_auctions = dplyr::n(), .groups = "drop") %>%
+                dplyr::arrange(dplyr::desc(n_auctions)) %>%
+                utils::head(3) %>%
+                dplyr::pull(bond)
+        } else {
+            character(0)
+        }
 
         if (length(top_bonds) > 0) {
             updatePickerInput(session, "auction_bonds_select", selected = top_bonds)
@@ -8879,37 +9033,21 @@ server <- function(input, output, session) {
 
         active <- tryCatch(active_bonds(), error = function(e) unique(bond_data()$bond))
 
-        # Read auction history directly from Excel — bypasses the left_join that drops
-        # auction records outside the time series date range
-        raw_auctions <- tryCatch({
-            excel_path <- values$excel_path
-            if (!is.null(excel_path) && file.exists(excel_path)) {
-                readxl::read_excel(excel_path, sheet = "auctions",
-                                   guess_max = 10000)
-            } else {
-                NULL
-            }
-        }, error = function(e) {
-            log_debug(sprintf("[AUCTION PREDICTIONS] Error reading raw auctions: %s", e$message))
-            NULL
-        })
+        # Use raw auction data reactive (complete auction history)
+        raw_auctions <- raw_auction_data()
 
         if (!is.null(raw_auctions) && nrow(raw_auctions) > 0) {
-            # Get bonds that have at least one auction with bid_to_cover
-            auction_bonds <- raw_auctions %>%
-                dplyr::filter(!is.na(bid_to_cover)) %>%
+            bonds_with_auctions <- raw_auctions %>%
                 dplyr::distinct(bond) %>%
                 dplyr::pull(bond)
 
-            # Only show active bonds that have auction history
-            available_bonds <- intersect(active, auction_bonds)
+            available_bonds <- intersect(active, bonds_with_auctions)
 
             if (length(available_bonds) == 0) {
-                available_bonds <- active  # Fallback to all active bonds
-                log_debug("[AUCTION PREDICTIONS] Warning: No bonds with auction history found")
+                available_bonds <- active
             }
 
-            # Sort by most recent auction date
+            # Sort by most recent auction
             bond_order <- raw_auctions %>%
                 dplyr::filter(bond %in% available_bonds, !is.na(offer_date)) %>%
                 dplyr::group_by(bond) %>%
@@ -8918,36 +9056,17 @@ server <- function(input, output, session) {
                 dplyr::pull(bond)
 
             available_bonds <- bond_order
-
-            log_debug(sprintf("[AUCTION PREDICTIONS] Available bonds (sorted by recent auction): %s",
-                             paste(available_bonds, collapse = ", ")))
         } else {
-            # Fallback: use bond_data() if Excel path not available
-            available_bonds <- tryCatch({
-                bd <- bond_data()
-                if ("bid_to_cover" %in% names(bd)) {
-                    bonds_with_auctions <- bd %>%
-                        dplyr::filter(!is.na(bid_to_cover)) %>%
-                        dplyr::distinct(bond) %>%
-                        dplyr::pull(bond)
-                    intersect(active, bonds_with_auctions)
-                } else {
-                    active
-                }
-            }, error = function(e) active)
-
-            if (length(available_bonds) == 0) available_bonds <- active
+            available_bonds <- active
         }
 
-        # Default to first 3 available bonds
+        log_debug(sprintf("[AUCTION PREDICTIONS] Available bonds: %s",
+                         paste(available_bonds, collapse = ", ")))
+
         default_selected <- if (length(available_bonds) >= 3) available_bonds[1:3] else available_bonds
 
-        updatePickerInput(
-            session,
-            "auction_bonds_select",
-            choices = available_bonds,
-            selected = default_selected
-        )
+        updatePickerInput(session, "auction_bonds_select",
+                         choices = available_bonds, selected = default_selected)
     })
 
     # Limit selection to 3 bonds for auction_bonds_select
@@ -8969,7 +9088,7 @@ server <- function(input, output, session) {
         selected_bonds <- input$auction_bonds_select
 
         # Get enhanced auction data if available
-        auction_data <- tryCatch(enhanced_auction_data(), error = function(e) filtered_data())
+        auction_data <- tryCatch(enhanced_auction_data(), error = function(e) raw_auction_data())
 
         if (is.null(auction_data)) {
             return(tags$p("No auction data available", style = "color: #999;"))
@@ -9847,8 +9966,9 @@ server <- function(input, output, session) {
     )
 
     output$auction_sentiment_gauge <- renderPlot({
-        req(filtered_data())
-        p <- generate_auction_sentiment_gauge(filtered_data(), list())
+        auction_data_sg <- raw_auction_data()
+        req(auction_data_sg)
+        p <- generate_auction_sentiment_gauge(auction_data_sg, list())
         if(!is.null(p)) {
             gridExtra::grid.arrange(p)
         } else {
@@ -11759,13 +11879,14 @@ server <- function(input, output, session) {
             paste0("bid_distribution_", format(Sys.Date(), "%Y%m%d"), ".png")
         },
         content = function(file) {
-            req(filtered_data())
+            auction_data <- raw_auction_data()
+            req(auction_data)
             selected_bonds <- if (!is.null(input$auction_bonds_select)) {
                 input$auction_bonds_select
             } else {
                 character(0)
             }
-            p <- generate_bid_distribution_plot(filtered_data(), list(),
+            p <- generate_bid_distribution_plot(auction_data, list(),
                                                 selected_bonds = selected_bonds)
             if(!is.null(p)) {
                 ggsave(file, plot = p, width = 12, height = 8, dpi = 300, bg = "white")
@@ -11782,19 +11903,18 @@ server <- function(input, output, session) {
             paste0("auction_sentiment_", format(Sys.Date(), "%Y%m%d"), ".png")
         },
         content = function(file) {
-            req(filtered_data())
+            base_data <- raw_auction_data()
+            req(base_data)
 
             # FIX: Use same data processing as market_sentiment_compact to ensure consistency
             tryCatch({
-                base_data <- filtered_data()
-
                 # Filter to actual auction data (same logic as display)
                 auction_data <- base_data %>%
-                    filter(!is.na(bid_to_cover), bid_to_cover > 0) %>%
-                    group_by(date, bond) %>%
-                    slice_head(n = 1) %>%
-                    ungroup() %>%
-                    filter(date >= max(date, na.rm = TRUE) - 180)
+                    dplyr::filter(!is.na(bid_to_cover), bid_to_cover > 0) %>%
+                    dplyr::group_by(date, bond) %>%
+                    dplyr::slice_head(n = 1) %>%
+                    dplyr::ungroup() %>%
+                    dplyr::filter(date >= max(date, na.rm = TRUE) - 180)
 
                 n_auctions <- nrow(auction_data)
 
@@ -11866,13 +11986,14 @@ server <- function(input, output, session) {
             paste0("auction_patterns_", format(Sys.Date(), "%Y%m%d"), ".png")
         },
         content = function(file) {
-            req(filtered_data())
+            auction_data <- raw_auction_data()
+            req(auction_data)
             selected_bonds <- if (!is.null(input$auction_bonds_select)) {
                 input$auction_bonds_select
             } else {
                 character(0)
             }
-            p <- generate_auction_pattern_analysis(filtered_data(), list(),
+            p <- generate_auction_pattern_analysis(auction_data, list(),
                                                    selected_bonds = selected_bonds)
             if(!is.null(p)) {
                 ggsave(file, plot = p, width = 12, height = 10, dpi = 300, bg = "white")
@@ -11888,7 +12009,8 @@ server <- function(input, output, session) {
             paste0("auction_performance_", format(Sys.Date(), "%Y%m%d"), ".png")
         },
         content = function(file) {
-            req(filtered_data())
+            auction_data <- enhanced_auction_data()
+            req(auction_data)
 
             # Get selected bonds (default to top 6 if none selected)
             selected_bonds <- input$auction_perf_bonds
@@ -11912,7 +12034,7 @@ server <- function(input, output, session) {
                 show_trend = show_trend
             )
 
-            p <- generate_enhanced_auction_analytics(filtered_data(), params)
+            p <- generate_enhanced_auction_analytics(auction_data, params)
             if(!is.null(p)) {
                 # Dynamic height based on number of bonds
                 n_bonds <- length(selected_bonds)
@@ -12860,11 +12982,12 @@ server <- function(input, output, session) {
 
                 incProgress(0.6, detail = "Auction Data")
 
-                # 6. Auction Data
+                # 6. Auction Data (use raw auction data for complete history)
                 tryCatch({
-                    if(!is.null(filtered_data()) && "bid_to_cover" %in% names(filtered_data())) {
-                        auction_history <- filtered_data() %>%
-                            filter(!is.na(bid_to_cover))
+                    raw_auctions_report <- raw_auction_data()
+                    if(!is.null(raw_auctions_report) && "bid_to_cover" %in% names(raw_auctions_report)) {
+                        auction_history <- raw_auctions_report %>%
+                            dplyr::filter(!is.na(bid_to_cover))
 
                         if(nrow(auction_history) > 0) {
                             addWorksheet(wb, "Auction Data")
