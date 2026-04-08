@@ -8874,12 +8874,20 @@ server <- function(input, output, session) {
 
     # Populate upcoming auction bond choices (active bonds with auction history)
     observe({
-        req(filtered_data())
+        req(bond_data())
 
-        active <- tryCatch(active_bonds(), error = function(e) unique(filtered_data()$bond))
+        active <- tryCatch(active_bonds(), error = function(e) unique(bond_data()$bond))
 
-        # Get bonds that have auction history
-        auction_data <- tryCatch(enhanced_auction_data(), error = function(e) NULL)
+        # Get bonds that have auction history from FULL dataset (not date-filtered)
+        # This ensures bonds appear even if their last auction predates the sidebar date range
+        auction_data <- tryCatch({
+            bd <- bond_data()
+            if (!is.null(bd) && "bid_to_cover" %in% names(bd)) {
+                bd %>% dplyr::filter(!is.na(bid_to_cover))
+            } else {
+                NULL
+            }
+        }, error = function(e) NULL)
 
         if (!is.null(auction_data) && nrow(auction_data) > 0) {
             # Get bonds with auction history
