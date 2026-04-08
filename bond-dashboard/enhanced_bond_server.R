@@ -7435,6 +7435,26 @@ server <- function(input, output, session) {
         raw_data <- raw_auction_data()
         req(raw_data)
 
+        # Apply sidebar date range filter to auction data
+        # This ensures auction data respects the user's selected date range
+        date_range <- tryCatch({
+            input$date_range
+        }, error = function(e) NULL)
+
+        if (!is.null(date_range) && length(date_range) == 2) {
+            start_date <- as.Date(date_range[1])
+            end_date <- as.Date(date_range[2])
+
+            # Filter auction data by date range using offer_date or date
+            date_col <- if ("offer_date" %in% names(raw_data)) "offer_date" else "date"
+            raw_data <- raw_data %>%
+                dplyr::filter(
+                    !is.na(.data[[date_col]]),
+                    .data[[date_col]] >= start_date,
+                    .data[[date_col]] <= end_date
+                )
+        }
+
         # Define numeric columns that need conversion
         numeric_cols <- c("bid_to_cover", "bids_received", "offer_amount", "allocation",
                           "clearing_yield", "non_comps", "number_bids_received",
@@ -7542,6 +7562,41 @@ server <- function(input, output, session) {
                          dplyr::n_distinct(auction_data$bond),
                          min(auction_data$date, na.rm = TRUE),
                          max(auction_data$date, na.rm = TRUE)))
+
+        # Add derived columns that downstream plot functions expect
+        # These normally come from the time series join but raw auction data doesn't have them
+
+        # Add maturity-related columns from mature_date
+        if ("mature_date" %in% names(auction_data) && "date" %in% names(auction_data)) {
+            auction_data <- auction_data %>%
+                dplyr::mutate(
+                    time_to_maturity = as.numeric(difftime(mature_date, date, units = "days")) / 365.25,
+                    maturity_bucket = dplyr::case_when(
+                        time_to_maturity <= 3 ~ "Short",
+                        time_to_maturity <= 7 ~ "Medium",
+                        time_to_maturity <= 12 ~ "Long",
+                        time_to_maturity > 12 ~ "Ultra-Long",
+                        TRUE ~ "Unknown"
+                    )
+                )
+        }
+
+        # Add modified_duration estimate from time_to_maturity if not present
+        # (rough approximation: mod_dur ~ time_to_maturity * 0.85 for SA govvies)
+        if (!"modified_duration" %in% names(auction_data) && "time_to_maturity" %in% names(auction_data)) {
+            auction_data <- auction_data %>%
+                dplyr::mutate(modified_duration = time_to_maturity * 0.85)
+        }
+
+        # Add yield_to_maturity from clearing_yield if available
+        if (!"yield_to_maturity" %in% names(auction_data) && "clearing_yield" %in% names(auction_data)) {
+            auction_data$yield_to_maturity <- auction_data$clearing_yield
+        }
+
+        # Ensure offer_date column exists (some functions use it, some use date)
+        if (!"offer_date" %in% names(auction_data) && "date" %in% names(auction_data)) {
+            auction_data$offer_date <- auction_data$date
+        }
 
         return(auction_data)
     })
