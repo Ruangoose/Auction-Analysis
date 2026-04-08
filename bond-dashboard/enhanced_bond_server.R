@@ -10421,12 +10421,21 @@ server <- function(input, output, session) {
     # PRE-AUCTION REPORT: Populate auction bond selector dynamically
     # ================================================================================
     observe({
-        req(filtered_data())
-        auction_bonds <- filtered_data() %>%
+        req(bond_data())
+
+        # Use UNFILTERED bond_data() — this is a forward-looking selector
+        # for upcoming auctions, not constrained by the date range filter
+        auction_bonds <- bond_data() %>%
             filter(!is.na(bid_to_cover)) %>%
             pull(bond) %>%
             unique() %>%
             sort()
+
+        # Fallback: if no bonds found with auction history, show all active bonds
+        if (length(auction_bonds) == 0) {
+            auction_bonds <- sort(unique(bond_data()$bond))
+        }
+
         updateSelectizeInput(session, "auction_report_bonds", choices = auction_bonds)
     })
 
