@@ -244,6 +244,7 @@ generate_enhanced_auction_analytics <- function(data, params) {
         scale_size_continuous(
             name = "Offer Size\n(R bn)",
             range = c(2, 8),
+            limits = c(0, max(4, ceiling(max(auction_data$offer_bn, na.rm = TRUE)))),
             breaks = c(1, 2, 3, 4),
             labels = c("1", "2", "3", "4+")
         )
