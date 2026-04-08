@@ -10623,13 +10623,29 @@ server <- function(input, output, session) {
     observe({
         req(bond_data())
 
-        # Use UNFILTERED bond_data() — this is a forward-looking selector
-        # for upcoming auctions, not constrained by the date range filter
-        auction_bonds <- bond_data() %>%
-            filter(!is.na(bid_to_cover)) %>%
-            pull(bond) %>%
-            unique() %>%
-            sort()
+        # Use raw auction data (complete history from Excel, not limited by time series join)
+        raw_auctions <- raw_auction_data()
+
+        if (!is.null(raw_auctions) && nrow(raw_auctions) > 0) {
+            # Get active bonds
+            active <- tryCatch(active_bonds(), error = function(e) unique(bond_data()$bond))
+
+            # Get bonds with auction history, intersected with active bonds
+            auction_bonds <- raw_auctions %>%
+                dplyr::filter(!is.na(bid_to_cover)) %>%
+                dplyr::pull(bond) %>%
+                unique()
+
+            # Only show active bonds (that also have auction history)
+            auction_bonds <- sort(intersect(auction_bonds, active))
+        } else {
+            # Fallback to bond_data()
+            auction_bonds <- bond_data() %>%
+                dplyr::filter(!is.na(bid_to_cover)) %>%
+                dplyr::pull(bond) %>%
+                unique() %>%
+                sort()
+        }
 
         # Fallback: if no bonds found with auction history, show all active bonds
         if (length(auction_bonds) == 0) {
@@ -10641,27 +10657,29 @@ server <- function(input, output, session) {
 
     # Quick-select: "Next Auction" — auto-selects top 3 bonds with most recent auction activity
     observeEvent(input$btn_next_auction, {
-        req(filtered_data())
-        recent_bonds <- filtered_data() %>%
-            filter(!is.na(bid_to_cover)) %>%
-            group_by(bond) %>%
-            summarise(last_auction = max(date, na.rm = TRUE), .groups = "drop") %>%
-            arrange(desc(last_auction)) %>%
-            head(3) %>%
-            pull(bond)
+        raw_auctions <- raw_auction_data()
+        req(raw_auctions)
+        recent_bonds <- raw_auctions %>%
+            dplyr::filter(!is.na(bid_to_cover)) %>%
+            dplyr::group_by(bond) %>%
+            dplyr::summarise(last_auction = max(date, na.rm = TRUE), .groups = "drop") %>%
+            dplyr::arrange(dplyr::desc(last_auction)) %>%
+            utils::head(3) %>%
+            dplyr::pull(bond)
         updateSelectizeInput(session, "auction_report_bonds", selected = recent_bonds)
     })
 
     # Quick-select: "Following Auction" — selects bonds ranked 4-6 by most recent auction activity
     observeEvent(input$btn_following_auction, {
-        req(filtered_data())
-        following_bonds <- filtered_data() %>%
-            filter(!is.na(bid_to_cover)) %>%
-            group_by(bond) %>%
-            summarise(last_auction = max(date, na.rm = TRUE), .groups = "drop") %>%
-            arrange(desc(last_auction)) %>%
-            slice(4:6) %>%
-            pull(bond)
+        raw_auctions <- raw_auction_data()
+        req(raw_auctions)
+        following_bonds <- raw_auctions %>%
+            dplyr::filter(!is.na(bid_to_cover)) %>%
+            dplyr::group_by(bond) %>%
+            dplyr::summarise(last_auction = max(date, na.rm = TRUE), .groups = "drop") %>%
+            dplyr::arrange(dplyr::desc(last_auction)) %>%
+            dplyr::slice(4:6) %>%
+            dplyr::pull(bond)
         updateSelectizeInput(session, "auction_report_bonds", selected = following_bonds)
     })
 
