@@ -10769,9 +10769,25 @@ server <- function(input, output, session) {
     # SHARED REPORT DATA COLLECTOR
     # ================================================================================
     collect_report_data <- function() {
+        # For pre-auction reports, use the report-specific analysis start date
+        # to filter data independently of the sidebar date range
+        report_filt_data <- tryCatch({
+            base_data <- bond_data()
+            if (!is.null(base_data) && input$report_type == "pre_auction" &&
+                !is.null(input$report_analysis_start)) {
+                base_data %>%
+                    dplyr::filter(date >= input$report_analysis_start)
+            } else {
+                filtered_data()
+            }
+        }, error = function(e) {
+            tryCatch(filtered_data(), error = function(e2) NULL)
+        })
+
         list(
             proc_data = tryCatch(processed_data(), error = function(e) NULL),
-            filt_data = tryCatch(filtered_data(), error = function(e) NULL),
+            filt_data = report_filt_data,
+            full_data = tryCatch(bond_data(), error = function(e) NULL),
             var_data_val = tryCatch(var_data(), error = function(e) NULL),
             regime_data_val = tryCatch(regime_data(), error = function(e) NULL),
             carry_data_val = tryCatch(carry_roll_data(), error = function(e) NULL),
@@ -10870,6 +10886,9 @@ server <- function(input, output, session) {
                             )
                         )
                     ),
+                    tags$p(tags$strong("Analysis Period: "),
+                           format(input$report_analysis_start, "%B %d, %Y"), " to present",
+                           style = "color: #666;"),
                     tags$div(
                         style = "background: #f8f9fa; padding: 10px; border-radius: 5px;",
                         tags$strong("Report Structure (9 pages):"),
@@ -12244,7 +12263,7 @@ server <- function(input, output, session) {
                     incProgress(0.5, detail = "Generating Pre-Auction PDF")
                     generate_pre_auction_pdf(
                         file, config, report_data$filt_data, report_data$proc_data,
-                        report_data$carry_data_val, logo_grob
+                        report_data$carry_data_val, logo_grob, full_data = report_data$full_data
                     )
                     incProgress(1, detail = "Complete")
                     showNotification("Pre-Auction PDF report generated successfully", type = "message")
@@ -12792,7 +12811,7 @@ server <- function(input, output, session) {
                     incProgress(0.5, detail = "Generating Pre-Auction HTML")
                     html_content <- create_pre_auction_html_report(
                         config, report_data$filt_data, report_data$proc_data,
-                        report_data$carry_data_val
+                        report_data$carry_data_val, full_data = report_data$full_data
                     )
                     writeLines(html_content, file)
                     incProgress(1, detail = "Complete")
@@ -13261,7 +13280,7 @@ $$Net Return = Carry + Roll - Funding Cost$$
 
                 generate_pre_auction_pdf(
                     temp_pdf, config, report_data$filt_data, report_data$proc_data,
-                    report_data$carry_data_val, logo_grob
+                    report_data$carry_data_val, logo_grob, full_data = report_data$full_data
                 )
 
                 if (!file.exists(temp_pdf)) {

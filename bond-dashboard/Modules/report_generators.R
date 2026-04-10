@@ -2297,7 +2297,7 @@ generate_issuance_comparison_chart <- function(data) {
 #' @param carry_data Carry and roll return data
 #' @param logo_grob Grid graphics object for logo (or NULL)
 generate_pre_auction_pdf <- function(file, config, filtered_data, processed_data,
-                                     carry_data, logo_grob) {
+                                     carry_data, logo_grob, full_data = NULL) {
     require(gridExtra)
     require(grid)
 
@@ -2433,7 +2433,8 @@ generate_pre_auction_pdf <- function(file, config, filtered_data, processed_data
 
     # 10. Dual Issuance charts — YTD + Last 12 Months (Page 9)
     ytd_issuance_grob <- tryCatch({
-        g <- generate_dual_issuance_charts(filtered_data)
+        issuance_data <- if (!is.null(full_data) && nrow(full_data) > 0) full_data else filtered_data
+        g <- generate_dual_issuance_charts(issuance_data)
         if (!is.null(g)) {
             # generate_dual_issuance_charts returns an arrangeGrob (gtable/grob)
             # Render it to a rasterGrob via PNG for consistent PDF output
@@ -2760,7 +2761,7 @@ generate_pre_auction_pdf <- function(file, config, filtered_data, processed_data
 #' @param processed_data Processed bond data
 #' @param carry_data Carry and roll return data
 #' @return HTML string for the report
-create_pre_auction_html_report <- function(config, filtered_data, processed_data, carry_data) {
+create_pre_auction_html_report <- function(config, filtered_data, processed_data, carry_data, full_data = NULL) {
     auction_bonds <- config$pre_auction_bonds
     auction_date <- config$auction_date %||% Sys.Date()
     client_name <- config$client_name %||% ""
@@ -2903,7 +2904,8 @@ create_pre_auction_html_report <- function(config, filtered_data, processed_data
 
     # Dual Issuance charts (YTD + Last 12 Months)
     ytd_issuance_chart <- tryCatch({
-        g <- generate_dual_issuance_charts(filtered_data)
+        issuance_data <- if (!is.null(full_data) && nrow(full_data) > 0) full_data else filtered_data
+        g <- generate_dual_issuance_charts(issuance_data)
         if (!is.null(g)) {
             # Render arrangeGrob to base64 PNG
             temp_png <- tempfile(fileext = ".png")
