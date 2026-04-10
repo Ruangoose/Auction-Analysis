@@ -2856,7 +2856,16 @@ ui <- dashboardPage(
                                                                     }),
                                                           textInput("auction_report_client", "Prepared For:",
                                                                     value = "",
-                                                                    placeholder = "Enter client name")
+                                                                    placeholder = "Enter client name"),
+                                                          tags$hr(),
+                                                          dateInput("report_analysis_start",
+                                                                    "Analysis Start Date:",
+                                                                    value = as.Date("2025-01-01"),
+                                                                    format = "yyyy-mm-dd",
+                                                                    width = "100%"),
+                                                          tags$small(class = "text-muted",
+                                                                     "Controls how far back auction history, patterns, and forecast data extends. ",
+                                                                     "Does NOT affect Page 9 (Cumulative Issuance) which always uses YTD and Last 12 Months.")
                                                       )
                                                   ),
 
