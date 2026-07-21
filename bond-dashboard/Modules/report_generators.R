@@ -3082,7 +3082,8 @@ build_eml_email_html <- function(page_labels, n_pages, auction_bonds, auction_da
                                   client_name = "Insele Capital Partners",
                                   primary_color = "#1B3A6B",
                                   accent_color = "#E8913A",
-                                  tagline = "The Power of Partnership") {
+                                  tagline = "The Power of Partnership",
+                                  logo_cid = NULL) {
 
     # Default page labels matching the 9-page report structure
     default_page_labels <- c(
@@ -3126,16 +3127,29 @@ build_eml_email_html <- function(page_labels, n_pages, auction_bonds, auction_da
         ))
     }
 
-    # Assemble complete HTML (no DOCTYPE - can cause Outlook issues)
-    html <- sprintf(
-'<html>
-<head>
-<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-</head>
-<body style="margin: 0; padding: 0; background-color: #f4f4f4; font-family: Arial, Helvetica, sans-serif;">
-<table width="1100" align="center" cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto; background-color: #ffffff;">
-<!-- Header Bar -->
+    # Header bar: watercolour logo on white when available, text banner fallback
+    if (!is.null(logo_cid)) {
+        header_html <- sprintf(
+'<tr>
+<td style="background-color: #ffffff; padding: 18px 30px; border-bottom: 3px solid %s;">
+<table width="100%%" cellpadding="0" cellspacing="0" border="0">
 <tr>
+<td><img src="cid:%s" alt="%s" height="64" style="display: block; border: 0;" /></td>
+<td style="font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: %s; text-align: right;">%s<br/>%s</td>
+</tr>
+</table>
+</td>
+</tr>
+<tr>
+<td style="background-color: %s; padding: 8px 30px; font-family: Arial, Helvetica, sans-serif; font-size: 16px; font-weight: bold; color: %s;">Pre-Auction Report</td>
+</tr>',
+            accent_color, logo_cid, client_name, primary_color,
+            auction_date_short, bonds_str,
+            primary_color, accent_color
+        )
+    } else {
+        header_html <- sprintf(
+'<tr>
 <td style="background-color: %s; padding: 20px 30px;">
 <table width="100%%" cellpadding="0" cellspacing="0" border="0">
 <tr>
@@ -3147,7 +3161,21 @@ build_eml_email_html <- function(page_labels, n_pages, auction_bonds, auction_da
 </tr>
 </table>
 </td>
-</tr>
+</tr>',
+            primary_color, client_name, auction_date_short, bonds_str, accent_color
+        )
+    }
+
+    # Assemble complete HTML (no DOCTYPE - can cause Outlook issues)
+    html <- sprintf(
+'<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+</head>
+<body style="margin: 0; padding: 0; background-color: #f4f4f4; font-family: Arial, Helvetica, sans-serif;">
+<table width="1100" align="center" cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto; background-color: #ffffff;">
+<!-- Header Bar -->
+%s
 <!-- Intro Paragraph -->
 <tr>
 <td style="padding: 20px 30px; background-color: #f8f9fa;">
@@ -3180,11 +3208,7 @@ supply and demand dynamics, and forecast data to support auction preparation.
 </table>
 </body>
 </html>',
-        primary_color,                  # Header bg
-        client_name,                    # Header left: client name
-        auction_date_short,             # Header right: date
-        bonds_str,                      # Header right: bonds
-        accent_color,                   # "Pre-Auction Report" subtitle color
+        header_html,                    # Header bar (logo or text fallback)
         bonds_str,                      # Intro: bonds
         auction_date_long,              # Intro: auction date
         chart_sections,                 # All chart sections
@@ -3212,7 +3236,8 @@ supply and demand dynamics, and forecast data to support auction preparation.
 build_eml_file <- function(html_body, png_paths, png_base64_list, pdf_path,
                             auction_bonds, auction_date,
                             subject_prefix = "Insele Pre-Auction Report",
-                            pdf_attachment_name = NULL) {
+                            pdf_attachment_name = NULL,
+                            logo_path = NULL) {
 
     # Helper: split base64 into 76-char lines (MIME standard)
     split_b64 <- function(b64_string) {
@@ -3293,6 +3318,21 @@ build_eml_file <- function(html_body, png_paths, png_base64_list, pdf_path,
             "Content-Disposition: inline",
             "",
             b64_lines,
+            ""
+        )
+    }
+
+    # ── multipart/related: inline header logo (referenced as cid:insele_logo) ──
+    if (!is.null(logo_path) && file.exists(logo_path)) {
+        logo_b64_lines <- split_b64(base64enc::base64encode(logo_path))
+        lines <- c(lines,
+            paste0("--", boundary_related),
+            "Content-Type: image/png",
+            "Content-Transfer-Encoding: base64",
+            "Content-ID: <insele_logo>",
+            "Content-Disposition: inline",
+            "",
+            logo_b64_lines,
             ""
         )
     }
@@ -3687,7 +3727,8 @@ build_treasury_email_html <- function(page_labels, n_pages, data_date_range = NU
                                        client_name = "Insele Capital Partners",
                                        primary_color = "#1B3A6B",
                                        accent_color = "#E8913A",
-                                       tagline = "The Power of Partnership") {
+                                       tagline = "The Power of Partnership",
+                                       logo_cid = NULL) {
 
     # Default page labels for treasury report
     default_treasury_labels <- c(
@@ -3733,16 +3774,29 @@ build_treasury_email_html <- function(page_labels, n_pages, data_date_range = NU
         ))
     }
 
-    # Assemble complete HTML (no DOCTYPE - can cause Outlook issues)
-    html <- sprintf(
-'<html>
-<head>
-<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-</head>
-<body style="margin: 0; padding: 0; background-color: #f4f4f4; font-family: Arial, Helvetica, sans-serif;">
-<table width="1100" align="center" cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto; background-color: #ffffff;">
-<!-- Header Bar -->
+    # Header bar: watercolour logo on white when available, text banner fallback
+    if (!is.null(logo_cid)) {
+        header_html <- sprintf(
+'<tr>
+<td style="background-color: #ffffff; padding: 18px 30px; border-bottom: 3px solid %s;">
+<table width="100%%" cellpadding="0" cellspacing="0" border="0">
 <tr>
+<td><img src="cid:%s" alt="%s" height="64" style="display: block; border: 0;" /></td>
+<td style="font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: %s; text-align: right;">Treasury Holdings<br/>%s</td>
+</tr>
+</table>
+</td>
+</tr>
+<tr>
+<td style="background-color: %s; padding: 8px 30px; font-family: Arial, Helvetica, sans-serif; font-size: 16px; font-weight: bold; color: %s;">Treasury Holdings Report</td>
+</tr>',
+            accent_color, logo_cid, client_name, primary_color,
+            date_range_str,
+            primary_color, accent_color
+        )
+    } else {
+        header_html <- sprintf(
+'<tr>
 <td style="background-color: %s; padding: 20px 30px;">
 <table width="100%%" cellpadding="0" cellspacing="0" border="0">
 <tr>
@@ -3754,7 +3808,21 @@ build_treasury_email_html <- function(page_labels, n_pages, data_date_range = NU
 </tr>
 </table>
 </td>
-</tr>
+</tr>',
+            primary_color, client_name, date_range_str, accent_color
+        )
+    }
+
+    # Assemble complete HTML (no DOCTYPE - can cause Outlook issues)
+    html <- sprintf(
+'<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+</head>
+<body style="margin: 0; padding: 0; background-color: #f4f4f4; font-family: Arial, Helvetica, sans-serif;">
+<table width="1100" align="center" cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto; background-color: #ffffff;">
+<!-- Header Bar -->
+%s
 <!-- Intro Paragraph -->
 <tr>
 <td style="padding: 20px 30px; background-color: #f8f9fa;">
@@ -3787,10 +3855,7 @@ institutional ownership data for SA Government bonds to support investment decis
 </table>
 </body>
 </html>',
-        primary_color,                  # Header bg
-        client_name,                    # Header left: client name
-        date_range_str,                 # Header right: date range
-        accent_color,                   # "Treasury Holdings Report" subtitle color
+        header_html,                    # Header bar (logo or text fallback)
         date_range_str,                 # Intro: data period
         chart_sections,                 # All chart sections
         primary_color,                  # Footer bg
@@ -3827,7 +3892,8 @@ build_custom_email_html <- function(page_labels, n_pages, report_title, report_t
                                      report_date = Sys.Date(),
                                      primary_color = "#1B3A6B",
                                      accent_color = "#E8913A",
-                                     tagline = "The Power of Partnership") {
+                                     tagline = "The Power of Partnership",
+                                     logo_cid = NULL) {
 
     # Handle page labels
     if (is.null(page_labels)) {
@@ -3864,16 +3930,29 @@ build_custom_email_html <- function(page_labels, n_pages, report_title, report_t
         ))
     }
 
-    # Assemble Outlook-safe HTML (no DOCTYPE)
-    html <- sprintf(
-'<html>
-<head>
-<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-</head>
-<body style="margin: 0; padding: 0; background-color: #f4f4f4; font-family: Arial, Helvetica, sans-serif;">
-<table width="1100" align="center" cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto; background-color: #ffffff;">
-<!-- Header Bar -->
+    # Header bar: watercolour logo on white when available, text banner fallback
+    if (!is.null(logo_cid)) {
+        header_html <- sprintf(
+'<tr>
+<td style="background-color: #ffffff; padding: 18px 30px; border-bottom: 3px solid %s;">
+<table width="100%%" cellpadding="0" cellspacing="0" border="0">
 <tr>
+<td><img src="cid:%s" alt="%s" height="64" style="display: block; border: 0;" /></td>
+<td style="font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: %s; text-align: right;">%s<br/>%s</td>
+</tr>
+</table>
+</td>
+</tr>
+<tr>
+<td style="background-color: %s; padding: 8px 30px; font-family: Arial, Helvetica, sans-serif; font-size: 16px; font-weight: bold; color: %s;">%s</td>
+</tr>',
+            accent_color, logo_cid, client_name, primary_color,
+            report_type_label, report_date_str,
+            primary_color, accent_color, report_type_label
+        )
+    } else {
+        header_html <- sprintf(
+'<tr>
 <td style="background-color: %s; padding: 20px 30px;">
 <table width="100%%" cellpadding="0" cellspacing="0" border="0">
 <tr>
@@ -3885,7 +3964,22 @@ build_custom_email_html <- function(page_labels, n_pages, report_title, report_t
 </tr>
 </table>
 </td>
-</tr>
+</tr>',
+            primary_color, client_name, report_type_label, report_date_str,
+            accent_color, report_type_label
+        )
+    }
+
+    # Assemble Outlook-safe HTML (no DOCTYPE)
+    html <- sprintf(
+'<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+</head>
+<body style="margin: 0; padding: 0; background-color: #f4f4f4; font-family: Arial, Helvetica, sans-serif;">
+<table width="1100" align="center" cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto; background-color: #ffffff;">
+<!-- Header Bar -->
+%s
 <!-- Intro Paragraph -->
 <tr>
 <td style="padding: 20px 30px; background-color: #f8f9fa;">
@@ -3917,12 +4011,7 @@ This report covers %s to support investment decision-making.
 </table>
 </body>
 </html>',
-        primary_color,                  # Header bg
-        client_name,                    # Header left: client name
-        report_type_label,              # Header right: report type
-        report_date_str,                # Header right: date
-        accent_color,                   # Report type subtitle color
-        report_type_label,              # Report type subtitle text
+        header_html,                    # Header bar (logo or text fallback)
         report_title,                   # Intro: report title
         report_date_str,                # Intro: date
         sections_str,                   # Intro: sections included

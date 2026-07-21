@@ -13307,11 +13307,14 @@ $$Net Return = Carry + Roll - Funding Cost$$
                 # -- Stage 3: Build HTML body and assemble .EML -----------------
                 incProgress(0.7, detail = "Assembling email draft")
 
+                eml_logo_path <- if (!is.null(logo_path) && file.exists(logo_path)) logo_path else NULL
+
                 email_html <- build_eml_email_html(
                     page_labels = NULL,  # Uses defaults matching 9-page report
                     n_pages = n_pages,
                     auction_bonds = auction_bonds,
-                    auction_date = auction_date
+                    auction_date = auction_date,
+                    logo_cid = if (!is.null(eml_logo_path)) "insele_logo" else NULL
                 )
 
                 eml_lines <- build_eml_file(
@@ -13320,7 +13323,8 @@ $$Net Return = Carry + Roll - Funding Cost$$
                     png_base64_list = png_base64_list,
                     pdf_path = temp_pdf,
                     auction_bonds = auction_bonds,
-                    auction_date = auction_date
+                    auction_date = auction_date,
+                    logo_path = eml_logo_path
                 )
 
                 # -- Write .eml with CRITICAL writeBin for CRLF ----------------
@@ -13414,10 +13418,13 @@ $$Net Return = Carry + Roll - Funding Cost$$
                     }
                 }, error = function(e) format(Sys.Date(), "%B %Y"))
 
+                eml_logo_path <- if (!is.null(logo_path) && file.exists(logo_path)) logo_path else NULL
+
                 email_html <- build_treasury_email_html(
                     page_labels = NULL,  # Uses defaults
                     n_pages = n_pages,
-                    data_date_range = data_date_range
+                    data_date_range = data_date_range,
+                    logo_cid = if (!is.null(eml_logo_path)) "insele_logo" else NULL
                 )
 
                 eml_lines <- build_eml_file(
@@ -13427,7 +13434,10 @@ $$Net Return = Carry + Roll - Funding Cost$$
                     pdf_path = temp_pdf,
                     auction_bonds = NULL,  # Not applicable for treasury
                     auction_date = Sys.Date(),
-                    subject_prefix = "Insele Treasury Holdings Report"
+                    subject_prefix = "Insele Treasury Holdings Report",
+                    pdf_attachment_name = sprintf("Insele_Treasury_Holdings_Report_%s.pdf",
+                                                  format(Sys.Date(), "%Y%m%d")),
+                    logo_path = eml_logo_path
                 )
 
                 # -- Write .eml with CRITICAL writeBin for CRLF -------------------
@@ -13524,7 +13534,8 @@ $$Net Return = Carry + Roll - Funding Cost$$
                     report_title = "Technical Analysis Report",
                     report_type_label = "Technical Analysis Report",
                     sections_included = paste(selected_bonds, collapse = ", "),
-                    report_date = Sys.Date()
+                    report_date = Sys.Date(),
+                    logo_cid = if (!is.null(logo_path) && file.exists(logo_path)) "insele_logo" else NULL
                 )
 
                 # Inject commentary into email HTML if present
@@ -13541,7 +13552,8 @@ $$Net Return = Carry + Roll - Funding Cost$$
                     auction_bonds = NULL,
                     auction_date = Sys.Date(),
                     subject_prefix = subject_line,
-                    pdf_attachment_name = pdf_filename
+                    pdf_attachment_name = pdf_filename,
+                    logo_path = if (!is.null(logo_path) && file.exists(logo_path)) logo_path else NULL
                 )
 
                 eml_raw <- charToRaw(paste(eml_lines, collapse = "\r\n"))
@@ -13641,7 +13653,8 @@ $$Net Return = Carry + Roll - Funding Cost$$
                     report_title = "Butterfly Spread Analysis",
                     report_type_label = "Butterfly Spread Report",
                     sections_included = sprintf("%d butterfly spreads analysed", n_spreads),
-                    report_date = Sys.Date()
+                    report_date = Sys.Date(),
+                    logo_cid = if (!is.null(logo_path) && file.exists(logo_path)) "insele_logo" else NULL
                 )
 
                 if (nchar(commentary_html) > 0) {
@@ -13657,7 +13670,8 @@ $$Net Return = Carry + Roll - Funding Cost$$
                     auction_bonds = NULL,
                     auction_date = Sys.Date(),
                     subject_prefix = subject_line,
-                    pdf_attachment_name = pdf_filename
+                    pdf_attachment_name = pdf_filename,
+                    logo_path = if (!is.null(logo_path) && file.exists(logo_path)) logo_path else NULL
                 )
 
                 eml_raw <- charToRaw(paste(eml_lines, collapse = "\r\n"))
@@ -13753,7 +13767,8 @@ $$Net Return = Carry + Roll - Funding Cost$$
                     report_title = "Relative Value Analysis",
                     report_type_label = "Relative Value Report",
                     sections_included = paste(input$rv_report_charts, collapse = ", "),
-                    report_date = Sys.Date()
+                    report_date = Sys.Date(),
+                    logo_cid = if (!is.null(logo_path) && file.exists(logo_path)) "insele_logo" else NULL
                 )
 
                 if (nchar(commentary_html) > 0) {
@@ -13769,7 +13784,8 @@ $$Net Return = Carry + Roll - Funding Cost$$
                     auction_bonds = NULL,
                     auction_date = Sys.Date(),
                     subject_prefix = subject_line,
-                    pdf_attachment_name = pdf_filename
+                    pdf_attachment_name = pdf_filename,
+                    logo_path = if (!is.null(logo_path) && file.exists(logo_path)) logo_path else NULL
                 )
 
                 eml_raw <- charToRaw(paste(eml_lines, collapse = "\r\n"))
@@ -13862,7 +13878,8 @@ $$Net Return = Carry + Roll - Funding Cost$$
                     sections_included = pdf_result$sections_included,
                     client_name = if (nchar(config$client_name %||% "") > 0)
                         config$client_name else "Insele Capital Partners",
-                    report_date = config$report_date %||% Sys.Date()
+                    report_date = config$report_date %||% Sys.Date(),
+                    logo_cid = if (!is.null(logo_path) && file.exists(logo_path)) "insele_logo" else NULL
                 )
 
                 # PDF attachment filename
@@ -13878,7 +13895,8 @@ $$Net Return = Carry + Roll - Funding Cost$$
                     auction_bonds = NULL,
                     auction_date = config$report_date %||% Sys.Date(),
                     subject_prefix = paste("Insele", report_type_label),
-                    pdf_attachment_name = pdf_filename
+                    pdf_attachment_name = pdf_filename,
+                    logo_path = if (!is.null(logo_path) && file.exists(logo_path)) logo_path else NULL
                 )
 
                 # -- Write .eml with CRITICAL writeBin for CRLF -------------------
@@ -13898,7 +13916,10 @@ $$Net Return = Carry + Roll - Funding Cost$$
                 )
             })
             }
-        }
+        },
+        # Explicit MIME type so the browser/OS treats the download as an email
+        # message rather than guessing (mislabelled downloads open in the wrong app)
+        contentType = "message/rfc822"
     )
 
 
